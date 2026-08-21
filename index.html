@@ -995,7 +995,7 @@ const EXAM={};
 })();
 
 /* ================= app state ================= */
-let USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:''},curLevel='L1';
+let USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false},curLevel='L1';
 const SESSION_KEY='ewl2_session';
 function saveSession(){try{store.set(SESSION_KEY,JSON.stringify(USER));}catch(e){}}
 function loadSession(){try{const raw=store.get(SESSION_KEY);if(!raw)return null;const u=JSON.parse(raw);if(!u||!u.id)return null;return u;}catch(e){return null;}}
@@ -1059,7 +1059,7 @@ function viewLogin(){setWide(false);mountView(w=>{
     if(tmatch){
       if(String(tmatch.pw||'')!==pwv){fx.className='fx no';fx.textContent='비밀번호가 올바르지 않아요.';pi.value='';pi.focus();return;}
       USER.id=tmatch.id;USER.name=tmatch.name||tmatch.id;USER.role='teacher';
-      USER.academy=tmatch.academy||'';
+      USER.academy=tmatch.academy||'';USER.isAdmin=!!String(tmatch.isAdmin||'').trim();
       saveSession();applySessionUI();
       fx.className='';fx.textContent='';
       viewTeacherHome();
@@ -1264,8 +1264,8 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
 function uniqSorted(arr){return Array.from(new Set(arr.filter(v=>v!=null&&v!=='').map(v=>String(v)))).sort((a,b)=>a.localeCompare(b,'ko'));}
 const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기','글쓰기'],['기사요약','기사요약'],['수행평가','수행평가']];
 function viewTeacherHome(){setWide(false);mountView(w=>{
-  w.appendChild(el('h1','title',USER.name+' 선생님'+(USER.academy?' · '+USER.academy:'')));
-  w.appendChild(el('div','hint','학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.'));
+  w.appendChild(el('h1','title',USER.name+' 선생님'+(USER.isAdmin?' · 전체 학원 관리자':(USER.academy?' · '+USER.academy:''))));
+  w.appendChild(el('div','hint',USER.isAdmin?'모든 학원의 학생을 볼 수 있어요. 학원·학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.':'학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.'));
   const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin:14px 0';
   w.appendChild(filterBox);
   const box=el('div','chapter');box.appendChild(el('div','ch-h','학생 목록'));
@@ -1275,33 +1275,36 @@ function viewTeacherHome(){setWide(false);mountView(w=>{
     const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
     const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
     return{wrap,sel};};
+  const fAcademy=USER.isAdmin?mkSelect('학원'):null;
   const fSchool=mkSelect('학교'),fGrade=mkSelect('학년'),fCls=mkSelect('반'),fType=mkSelect('컨텐츠');
+  if(fAcademy)filterBox.appendChild(fAcademy.wrap);
   [fSchool,fGrade,fCls,fType].forEach(f=>filterBox.appendChild(f.wrap));
   EXAM_TYPE_OPTS.forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;fType.sel.appendChild(o);});
   filterBox.style.display='none';
   (async()=>{
     let all=[];
     try{
-      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.academy||''));
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0'));
       const data=await res.json();
       if(data&&data.ok)all=data.submissions||[];
     }catch(e){}
-    all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+    if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
     loading.remove();
     if(!all.length){box.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
     const opt0=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
+    if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
     opt0(fSchool.sel,'학교 전체');uniqSorted(all.map(s=>s.school)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fSchool.sel.appendChild(o);});
     opt0(fGrade.sel,'학년 전체');uniqSorted(all.map(s=>s.schoolGrade)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fGrade.sel.appendChild(o);});
     opt0(fCls.sel,'반 전체');uniqSorted(all.map(s=>s.cls)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fCls.sel.appendChild(o);});
     filterBox.style.display='flex';
     const render=()=>{
       Array.from(box.children).slice(1).forEach(c=>c.remove());
-      const fs=fSchool.sel.value,fg=fGrade.sel.value,fc=fCls.sel.value,ft=fType.sel.value;
-      const filtered=all.filter(s=>(!fs||s.school===fs)&&(!fg||s.schoolGrade===fg)&&(!fc||s.cls===fc)&&(!ft||s.type===ft));
+      const fa=fAcademy?fAcademy.sel.value:'',fs=fSchool.sel.value,fg=fGrade.sel.value,fc=fCls.sel.value,ft=fType.sel.value;
+      const filtered=all.filter(s=>(!fa||s.academy===fa)&&(!fs||s.school===fs)&&(!fg||s.schoolGrade===fg)&&(!fc||s.cls===fc)&&(!ft||s.type===ft));
       const counts={};
       filtered.forEach(s=>{
         if(!s.id)return;
-        if(!counts[s.id])counts[s.id]={id:s.id,name:s.name,school:s.school,schoolGrade:s.schoolGrade,cls:s.cls,count:0,lastAt:''};
+        if(!counts[s.id])counts[s.id]={id:s.id,name:s.name,academy:s.academy,school:s.school,schoolGrade:s.schoolGrade,cls:s.cls,count:0,lastAt:''};
         counts[s.id].count++;
         if(String(s.datetime||'')>counts[s.id].lastAt)counts[s.id].lastAt=String(s.datetime||'');
       });
@@ -1310,14 +1313,14 @@ function viewTeacherHome(){setWide(false);mountView(w=>{
       studentsOut.forEach(s=>{
         const row=el('div','point');
         row.appendChild(el('div','dot','●'));
-        const ctx=[s.school,s.schoolGrade&&(s.schoolGrade+'학년'),s.cls].filter(Boolean).join(' · ');
+        const ctx=[USER.isAdmin?s.academy:'',s.school,s.schoolGrade&&(s.schoolGrade+'학년'),s.cls].filter(Boolean).join(' · ');
         row.appendChild(el('div','pt',(s.name||s.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+s.id+(ctx?' · '+ctx:'')+')</span>'));
         row.appendChild(el('div','meta',s.count+'건 제출 · 최근 '+String(s.lastAt||'').slice(0,16)));
         row.onclick=()=>viewTeacherStudent(s.id,s.name||s.id);
         box.appendChild(row);
       });
     };
-    [fSchool.sel,fGrade.sel,fCls.sel,fType.sel].forEach(sel=>sel.addEventListener('change',render));
+    (fAcademy?[fAcademy.sel,fSchool.sel,fGrade.sel,fCls.sel,fType.sel]:[fSchool.sel,fGrade.sel,fCls.sel,fType.sel]).forEach(sel=>sel.addEventListener('change',render));
     render();
   })();
 });}
@@ -1331,7 +1334,7 @@ function viewTeacherStudent(studentId,studentName){setWide(true);mountView(w=>{
   (async()=>{
     let subs=[];
     try{
-      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(studentId)+'&academy='+encodeURIComponent(USER.academy||''));
+      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(studentId)+'&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0'));
       const data=await res.json();
       if(data&&data.ok&&(data.submissions||[]).length){
         const first=data.submissions[0];
@@ -1383,7 +1386,7 @@ function viewTeacherStudent(studentId,studentName){setWide(true);mountView(w=>{
         sentInputs.forEach((inp,i)=>{const v=inp.value.trim();if(v)sentencesOut[i]=v;});
         const feedbackStr=JSON.stringify({overall:ta.value,sentences:sentencesOut});
         try{
-          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'feedback',subId:s.subId,feedback:feedbackStr,academy:USER.academy||''})});
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'feedback',subId:s.subId,feedback:feedbackStr,academy:s.academy||''})});
           const txt=await res.text();
           if(txt.indexOf('OK')>-1){fx.className='fx ok';fx.textContent='저장했어요.';}
           else{fx.className='fx no';fx.textContent='저장하지 못했어요: '+txt;}
@@ -1420,7 +1423,7 @@ document.addEventListener('keydown',e=>{if(document.getElementById('exprModal'))
   if(e.key==='Enter'){const s=slides[idx];if(s&&s._box&&s._box._enterKey){e.preventDefault();s._box._enterKey();}return;}
   if(e.key==='ArrowRight')deckShow(idx+1);else if(e.key==='ArrowLeft')deckShow(idx-1);});
 homeBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();if(USER.role==='teacher')viewTeacherHome();else viewHome();};
-logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:''};clearSession();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';viewLogin();};
+logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false};clearSession();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';viewLogin();};
 
 /* ================= DRILL RUNNER ================= */
 function runDrill(P){setWide(false);deckInit();
@@ -1991,7 +1994,7 @@ deckShow=function(i){_deckShow(i);const s=slides[idx];if(s&&s._box){if(s._box._o
 (function boot(){
   const sess=loadSession();
   if(sess&&sess.id){
-    USER=Object.assign({id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:''},sess);
+    USER=Object.assign({id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false},sess);
     applySessionUI();
     enterHome();
     fetchRoster().catch(()=>{});
