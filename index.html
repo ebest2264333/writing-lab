@@ -965,7 +965,7 @@ const ARTICLE={};
 })();
 
 /* ================= EXAM (수행평가 대비) ================= */
-const GENEXAM=[{"id":"EX-L1-01","level":"L1","title":"나의 장래희망 (My Future Dream)","prompt":"여러분의 장래희망에 대해 영어로 써 보세요. 무엇이 되고 싶은지, 왜 그 일을 하고 싶은지 설명하세요.","conds":[{"label":"문장 4개 이상","minSentences":4},{"label":"want to 사용","regex":"\\bwant to\\b"},{"label":"because 사용","regex":"\\bbecause\\b"}],"targetSchool":"","targetSchoolGrade":"","targetClass":""},{"id":"EX-L2-01","level":"L2","title":"나의 학교생활 (My School Life)","prompt":"여러분의 학교생활에 대해 영어로 써 보세요. 좋아하는 과목과 그 이유, 학교에서 하는 활동을 포함하세요.","conds":[{"label":"문장 5개 이상","minSentences":5},{"label":"favorite 사용","regex":"\\bfavorite\\b"},{"label":"현재시제 동사(is/are/like 등) 포함","regex":"\\b(is|are|like|likes|enjoy|enjoys)\\b"}],"targetSchool":"","targetSchoolGrade":"","targetClass":""}];
+const GENEXAM=[{"id":"EX-L1-01","level":"L1","title":"나의 장래희망 (My Future Dream)","prompt":"여러분의 장래희망에 대해 영어로 써 보세요. 무엇이 되고 싶은지, 왜 그 일을 하고 싶은지 설명하세요.","conds":[{"label":"문장 4개 이상","minSentences":4},{"label":"want to 사용","regex":"\\bwant to\\b"},{"label":"because 사용","regex":"\\bbecause\\b"}],"targetSchool":"안화중","targetSchoolGrade":1,"targetClass":""},{"id":"EX-L2-01","level":"L2","title":"나의 학교생활 (My School Life)","prompt":"여러분의 학교생활에 대해 영어로 써 보세요. 좋아하는 과목과 그 이유, 학교에서 하는 활동을 포함하세요.","conds":[{"label":"문장 5개 이상","minSentences":5},{"label":"favorite 사용","regex":"\\bfavorite\\b"},{"label":"현재시제 동사(is/are/like 등) 포함","regex":"\\b(is|are|like|likes|enjoy|enjoys)\\b"}],"targetSchool":"","targetSchoolGrade":"","targetClass":""}];
 function toExamPoint(g){
   const conds=(g.conds||[]).map(c=>{let test;
     if(typeof c.minSentences==='number'){const m=c.minSentences;test=t=>sc(t)>=m;}
