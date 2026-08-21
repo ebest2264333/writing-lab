@@ -1152,11 +1152,10 @@ function viewParaMenu(){setWide(false);mountView(w=>{
 /* ================= ARTICLE MENU ================= */
 function viewArticleMenu(){setWide(false);mountView(w=>{
   const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
-  const lv=LEVELS.find(l=>l.id===curLevel);
-  w.appendChild(el('h1','title','Article Reading · '+lv.name));
+  w.appendChild(el('h1','title','Article Reading'));
   w.appendChild(el('div','hint','영어 기사를 읽고 3문장 이상으로 요약해요. (자동 채점 + 선생님 첨삭)'));
-  const list=(ARTICLE[curLevel]||[]).filter(visibleToUser);
-  if(!list.length)w.appendChild(el('div','hint','이 레벨에 지금 볼 수 있는 기사가 없어요.'));
+  const list=Object.values(ARTICLE).flat().filter(visibleToUser);
+  if(!list.length)w.appendChild(el('div','hint','지금 볼 수 있는 기사가 없어요.'));
   const box=el('div','chapter');box.appendChild(el('div','ch-h','기사 (Articles)'));
   const P=loadProg();
   list.forEach(a=>{const done=!!P['ART-'+a.id];const row=el('div','point'+(done?' done':''));row.appendChild(el('div','dot',done?'✓':'●'));
@@ -1169,11 +1168,10 @@ function viewArticleMenu(){setWide(false);mountView(w=>{
 /* ================= EXAM MENU (수행평가 대비) ================= */
 function viewExamMenu(){setWide(false);mountView(w=>{
   const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
-  const lv=LEVELS.find(l=>l.id===curLevel);
-  w.appendChild(el('h1','title','수행평가 대비 · '+lv.name));
+  w.appendChild(el('h1','title','수행평가 대비'));
   w.appendChild(el('div','hint','주제와 조건에 맞춰 미리 써 보는 연습이에요. (자동 채점 + 선생님 첨삭)'));
-  const list=(EXAM[curLevel]||[]).filter(visibleToUser);
-  if(!list.length)w.appendChild(el('div','hint','이 레벨에 지금 볼 수 있는 주제가 없어요.'));
+  const list=Object.values(EXAM).flat().filter(visibleToUser);
+  if(!list.length)w.appendChild(el('div','hint','지금 볼 수 있는 주제가 없어요.'));
   const box=el('div','chapter');box.appendChild(el('div','ch-h','주제 (Topics)'));
   const P=loadProg();
   list.forEach(t=>{const done=!!P['EX-'+t.id];const row=el('div','point'+(done?' done':''));row.appendChild(el('div','dot',done?'✓':'●'));
