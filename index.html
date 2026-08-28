@@ -1883,7 +1883,7 @@ function viewTeacherStudent(studentId,studentName){setWide(true);mountView(w=>{
   (async()=>{
     let subs=[];
     try{
-      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(studentId)+'&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(studentId)+'&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&role=teacher&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
       if(data&&data.ok&&(data.submissions||[]).length){
         const first=data.submissions[0];
@@ -1976,7 +1976,7 @@ function viewTeacherStudent(studentId,studentName){setWide(true);mountView(w=>{
               aiOvGpt.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(freshAifbGpt.overall);
               card.insertBefore(aiOvGpt,nowWrap);
             }
-            nowMsg.className='fx ok';nowMsg.textContent='✅ 방금 생성했어요. 문장별 첨삭까지 보려면 이 화면을 새로고침(◀ 뒤로 갔다가 다시 들어오기)해보세요. (학생 화면에는 설정된 지연 시간이 지나야 보여요)';
+            nowMsg.className='fx ok';nowMsg.textContent='✅ 방금 생성했어요. 문장별 첨삭까지 보려면 이 화면을 새로고침(◀ 뒤로 갔다가 다시 들어오기)해보세요. 학생 화면에도 지연 없이 바로 보여요.';
           }catch(e){
             nowMsg.className='fx no';nowMsg.textContent=String(e.message||e);
           }finally{
