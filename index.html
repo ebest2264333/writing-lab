@@ -104,6 +104,7 @@
   .track.para{background:linear-gradient(135deg,var(--accent),var(--accent-2))}
   .track.article{background:linear-gradient(135deg,var(--blue),var(--blue-2))}
   .track.exam{background:linear-gradient(135deg,var(--rose),var(--rose-2))}
+  .track.rewrite{background:linear-gradient(135deg,var(--green),#1f8a5c)}
   .track .tt{font-family:var(--sans);font-size:21px;font-weight:800}.track .td{font-size:14.5px;opacity:.9;margin-top:8px;line-height:1.65}
   .track .tk{margin-top:14px;font-size:12px;font-weight:800;letter-spacing:.02em;background:rgba(255,255,255,.22);display:inline-block;padding:6px 14px;border-radius:999px}
   .track .ic{width:44px;height:44px;border-radius:14px;background:rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;margin-bottom:14px}
@@ -1191,6 +1192,10 @@ function viewHome(){setWide(false);mountView(w=>{
   const c4=el('button','track exam',ic4+'<div class="tt">수행평가 대비</div><div class="td">학교 수행평가 주제·조건에 맞춰 미리 써보기 · 자동 채점 · 선생님 첨삭</div><div class="tk">주제 골라 연습하기</div>');
   c4.onclick=()=>viewExamMenu();
   tr.appendChild(c4);
+  const ic5='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></div>';
+  const c5=el('button','track rewrite',ic5+'<div class="tt">Re-Writing</div><div class="td">첨삭받은 글을 고쳐진 내용대로 처음부터 전체 다시 써보기</div><div class="tk">첨삭 끝난 글 골라 다시 쓰기</div>');
+  c5.onclick=()=>viewRewriteList();
+  tr.appendChild(c5);
   w.appendChild(tr);
   const fbLink=el('button','btn ghost','📋 내 제출 내역 · 선생님 피드백 보기');fbLink.style.marginTop='18px';
   fbLink.onclick=()=>viewMyFeedback();w.appendChild(fbLink);
@@ -1319,8 +1324,9 @@ function renderAiSentenceBlock(aiEntry,label,accent){
   }
   const errors=Array.isArray(aiEntry.errors)?aiEntry.errors:[];
   if(!errors.length)return '';
-  let html='<div style="margin-top:4px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.7">';
-  html+='<div style="font-weight:700;color:'+accent+';margin-bottom:2px">👩‍🏫 '+escH(label)+'</div>';
+  // 문장마다 "👩‍🏫 선생님 첨삭"이라는 같은 글자가 반복돼서 지저분해 보였던 부분 — 라벨은 빼고
+  // 왼쪽 색깔 띠(accent)로만 어느 AI인지 구분해요. 전체 요약 박스 쪽엔 라벨이 그대로 남아있어요.
+  let html='<div style="margin-top:4px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.7;border-left:3px solid '+accent+'">';
   errors.forEach(e=>{
     html+='<div style="color:#374151">• '+escH(e.wrong)+' → <b style="color:'+accent+'">'+escH(e.correct)+'</b>'+(e.note?('&nbsp;&nbsp;'+escH(e.note)):'')+'</div>';
   });
@@ -1407,9 +1413,113 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
   })();
 });}
 
+/* ================= Re-Writing (첨삭받은 글 전체 다시 쓰기, 학생용) ================= */
+/* 목록: 첨삭(AI 첨삭 중 하나라도)이 이미 완료돼 화면에 보이는 제출물만 골라 보여줘요.
+   다시 쓴 글 자체(type==='Re-Writing')는 다시쓰기 대상에서 제외해요. */
+function viewRewriteList(){setWide(true);mountView(w=>{
+  const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','Re-Writing · 다시 써보기'));
+  w.appendChild(el('div','hint','첨삭을 받은 글 중에서 골라, 고쳐진 내용대로 처음부터 전체를 다시 써 보는 연습이에요.'));
+  const box=el('div');box.style.marginTop='14px';
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  (async()=>{
+    let subs=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok)subs=data.submissions||[];
+    }catch(e){}
+    loading.remove();
+    const eligible=subs.filter(s=>s.type!=='Re-Writing'&&s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
+    if(!eligible.length){box.appendChild(el('div','hint','아직 다시 써볼 수 있는 글이 없어요. AI 첨삭이 완료된 제출물이 있어야 다시쓰기를 할 수 있어요.'));return;}
+    eligible.forEach(s=>{
+      const card=el('button','btn ghost');
+      card.type='button';card.style.cssText='display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;border-radius:12px';
+      card.innerHTML='<div style="font-weight:800">'+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+escH(s.type||'')+' · '+escH(s.datetime||'')+')</span></div>'+
+        '<div style="margin-top:4px;color:#6b7684;font-size:13px">이 글을 다시 써보기 →</div>';
+      card.onclick=()=>viewRewriteWrite(s);
+      box.appendChild(card);
+    });
+  })();
+});}
+
+function viewRewriteWrite(sub){setWide(true);mountView(w=>{
+  const bk=el('button','backbtn','◀ 목록으로');bk.onclick=viewRewriteList;w.appendChild(bk);
+  w.appendChild(el('h1','title','Re-Writing · '+(sub.point||sub.chapter||'')));
+  w.appendChild(el('div','hint','아래 원문과 고쳐진 내용을 참고해서, 처음부터 전체를 다시 써 보세요.'));
+  const origBox=el('div');origBox.style.cssText='background:#faf9fb;border-radius:12px;padding:14px 16px;margin-top:14px;font-size:14px;line-height:1.7;white-space:pre-wrap';
+  origBox.innerHTML='<b>✍️ 원래 쓴 글</b><br>'+escH(sub.text||'');
+  w.appendChild(origBox);
+  const aifb=parseAiFeedback(sub.aiFeedback);
+  const aifbGpt=parseAiFeedback(sub.aiFeedbackGpt);
+  const fb=parseFeedback(sub.feedback);
+  if(aifb.overall){
+    const b1=el('div');b1.style.cssText='background:#eef0ff;border-radius:12px;padding:14px 16px;margin-top:10px;font-size:14px;line-height:1.7;white-space:pre-line';
+    b1.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifb.overall);
+    w.appendChild(b1);
+  }
+  if(aifbGpt.overall){
+    const b2=el('div');b2.style.cssText='background:#e6f6f3;border-radius:12px;padding:14px 16px;margin-top:10px;font-size:14px;line-height:1.7;white-space:pre-line';
+    b2.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifbGpt.overall);
+    w.appendChild(b2);
+  }
+  if(fb.overall){
+    const b3=el('div');b3.style.cssText='background:var(--green-soft);border-radius:12px;padding:14px 16px;margin-top:10px;font-size:14px;line-height:1.7;white-space:pre-line';
+    b3.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(fb.overall);
+    w.appendChild(b3);
+  }
+  if(sub.text){
+    const sents=splitSentences(sub.text);
+    const hasAnySentFeedback=sents.some((_,i)=>(aifb.sentences[i]||aifb.sentences[String(i)])||(aifbGpt.sentences[i]||aifbGpt.sentences[String(i)])||(fb.sentences[i]||fb.sentences[String(i)]));
+    if(hasAnySentFeedback){
+      const listWrap=el('div');listWrap.style.marginTop='14px';
+      listWrap.appendChild(el('div','fl','문장별 고친 부분'));
+      sents.forEach((sent,i)=>{
+        const ai=aifb.sentences[i]||aifb.sentences[String(i)];
+        const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
+        const c=fb.sentences[i]||fb.sentences[String(i)];
+        const aiHtml=renderAiSentenceBlock(ai,'선생님 첨삭','#4338ca');
+        const aiGptHtml=renderAiSentenceBlock(aiGpt,'선생님 첨삭','#0f766e');
+        if(!aiHtml&&!aiGptHtml&&!c)return;
+        const row=el('div');row.style.cssText='border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb;font-size:14px;line-height:1.6';
+        let html=escH(sent);
+        if(aiHtml)html+=aiHtml;
+        if(aiGptHtml)html+=aiGptHtml;
+        if(c)html+='<div style="margin-top:2px;color:#b45309;font-size:13px">💬 '+escH(c)+'</div>';
+        row.innerHTML=html;
+        listWrap.appendChild(row);
+      });
+      w.appendChild(listWrap);
+    }
+  }
+  const ta=el('textarea','in');ta.placeholder='고쳐진 내용을 참고해서 전체를 처음부터 다시 써보세요.';ta.style.cssText='min-height:220px;margin-top:16px';
+  w.appendChild(ta);
+  const fx=el('div','fx');w.appendChild(fx);
+  const subBtn=el('button','btn green','다시 쓴 글 제출하기');subBtn.type='button';subBtn.style.marginTop='10px';
+  w.appendChild(subBtn);
+  subBtn.onclick=async()=>{
+    if(!ta.value.trim()){fx.className='fx no';fx.textContent='다시 쓴 글을 입력해주세요.';return;}
+    subBtn.disabled=true;const prev=subBtn.textContent;subBtn.textContent='제출 중…';
+    const now=new Date(),z=x=>String(x).padStart(2,'0');
+    const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());
+    const payload={book:'',chapter:'Rewriting',point:sub.point||sub.chapter||'',name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:genSubId(),datetime:dt,
+      final:ta.value,progress:'원본 제출: '+(sub.datetime||'')};
+    let sent=false;
+    if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;}catch(e){}}
+    subBtn.disabled=false;subBtn.textContent=sent?'제출 완료!':prev;
+    if(sent){
+      fx.className='fx ok';fx.textContent='제출했어요! 선생님이 다시 확인할 수 있어요.';
+      const hb=el('button','btn ghost','← 목록으로');hb.style.marginTop='10px';hb.onclick=viewRewriteList;w.appendChild(hb);
+    } else {
+      fx.className='fx no';fx.textContent='제출하지 못했어요. 인터넷 연결을 확인하세요.';
+    }
+  };
+});}
+
 /* ================= 교사 대시보드 ================= */
 function uniqSorted(arr){return Array.from(new Set(arr.filter(v=>v!=null&&v!=='').map(v=>String(v)))).sort((a,b)=>a.localeCompare(b,'ko'));}
-const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기','글쓰기'],['기사요약','기사요약'],['수행평가','수행평가']];
+const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기','글쓰기'],['기사요약','기사요약'],['수행평가','수행평가'],['Re-Writing','Re-Writing']];
 function viewTeacherHome(){setWide(false);mountView(w=>{
   const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
   titleRow.appendChild(el('h1','title',USER.name+' 선생님'+(USER.isAdmin?' · 전체 학원 관리자':(USER.academy?' · '+USER.academy:''))));
@@ -1894,7 +2004,23 @@ function viewTeacherStudent(studentId,studentName){setWide(true);mountView(w=>{
     }catch(e){}
     loading.remove();
     if(!subs.length){box.appendChild(el('div','hint','제출 내역이 없어요.'));return;}
-    subs.forEach(s=>{
+    // 제출물이 많아지면 한 학생 화면이 계속 길어지기만 해서, 컨텐츠 종류(문법드릴/글쓰기/기사요약/수행평가/Re-Writing)로
+    // 좁혀볼 수 있는 필터를 추가했어요. 기본은 전체(최신순 그대로) 보기예요.
+    const types=Array.from(new Set(subs.map(s=>s.type).filter(Boolean)));
+    if(types.length>1){
+      const filterRow=el('div');filterRow.style.cssText='margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+      filterRow.appendChild(el('span','fl','컨텐츠:'));
+      const sel=el('select','in');sel.style.cssText='padding:6px 10px;font-size:13px;width:auto';
+      ['전체'].concat(types).forEach(t=>{const opt=document.createElement('option');opt.value=t;opt.textContent=t;sel.appendChild(opt);});
+      filterRow.appendChild(sel);
+      box.appendChild(filterRow);
+      sel.onchange=()=>renderList(sel.value==='전체'?subs:subs.filter(x=>x.type===sel.value));
+    }
+    const cardsBox=el('div');box.appendChild(cardsBox);
+    const renderList=(list)=>{
+      cardsBox.innerHTML='';
+      if(!list.length){cardsBox.appendChild(el('div','hint','해당 컨텐츠의 제출물이 없어요.'));return;}
+      list.forEach(s=>{
       const card=el('div');
       card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-bottom:14px;background:#fff';
       card.innerHTML='<div style="font-weight:800">'+(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+(s.type||'')+' · '+(s.datetime||'')+')</span></div>'+
@@ -2002,8 +2128,10 @@ function viewTeacherStudent(studentId,studentName){setWide(true);mountView(w=>{
         }catch(e){fx.className='fx no';fx.textContent='저장하지 못했어요. 인터넷 연결을 확인하세요.';}
         saveBtn.disabled=false;saveBtn.textContent=prev;
       };
-      box.appendChild(card);
-    });
+      cardsBox.appendChild(card);
+      });
+    };
+    renderList(subs);
   })();
 });}
 
