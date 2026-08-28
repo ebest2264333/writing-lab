@@ -1448,14 +1448,11 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
   const bk=el('button','backbtn','◀ 목록으로');bk.onclick=viewRewriteList;w.appendChild(bk);
   w.appendChild(el('h1','title','Re-Writing · '+(sub.point||sub.chapter||'')));
   w.appendChild(el('div','hint','아래 원문과 고쳐진 내용을 참고해서, 처음부터 전체를 다시 써 보세요.'));
-  const origBox=el('div');origBox.style.cssText='background:#faf9fb;border-radius:12px;padding:14px 16px;margin-top:14px;font-size:14px;line-height:1.7;white-space:pre-wrap';
-  origBox.innerHTML='<b>✍️ 원래 쓴 글</b><br>'+escH(sub.text||'');
-  w.appendChild(origBox);
   const aifb=parseAiFeedback(sub.aiFeedback);
   const aifbGpt=parseAiFeedback(sub.aiFeedbackGpt);
   const fb=parseFeedback(sub.feedback);
   if(aifb.overall){
-    const b1=el('div');b1.style.cssText='background:#eef0ff;border-radius:12px;padding:14px 16px;margin-top:10px;font-size:14px;line-height:1.7;white-space:pre-line';
+    const b1=el('div');b1.style.cssText='background:#eef0ff;border-radius:12px;padding:14px 16px;margin-top:14px;font-size:14px;line-height:1.7;white-space:pre-line';
     b1.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifb.overall);
     w.appendChild(b1);
   }
@@ -1469,32 +1466,57 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
     b3.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(fb.overall);
     w.appendChild(b3);
   }
+  // 문장별로 별도 목록을 아래에 다시 나열하지 않고, 원문 바로 옆에 줄을 긋고 고친 문장을 붙여서 보여줘요.
+  // (수정된 적 없는 문장은 그대로 보여요.)
+  const rewriteConds=[];
+  const seenCorrect=new Set();
   if(sub.text){
     const sents=splitSentences(sub.text);
-    const hasAnySentFeedback=sents.some((_,i)=>(aifb.sentences[i]||aifb.sentences[String(i)])||(aifbGpt.sentences[i]||aifbGpt.sentences[String(i)])||(fb.sentences[i]||fb.sentences[String(i)]));
-    if(hasAnySentFeedback){
-      const listWrap=el('div');listWrap.style.marginTop='14px';
-      listWrap.appendChild(el('div','fl','문장별 고친 부분'));
-      sents.forEach((sent,i)=>{
-        const ai=aifb.sentences[i]||aifb.sentences[String(i)];
-        const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
-        const c=fb.sentences[i]||fb.sentences[String(i)];
-        const aiHtml=renderAiSentenceBlock(ai,'선생님 첨삭','#4338ca');
-        const aiGptHtml=renderAiSentenceBlock(aiGpt,'선생님 첨삭','#0f766e');
-        if(!aiHtml&&!aiGptHtml&&!c)return;
-        const row=el('div');row.style.cssText='border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb;font-size:14px;line-height:1.6';
-        let html=escH(sent);
-        if(aiHtml)html+=aiHtml;
-        if(aiGptHtml)html+=aiGptHtml;
-        if(c)html+='<div style="margin-top:2px;color:#b45309;font-size:13px">💬 '+escH(c)+'</div>';
-        row.innerHTML=html;
-        listWrap.appendChild(row);
+    const listWrap=el('div');listWrap.style.marginTop='14px';
+    listWrap.appendChild(el('div','fl','✍️ 원래 쓴 글 (고친 부분은 줄을 긋고 옆에 표시했어요)'));
+    sents.forEach((sent,i)=>{
+      const ai=aifb.sentences[i]||aifb.sentences[String(i)];
+      const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
+      const c=fb.sentences[i]||fb.sentences[String(i)];
+      const aiObj=(ai&&typeof ai==='object')?ai:null;
+      const aiGptObj=(aiGpt&&typeof aiGpt==='object')?aiGpt:null;
+      const row=el('div');row.style.cssText='border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb;font-size:14px;line-height:1.7';
+      let mainLine;
+      if((aiObj&&aiObj.corrected)||(aiGptObj&&aiGptObj.corrected)){
+        mainLine='<s style="color:#9ca3af">'+escH(sent)+'</s>';
+        if(aiObj&&aiObj.corrected)mainLine+=' <span style="color:#4338ca;font-weight:600">→ '+escH(aiObj.corrected)+'</span>';
+        if(aiGptObj&&aiGptObj.corrected)mainLine+='<br><span style="color:#0f766e;font-weight:600">→ '+escH(aiGptObj.corrected)+'</span>';
+      } else {
+        mainLine=escH(sent);
+      }
+      let detail='';
+      [ [aiObj,'#4338ca'], [aiGptObj,'#0f766e'] ].forEach(([entry,color])=>{
+        if(!entry||!Array.isArray(entry.errors))return;
+        entry.errors.forEach(e=>{
+          detail+='<div style="margin-top:2px;font-size:12.5px;color:#6b7684">• '+escH(e.wrong)+' → <b style="color:'+color+'">'+escH(e.correct)+'</b>'+(e.note?('&nbsp;&nbsp;'+escH(e.note)):'')+'</div>';
+          const key=norm(e.correct);
+          if(e.correct&&key&&!seenCorrect.has(key)){seenCorrect.add(key);rewriteConds.push({label:'"'+e.correct+'"로 고쳐 쓰기',test:t=>norm(t).includes(key)});}
+        });
       });
-      w.appendChild(listWrap);
-    }
+      if(c)detail+='<div style="margin-top:2px;color:#b45309;font-size:13px">💬 '+escH(c)+'</div>';
+      row.innerHTML=mainLine+(detail?('<div style="margin-top:4px">'+detail+'</div>'):'');
+      listWrap.appendChild(row);
+    });
+    w.appendChild(listWrap);
   }
   const ta=el('textarea','in');ta.placeholder='고쳐진 내용을 참고해서 전체를 처음부터 다시 써보세요.';ta.style.cssText='min-height:220px;margin-top:16px';
   w.appendChild(ta);
+  let rewriteUl=null;
+  if(rewriteConds.length){
+    w.appendChild(el('div','fl','고쳐진 대로 반영했는지 확인 (입력하는 동안 실시간으로 확인돼요)'));
+    rewriteUl=el('ul','conds');
+    rewriteConds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+escH(cn.label));li._c=cn;rewriteUl.appendChild(li);});
+    w.appendChild(rewriteUl);
+    const checkRewriteConds=()=>{rewriteUl.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';});};
+    ta.addEventListener('input',checkRewriteConds);
+    checkRewriteConds();
+    addAiCondCheckButton(w,rewriteUl,()=>ta.value);
+  }
   const fx=el('div','fx');w.appendChild(fx);
   const subBtn=el('button','btn green','다시 쓴 글 제출하기');subBtn.type='button';subBtn.style.marginTop='10px';
   w.appendChild(subBtn);
@@ -2017,14 +2039,35 @@ function viewTeacherStudent(studentId,studentName){setWide(true);mountView(w=>{
       sel.onchange=()=>renderList(sel.value==='전체'?subs:subs.filter(x=>x.type===sel.value));
     }
     const cardsBox=el('div');box.appendChild(cardsBox);
+    // 예전엔 학생을 누르면 모든 제출물이 한 화면에 통째로(글+첨삭칸까지) 다 펼쳐져서 스크롤이 너무 길어졌어요.
+    // 이제는 목록(제목만)을 한 번 더 거치고, 그중 하나를 눌러야 그 글의 전체 내용이 보여요.
     const renderList=(list)=>{
       cardsBox.innerHTML='';
       if(!list.length){cardsBox.appendChild(el('div','hint','해당 컨텐츠의 제출물이 없어요.'));return;}
       list.forEach(s=>{
+        const row=el('button','btn ghost');
+        row.type='button';row.style.cssText='display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;border-radius:12px';
+        row.innerHTML='<div style="font-weight:800">'+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+escH(s.type||'')+' · '+escH(s.datetime||'')+')</span></div>'+
+          '<div style="margin-top:4px;color:#6b7684;font-size:13px">점수: '+escH(String(s.total||'-'))+(s.grade?(' · '+escH(s.grade)+'등급'):'')+(s.feedback?' · 첨삭 있음':'')+'</div>';
+        row.onclick=()=>viewTeacherSubmissionDetail(s,studentId,studentName);
+        cardsBox.appendChild(row);
+      });
+    };
+    renderList(subs);
+  })();
+});}
+
+/* 학생 목록에서 제출물 하나를 골랐을 때 보여주는 상세 화면 — 글 전체, 문장별 코멘트,
+   AI 첨삭, 종합 의견 저장까지 여기서 다 해요. */
+function viewTeacherSubmissionDetail(s,studentId,studentName){setWide(true);mountView(w=>{
+  const bk=el('button','backbtn','◀ 제출 목록');bk.onclick=()=>viewTeacherStudent(studentId,studentName);w.appendChild(bk);
+  w.appendChild(el('h1','title',studentName+' · '+(s.point||s.chapter||'')));
+  w.appendChild(el('div','hint','('+(s.type||'')+' · '+(s.datetime||'')+')'));
+  (()=>{
       const card=el('div');
-      card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-bottom:14px;background:#fff';
-      card.innerHTML='<div style="font-weight:800">'+(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+(s.type||'')+' · '+(s.datetime||'')+')</span></div>'+
-        '<div style="margin-top:6px;color:#6b7684;font-size:13px">점수: '+(s.total||'-')+(s.grade?(' · '+s.grade+'등급'):'')+'</div>';
+      card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-top:14px;background:#fff';
+      card.innerHTML='<div style="color:#6b7684;font-size:13px">점수: '+(s.total||'-')+(s.grade?(' · '+s.grade+'등급'):'')+'</div>';
+      w.appendChild(card);
       const fb=parseFeedback(s.feedback);
       const aifb=parseAiFeedback(s.aiFeedback);
       const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
@@ -2128,10 +2171,6 @@ function viewTeacherStudent(studentId,studentName){setWide(true);mountView(w=>{
         }catch(e){fx.className='fx no';fx.textContent='저장하지 못했어요. 인터넷 연결을 확인하세요.';}
         saveBtn.disabled=false;saveBtn.textContent=prev;
       };
-      cardsBox.appendChild(card);
-      });
-    };
-    renderList(subs);
   })();
 });}
 
