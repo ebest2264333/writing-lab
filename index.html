@@ -1668,13 +1668,29 @@ const CONTENT_FORMS={
     {key:'title',label:'제목',type:'text'},
     {key:'level',label:'레벨',type:'text'},
     {key:'prompt',label:'과제 프롬프트',type:'textarea',ph:'학생에게 보여줄 과제 설명'},
-    {key:'evalCriteria',label:'평가 기준 (선택)',type:'textarea',ph:'예) 학교 수행평가 안내문에 적힌 평가 기준을 그대로 적어주세요'},
+    {key:'evalAreaText',label:'평가 영역 (선택 · 학생에게도 보여요) — 한 줄에 하나씩: 영역명 | 영역 만점 | 평가 요소1; 평가 요소2 ...',type:'textarea',ph:'내용 | 10 | 주제에 맞는 내용 전개; 구체적인 예시 포함\n어휘·문법 | 5 | 문법 오류 없이 쓰기; 다양한 어휘 사용'},
+    {key:'rubricLevelsText',label:'수행 수준별 채점 기준 (선택 · 학생에게는 안 보이고 "AI 예상 채점" 때만 참고해요) — 한 줄에 하나씩: 영역명 | 상 설명 | 중 설명 | 하 설명',type:'textarea',ph:'내용 | 상(8~10점): 주제와 관련된 내용을 구체적 예시와 함께 전개함 | 중(5~7점): 내용은 있으나 예시가 부족함 | 하(0~4점): 주제에서 벗어남'},
     {key:'targetSchool',label:'대상 학교',type:'text'},
     {key:'targetGrade',label:'대상 학년',type:'text'},
     {key:'targetClass',label:'대상 반',type:'text'},
     {key:'condText',label:'조건 (한 줄에 하나씩)',type:'textarea',ph:'최소 4문장 이상 | 문장수:4\n비교급 사용 | regex:more\\s+\\w+\\s+than'}
   ]}
 };
+/** 평가 영역 텍스트("영역명 | 영역만점 | 요소1; 요소2 ...", 한 줄에 하나)를 학생이 보기 좋은 HTML로 바꿔줘요.
+ *  형식을 안 지킨 줄(구분자 없는 옛날 자유 서술형 평가 기준)도 앞에 "- "를 붙여 목록처럼 보여줘요. */
+function renderEvalAreas(text){
+  if(!text)return '';
+  return String(text).split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    if(parts.length>=2){
+      const area=parts[0],maxScore=parts[1],factors=(parts[2]||'').split(';').map(x=>x.trim()).filter(Boolean);
+      let html='<div style="margin-top:8px"><b>'+escH(area)+'</b>'+(maxScore?' <span style="color:#6b7684;font-weight:600">(만점 '+escH(maxScore)+'점)</span>':'')+'</div>';
+      html+=factors.length?factors.map(f=>'<div style="padding-left:6px">- '+escH(f)+'</div>').join(''):(parts[2]?'<div style="padding-left:6px">- '+escH(parts[2])+'</div>':'');
+      return html;
+    }
+    return '<div>- '+escH(line)+'</div>';
+  }).join('');
+}
 function viewContentAdd(){setWide(false);mountView(w=>{
   w.appendChild(el('h1','title','🧩 컨텐츠 추가'));
   w.appendChild(el('div','hint','새 주제를 추가할 종류를 골라주세요. 추가한 내용은 스프레드시트에 바로 저장되지만, 스프레드시트 담당 선생님이 "🔄 사이트에 반영하기"를 눌러야 실제 사이트에 보여요.'));
@@ -2762,8 +2778,8 @@ function runExam(topic){setWide(false);deckInit();
   slideAdd(b=>{b.appendChild(el('span','badge accent','수행평가 대비 · 글쓰기'));b.appendChild(el('h1','title',topic.title));
     b.appendChild(el('div','lead',autoFormatPrompt(topic.prompt)));
     if(topic.evalCriteria){
-      const evalBox=el('div');evalBox.style.cssText='background:#f4f5ff;border-radius:12px;padding:12px 14px;margin-top:10px;font-size:14px;line-height:1.7;white-space:pre-wrap';
-      evalBox.innerHTML='<b>📋 평가 기준</b><br>'+autoFormatPrompt(topic.evalCriteria);
+      const evalBox=el('div');evalBox.style.cssText='background:#f4f5ff;border-radius:12px;padding:12px 14px;margin-top:10px;font-size:14px;line-height:1.7';
+      evalBox.innerHTML='<b>📋 평가 영역</b>'+renderEvalAreas(topic.evalCriteria);
       b.appendChild(evalBox);
     }
     const bannerSlot=el('div');b.appendChild(bannerSlot);
@@ -2804,6 +2820,35 @@ function runExam(topic){setWide(false);deckInit();
       const rtime=el('div','rrow');rtime.innerHTML='<span class="rl">학습 시간</span><span class="rn">'+fmtDur(studyMs)+'</span>';wrapR.appendChild(rtime);
       const rc=el('div','rrow');rc.innerHTML='<span class="rl">조건 충족</span><span class="rn">'+okConds+' / '+totalConds+'</span>';wrapR.appendChild(rc);
       b.appendChild(wrapR);
+      // 평가 영역별 수행 수준(상/중/하 채점 기준)은 학생에게 절대 보여주지 않고 서버에만 저장돼 있다가,
+      // 이 버튼을 누르면 AI가 그 기준에 맞춰 판단한 "예상 점수"만 알려줘요.
+      const gradeRow=el('div','rep');gradeRow.style.cssText='margin-top:14px';
+      const gradeBtn=el('button','btn blue','🤖 AI 예상 채점 보기');gradeBtn.type='button';
+      const gradeBox=el('div');gradeBox.style.cssText='margin-top:10px';
+      gradeRow.appendChild(gradeBtn);gradeRow.appendChild(gradeBox);
+      b.appendChild(gradeRow);
+      gradeBtn.onclick=async()=>{
+        if(!taskText.trim()){gradeBox.innerHTML='<div class="fx no">먼저 글을 써주세요.</div>';return;}
+        gradeBtn.disabled=true;const prevT=gradeBtn.textContent;gradeBtn.textContent='채점하는 중…';gradeBox.innerHTML='';
+        try{
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'gradeExamRubric',topicId:topic.id,studentId:USER.id,text:taskText})});
+          const data=await res.json();
+          if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 예상 채점에 실패했어요.');
+          const r=data.result;
+          let html='<div style="background:#eef0ff;border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.7">';
+          html+='<b>🤖 AI 예상 채점 결과 · '+escH(String(r.total))+' / '+escH(String(r.totalMax))+'점</b>';
+          (r.areas||[]).forEach(a=>{
+            html+='<div style="margin-top:8px"><b>'+escH(a.area)+'</b> <span style="color:#4338ca;font-weight:700">'+escH(String(a.score))+' / '+escH(String(a.maxScore))+'점</span></div>';
+            if(a.reason)html+='<div style="padding-left:6px;color:#6b7684;font-size:13px">'+escH(a.reason)+'</div>';
+          });
+          html+='<div class="hint" style="margin-top:8px">※ AI가 매긴 예상 점수예요. 실제 점수는 선생님이 첨삭에서 확인해주세요.</div></div>';
+          gradeBox.innerHTML=html;
+        }catch(e){
+          gradeBox.innerHTML='<div class="fx no">'+escH(String(e.message||e))+'</div>';
+        }finally{
+          gradeBtn.disabled=false;gradeBtn.textContent=prevT;
+        }
+      };
       const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';
       const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','글 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
       const msg=el('div','rep hint','제출하면 관리자(선생님)가 글을 읽고 첨삭을 남길 수 있어요.');b.appendChild(msg);
