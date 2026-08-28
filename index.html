@@ -994,7 +994,7 @@ function toExamPoint(g){
     else if(c.regex){try{const re=new RegExp(c.regex,'i');test=t=>re.test(t);}catch(e){test=()=>true;}}
     else test=()=>true;return {label:c.label,test};});
   return {id:g.id,level:g.level,title:g.title,prompt:g.prompt||'',conds,
-    evalArea:g.evalArea||'',evalFactor:g.evalFactor||'',
+    evalCriteria:g.evalCriteria||'',
     targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||'',targetClass:g.targetClass||''};
 }
 const EXAM={};
@@ -1007,6 +1007,46 @@ const EXAM={};
 
 /* ================= app state ================= */
 let USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false},curLevel='L1';
+/* AI로 조건 확인하기 — 정규식으로 판단하기 애매한 문법 조건도 AI가 글 전체를 읽고 직접 판단해줘요.
+   너무 자주 누르지 못하도록 클라이언트에서도 쿨다운(초읽기)을 걸어요 (서버에서도 한 번 더 막아줘요). */
+const AI_COND_CHECK_COOLDOWN_SEC=20;
+function addAiCondCheckButton(container,ul,getText){
+  const row=el('div');row.style.cssText='display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap';
+  const aiBtn=el('button','btn ghost','🤖 AI로 조건 확인하기');aiBtn.type='button';aiBtn.style.cssText='padding:6px 14px;font-size:13px';
+  const aiMsg=el('span','fx');
+  row.appendChild(aiBtn);row.appendChild(aiMsg);
+  container.appendChild(row);
+  let cooldownTimer=null;
+  const startCooldown=()=>{
+    let remain=AI_COND_CHECK_COOLDOWN_SEC;
+    aiBtn.disabled=true;
+    const orig='🤖 AI로 조건 확인하기';
+    aiBtn.textContent=orig+' ('+remain+'초)';
+    cooldownTimer=setInterval(()=>{
+      remain--;
+      if(remain<=0){clearInterval(cooldownTimer);aiBtn.disabled=false;aiBtn.textContent=orig;}
+      else aiBtn.textContent=orig+' ('+remain+'초)';
+    },1000);
+  };
+  aiBtn.onclick=async()=>{
+    const text=getText();
+    if(!text||!text.trim()){aiMsg.className='fx no';aiMsg.textContent='먼저 글을 써주세요.';return;}
+    const items=Array.from(ul.querySelectorAll('li'));
+    const labels=items.map(li=>li._c.label);
+    aiBtn.disabled=true;aiMsg.className='fx';aiMsg.textContent='AI가 확인하는 중… (몇 초 걸릴 수 있어요)';
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'checkConditionsAI',studentId:USER.id,text,conditions:labels})});
+      let data=null;try{data=await res.json();}catch(e){}
+      if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 조건 확인 실패');
+      items.forEach((li,i)=>{const ok=!!data.results[i];li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';});
+      aiMsg.className='fx ok';aiMsg.textContent='✅ AI가 조건을 다시 확인했어요.';
+    }catch(e){
+      aiMsg.className='fx no';aiMsg.textContent=String(e.message||e);
+    }finally{
+      startCooldown();
+    }
+  };
+}
 const SESSION_KEY='ewl2_session';
 function saveSession(){try{store.set(SESSION_KEY,JSON.stringify(USER));}catch(e){}}
 function loadSession(){try{const raw=store.get(SESSION_KEY);if(!raw)return null;const u=JSON.parse(raw);if(!u||!u.id)return null;return u;}catch(e){return null;}}
@@ -1496,8 +1536,7 @@ const CONTENT_FORMS={
     {key:'title',label:'제목',type:'text'},
     {key:'level',label:'레벨',type:'text'},
     {key:'prompt',label:'과제 프롬프트',type:'textarea',ph:'학생에게 보여줄 과제 설명'},
-    {key:'evalArea',label:'평가 영역 (선택)',type:'textarea',ph:'예) 내용, 표현, 형식 등 학교 수행평가 안내문에 적힌 평가 영역을 그대로 적어주세요'},
-    {key:'evalFactor',label:'평가 요소 (선택)',type:'textarea',ph:'예) 각 평가 영역별 세부 채점 기준을 적어주세요'},
+    {key:'evalCriteria',label:'평가 기준 (선택)',type:'textarea',ph:'예) 학교 수행평가 안내문에 적힌 평가 기준을 그대로 적어주세요'},
     {key:'targetSchool',label:'대상 학교',type:'text'},
     {key:'targetGrade',label:'대상 학년',type:'text'},
     {key:'targetClass',label:'대상 반',type:'text'},
@@ -2083,7 +2122,8 @@ function runDrill(P){setWide(false);deckInit();
     const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';b.appendChild(ta);
     const ul=el('ul','conds');P.task.conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});b.appendChild(ul);
     const fx=el('div','fx');b.appendChild(fx);
-    b.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요.'));
+    addAiCondCheckButton(b,ul,()=>ta.value);
+    b.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 판단이 애매한 문법 조건은 "🤖 AI로 조건 확인하기"를 눌러 다시 확인할 수 있어요.'));
     const checkConds=()=>{let all=true;ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';if(!ok)all=false;});
       RES.taskDone=all;RES.taskText=ta.value;
       if(!ta.value.trim()){fx.className='fx';fx.textContent='';}
@@ -2485,10 +2525,11 @@ function runArticle(topic){setWide(false);deckInit();
     const ta=el('textarea','in');ta.placeholder='여기에 영어로 요약을 써요.';b.appendChild(ta);
     const ul=el('ul','conds');topic.conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});b.appendChild(ul);
     const fx=el('div','fx');b.appendChild(fx);
+    addAiCondCheckButton(b,ul,()=>ta.value);
     const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
     const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
     const saveMsg=el('span','fx');saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);b.appendChild(saveRow);
-    b.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요.'));
+    b.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 판단이 애매한 문법 조건은 "🤖 AI로 조건 확인하기"를 눌러 다시 확인할 수 있어요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요.'));
     const checkConds=()=>{let all=true;ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';if(!ok)all=false;});
       taskDone=all;taskText=ta.value;ST.draft=ta.value;
       if(!ta.value.trim()){fx.className='fx';fx.textContent='';}
@@ -2553,22 +2594,20 @@ function runExam(topic){setWide(false);deckInit();
   const DRAFT_CHAPTER='Performance Assessment',DRAFT_POINT=topic.title;
   slideAdd(b=>{b.appendChild(el('span','badge accent','수행평가 대비 · 글쓰기'));b.appendChild(el('h1','title',topic.title));
     b.appendChild(el('div','lead',autoFormatPrompt(topic.prompt)));
-    if(topic.evalArea||topic.evalFactor){
+    if(topic.evalCriteria){
       const evalBox=el('div');evalBox.style.cssText='background:#f4f5ff;border-radius:12px;padding:12px 14px;margin-top:10px;font-size:14px;line-height:1.7;white-space:pre-wrap';
-      let evalHtml='<b>📋 평가 기준</b>';
-      if(topic.evalArea)evalHtml+='<br><b>평가 영역</b> — '+topic.evalArea;
-      if(topic.evalFactor)evalHtml+='<br><b>평가 요소</b> — '+topic.evalFactor;
-      evalBox.innerHTML=evalHtml;
+      evalBox.innerHTML='<b>📋 평가 기준</b><br>'+autoFormatPrompt(topic.evalCriteria);
       b.appendChild(evalBox);
     }
     const bannerSlot=el('div');b.appendChild(bannerSlot);
     const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';b.appendChild(ta);
     const ul=el('ul','conds');topic.conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});b.appendChild(ul);
     const fx=el('div','fx');b.appendChild(fx);
+    addAiCondCheckButton(b,ul,()=>ta.value);
     const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
     const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
     const saveMsg=el('span','fx');saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);b.appendChild(saveRow);
-    b.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요.'));
+    b.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 판단이 애매한 문법 조건은 "🤖 AI로 조건 확인하기"를 눌러 다시 확인할 수 있어요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요.'));
     const checkConds=()=>{let all=true;ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';if(!ok)all=false;});
       taskDone=all;taskText=ta.value;ST.draft=ta.value;
       if(!ta.value.trim()){fx.className='fx';fx.textContent='';}
