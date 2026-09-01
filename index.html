@@ -32,7 +32,7 @@
     background:linear-gradient(150deg,#FFEDE0 0%,#FFE0EC 35%,#F3E4FF 68%,#DFF6F5 100%);
     display:flex;align-items:stretch;justify-content:center;padding:0 26px;position:relative}
   #page{position:relative;z-index:1;width:100%;max-width:920px;height:100%;display:flex;align-items:stretch;justify-content:center;margin:0 auto;transition:max-width .25s ease}
-  #page.wide{max-width:1320px}
+  #page.wide{max-width:1600px}
   #frame{width:100%;height:100%;background:var(--paper);border-radius:22px;
     box-shadow:0 30px 60px rgba(80,55,70,.25);display:flex;flex-direction:column;overflow:hidden}
   /* ===== hero ===== */
@@ -3012,7 +3012,7 @@ function setStudyTimer(base,label){if(studyTimerId){clearInterval(studyTimerId);
   tick();studyTimerId=setInterval(tick,1000);}
 function freezeStudyTimer(){if(studyTimerId){clearInterval(studyTimerId);studyTimerId=null;}}
 function clearStudyTimer(){freezeStudyTimer();studyTimerBase=null;const el=document.getElementById('studyTimer');if(el)el.textContent='';}
-function slideAdd(build,opts){const s=el('div','slide');const b=el('div','inner');s.appendChild(b);build(b);if(opts){if(opts.onEnter)s._onEnter=opts.onEnter;if(opts.collect)s._collect=opts.collect;if(opts.focus)s._focusSel=opts.focus;if(opts.wide)b.style.maxWidth='1120px';if(opts.lock)s._lock=opts.lock;}s._box=b;stage.appendChild(s);slides.push(s);return s;}
+function slideAdd(build,opts){const s=el('div','slide');const b=el('div','inner');s.appendChild(b);build(b);if(opts){if(opts.onEnter)s._onEnter=opts.onEnter;if(opts.collect)s._collect=opts.collect;if(opts.focus)s._focusSel=opts.focus;if(opts.wide)b.style.maxWidth=(opts.wideMax||'1120px');if(opts.lock)s._lock=opts.lock;}s._box=b;stage.appendChild(s);slides.push(s);return s;}
 function deckShow(i){const cur=slides[idx];
   if(cur&&i>idx&&!!cur._lock&&cur._lock())return; // 잠금 상태에서는 다음으로 넘어갈 수 없음
   if(cur&&cur._collect)try{cur._collect();}catch(e){}
@@ -3500,7 +3500,7 @@ function runParagraph(topic){setWide(true);deckInit();
 }
 
 /* ================= ARTICLE (기사 요약) 학습 흐름 ================= */
-function runArticle(topic){setWide(false);deckInit();
+function runArticle(topic){setWide(true);deckInit();
   const articleStart=Date.now();setStudyTimer(articleStart,'⏱ 학습 시간');
   const ST={draft:''};
   // 1) 기사 읽기
@@ -3508,7 +3508,7 @@ function runArticle(topic){setWide(false);deckInit();
     if(topic.source)b.appendChild(el('div','hint',topic.source));
     const arImgs=renderImages(topic.images);if(arImgs)b.appendChild(arImgs);
     const body=el('div','lead');body.style.cssText='white-space:pre-line;line-height:1.85;margin-top:10px';body.textContent=topic.body;b.appendChild(body);
-  });
+  },{wide:true,wideMax:'1300px'});
   // 2) 어휘 (있을 때만) — 카드를 누르면 발음을 들을 수 있어요.
   if(topic.vocab&&topic.vocab.length){
     slideAdd(b=>{b.appendChild(el('span','badge blue','Article · 어휘'));b.appendChild(el('h1','title','핵심 단어'));
@@ -3522,7 +3522,7 @@ function runArticle(topic){setWide(false);deckInit();
         grid.appendChild(card);
       });
       b.appendChild(grid);
-    });
+    },{wide:true,wideMax:'1300px'});
   }
   // 3) 요약문 작성 (실시간 조건 확인 + 왼쪽에 기사 본문을 같이 보여줘요) — 기사 문장을 3단어 이상 그대로 베끼면
   //    알려주는 조건도 함께 검사해요(붙여넣기는 이미 사이트 전체에서 막혀 있지만, 직접 옮겨 적는 것까지 잡아내기 위해서예요).
@@ -3572,7 +3572,7 @@ function runArticle(topic){setWide(false);deckInit();
         bannerSlot.appendChild(draftBanner(found.savedAt));
       }
     })();
-  },{wide:true,focus:'textarea'});
+  },{wide:true,wideMax:'1440px',focus:'textarea'});
   // 4) 점수 + 제출
   slideAdd(b=>{b.appendChild(el('span','badge green','Article · 채점 결과'));b.appendChild(el('h1','title','자동 채점 결과'));
     b._onShow=()=>{};
