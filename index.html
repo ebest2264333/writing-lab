@@ -1702,6 +1702,9 @@ function viewTeacherHome(){setWide(false);mountView(w=>{
   const addContentBtn=el('button','btn ghost','🧩 컨텐츠 추가');addContentBtn.type='button';addContentBtn.style.cssText='padding:10px 18px;font-size:14px';
   addContentBtn.onclick=()=>viewContentAdd();
   titleRow.appendChild(addContentBtn);
+  const aiChatBotBtn=el('button','btn ghost','🤖 AI 챗봇으로 만들기');aiChatBotBtn.type='button';aiChatBotBtn.style.cssText='padding:10px 18px;font-size:14px';
+  aiChatBotBtn.onclick=()=>viewAiContentChatBot();
+  titleRow.appendChild(aiChatBotBtn);
   // 컨텐츠 수정은 이제 관리자뿐 아니라 모든 선생님이 쓸 수 있어요 — 이미 올라간(스프레드시트에 저장된) 문제·본문·주제도
   // 선생님이 직접 사이트에서 고칠 수 있어야 해서예요. 학생 명단 관리는 계정 관리라 관리자 전용으로 남겨둬요.
   const editContentBtn=el('button','btn ghost','✏️ 컨텐츠 수정');editContentBtn.type='button';editContentBtn.style.cssText='padding:10px 18px;font-size:14px';
@@ -1921,6 +1924,133 @@ function viewContentAdd(){setWide(false);mountView(w=>{
   back.onclick=()=>viewTeacherHome();
   w.appendChild(back);
 });}
+
+/* ---- 종류 구분 없이 한 번에 대화하는 AI 챗봇 — 대화로 내용을 다 만든 뒤 "이어서 만들기"로 해당 종류의
+ *      추가 화면으로 넘어가면, 거기서 이미지 추가·최종 저장까지 마무리해요. ---- */
+function viewAiContentChatBot(){setWide(true);mountView(w=>{
+  const bk=el('button','backbtn','◀ 홈으로');bk.onclick=()=>viewTeacherHome();w.appendChild(bk);
+  w.appendChild(el('h1','title','🤖 AI 챗봇으로 컨텐츠 만들기'));
+  w.appendChild(el('div','hint','문법 드릴·문단 쓰기·기사 요약·수행평가 중 어떤 종류인지 먼저 고르지 않아도 돼요 — 그냥 원하는 걸 편하게 말하면 AI가 알아서 종류를 판단하고 내용을 채워가요. 다 됐으면 오른쪽의 "이어서 만들기"를 눌러 해당 종류의 추가 화면으로 넘어가서 이미지 추가와 최종 저장을 마무리하면 돼요.'));
+
+  const cols=el('div');cols.style.cssText='display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:14px';
+  const leftCol=el('div');leftCol.style.cssText='flex:1 1 420px;min-width:0;display:flex;flex-direction:column;gap:10px';
+  const rightCol=el('div');rightCol.style.cssText='flex:1 1 380px;min-width:280px;display:flex;flex-direction:column;gap:10px';
+  cols.appendChild(leftCol);cols.appendChild(rightCol);
+  w.appendChild(cols);
+
+  const chatBox=el('div');chatBox.style.cssText='background:#eef0ff;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px';
+  const chatLog=el('div');chatLog.style.cssText='display:flex;flex-direction:column;gap:8px;min-height:200px;max-height:460px;overflow-y:auto;padding-right:4px';
+  chatBox.appendChild(chatLog);
+  const chatInputRow=el('div');chatInputRow.style.cssText='display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap';
+  const chatInput=el('textarea','in');chatInput.rows=2;chatInput.placeholder='예: 현재완료 문법 드릴 하나 만들어줘 / 환경 오염 주제로 수행평가 글쓰기 만들어줘';chatInput.style.cssText='flex:1;min-width:200px;padding:10px;font-size:14px;border-radius:10px;font-family:var(--sans)';
+  const chatPhotoBtn=el('button','btn ghost','📷 사진 첨부');chatPhotoBtn.type='button';chatPhotoBtn.style.cssText='padding:9px 12px;font-size:13px';
+  const chatSendBtn=el('button','btn blue','보내기');chatSendBtn.type='button';chatSendBtn.style.cssText='padding:9px 16px;font-size:14px';
+  const chatPhotoInput=el('input');chatPhotoInput.type='file';chatPhotoInput.accept='image/*';chatPhotoInput.style.display='none';
+  chatInputRow.appendChild(chatInput);chatInputRow.appendChild(chatPhotoBtn);chatInputRow.appendChild(chatSendBtn);
+  chatBox.appendChild(chatInputRow);chatBox.appendChild(chatPhotoInput);
+  const chatMsg=el('div','fx');chatBox.appendChild(chatMsg);
+  leftCol.appendChild(chatBox);
+
+  const statusBox=el('div');statusBox.style.cssText='background:#fff;border:1.5px solid #e2e2ee;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px';
+  const typeBadge=el('div');typeBadge.style.cssText='font-size:13px;font-weight:700;color:#4338ca';
+  statusBox.appendChild(typeBadge);
+  const previewContent=el('div');previewContent.style.cssText='background:#f7f7fb;border-radius:10px;padding:14px';
+  statusBox.appendChild(previewContent);
+  const continueBtn=el('button','btn green','✅ 이 내용으로 이어서 만들기');continueBtn.type='button';continueBtn.style.cssText='display:none;align-self:flex-start';
+  statusBox.appendChild(continueBtn);
+  rightCol.appendChild(statusBox);
+
+  let chatHistory=[];
+  let chatType='';
+  let fieldsAccum={};
+  let chatPendingImage=null;
+
+  function chatBubble(role,text){
+    const b=el('div');
+    const isUser=role==='user';
+    b.style.cssText='max-width:85%;padding:8px 12px;border-radius:12px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;'+(isUser?'align-self:flex-end;background:#4338ca;color:#fff':'align-self:flex-start;background:#fff;color:#1c1c28;border:1px solid #e2e2ee');
+    b.textContent=text;
+    return b;
+  }
+  function renderChatLog(){
+    chatLog.innerHTML='';
+    chatHistory.forEach(m=>{ chatLog.appendChild(chatBubble(m.role,m.content)); });
+    chatLog.scrollTop=chatLog.scrollHeight;
+  }
+  function refreshStatus(){
+    if(chatType){
+      const spec=CONTENT_FORMS[chatType];
+      typeBadge.textContent='감지된 종류: '+spec.emoji+' '+spec.label;
+      previewContent.innerHTML='';
+      previewContent.appendChild(buildContentPreview(chatType, fieldsAccum, []));
+      continueBtn.style.display=fieldsAccum.title?'inline-block':'none';
+    } else {
+      typeBadge.textContent='아직 종류를 판단하지 못했어요 — 대화를 시작해보세요.';
+      previewContent.innerHTML='';
+      continueBtn.style.display='none';
+    }
+  }
+  continueBtn.onclick=()=>{
+    try{
+      localStorage.setItem('ewlDraft_'+(USER.id||'anon')+'_'+chatType+'_new', JSON.stringify({fields:fieldsAccum, imageUrls:[], chatHistory:[], savedAt:Date.now()}));
+    }catch(e){}
+    viewAddContentForm(chatType);
+  };
+  chatPhotoBtn.onclick=()=>chatPhotoInput.click();
+  chatPhotoInput.onchange=async()=>{
+    const file=chatPhotoInput.files&&chatPhotoInput.files[0];
+    if(!file)return;
+    try{
+      const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});
+      const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=dataUrl;});
+      const maxDim=1600;let w2=img.width,h2=img.height;
+      if(w2>maxDim||h2>maxDim){const scale=maxDim/Math.max(w2,h2);w2=Math.round(w2*scale);h2=Math.round(h2*scale);}
+      const canvas=document.createElement('canvas');canvas.width=w2;canvas.height=h2;
+      canvas.getContext('2d').drawImage(img,0,0,w2,h2);
+      const jpegUrl=canvas.toDataURL('image/jpeg',0.82);
+      chatPendingImage={mediaType:'image/jpeg',data:jpegUrl.split(',')[1]};
+      chatMsg.className='fx ok';chatMsg.textContent='📎 사진을 첨부했어요. 메시지를 보내면 같이 전달돼요.';
+    }catch(e){
+      chatMsg.className='fx no';chatMsg.textContent='사진을 처리하지 못했어요.';
+    }finally{
+      chatPhotoInput.value='';
+    }
+  };
+  async function sendChatMsg(){
+    const text=chatInput.value.trim();
+    if(!text&&!chatPendingImage)return;
+    chatHistory.push({role:'user',content:text||'(사진 첨부)'});
+    renderChatLog();
+    chatInput.value='';
+    chatSendBtn.disabled=true;chatMsg.className='fx';chatMsg.textContent='AI가 답하는 중… (몇 초 걸릴 수 있어요)';
+    const fieldsByType={};
+    Object.keys(CONTENT_FORMS).forEach(t=>{ fieldsByType[t]=CONTENT_FORMS[t].fields.map(f=>({key:f.key,label:f.label,hint:f.ph||''})); });
+    const body={ action:'chatContentAny', fieldsByType, lockedType:chatType, messages:chatHistory };
+    if(chatPendingImage)body.image=chatPendingImage;
+    chatPendingImage=null;
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(body)});
+      let data=null;try{data=await res.json();}catch(e){}
+      if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 응답 실패');
+      chatHistory.push({role:'assistant',content:data.reply||'(응답 없음)'});
+      renderChatLog();
+      if(data.contentType)chatType=data.contentType;
+      Object.keys(data.fields||{}).forEach(k=>{ fieldsAccum[k]=data.fields[k]; });
+      refreshStatus();
+      chatMsg.className='fx ok';chatMsg.textContent=chatType?'✅ 답을 받았어요. 오른쪽에서 확인해보세요.':'✅ 답을 받았어요.';
+    }catch(e){
+      chatMsg.className='fx no';chatMsg.textContent=String(e.message||e);
+      chatHistory.pop();
+      renderChatLog();
+    }finally{
+      chatSendBtn.disabled=false;
+    }
+  }
+  chatSendBtn.onclick=sendChatMsg;
+  chatInput.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendChatMsg(); } };
+  refreshStatus();
+});}
+
 /* ---- 기존 컨텐츠 수정 (모든 선생님 계정에서 사용 가능) ---- */
 function viewContentEditPicker(){setWide(false);mountView(w=>{
   w.appendChild(el('h1','title','✏️ 컨텐츠 수정'));
@@ -1971,6 +2101,24 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
   }
   w.appendChild(el('h1','title',spec.emoji+' '+spec.label+(isEdit?' 수정':' 추가')));
   w.appendChild(el('div','hint',isEdit?'기존 내용을 불러왔어요. 원하는 부분만 고친 뒤 저장하면 돼요.':'한 줄 입력 칸은 짧은 정보를, 여러 줄 입력 칸은 안내(placeholder)에 나온 형식대로 한 줄에 하나씩 적어주세요. 필요 없는 줄은 비워둬도 돼요.'));
+
+  /* ---- 만들다가 중간에 꺼도 이어할 수 있게, 이 선생님(아이디) + 이 컨텐츠(종류·수정이면 그 글 id) 기준으로
+   *      이 브라우저에만 임시 저장해둬요 (다른 선생님 계정이나 다른 컴퓨터에서는 안 보여요, 서버 저장 아님). ---- */
+  function draftKey(){ return 'ewlDraft_'+(USER.id||'anon')+'_'+type+'_'+(editId||'new'); }
+  function saveDraftLocal(){
+    try{
+      const vals={};spec.fields.forEach(f=>{ vals[f.key]=refs[f.key]?refs[f.key].value:''; });
+      localStorage.setItem(draftKey(), JSON.stringify({fields:vals, imageUrls, chatHistory, savedAt:Date.now()}));
+    }catch(e){}
+  }
+  function clearDraftLocal(){ try{ localStorage.removeItem(draftKey()); }catch(e){} }
+  function loadDraftLocal(){ try{ const raw=localStorage.getItem(draftKey()); return raw?JSON.parse(raw):null; }catch(e){ return null; } }
+  const draftBanner=el('div');draftBanner.style.cssText='display:none;background:#fff7e6;border:1px solid #f0c674;border-radius:10px;padding:10px 14px;margin-top:10px;align-items:center;gap:10px;flex-wrap:wrap';
+  const draftBannerText=el('span');draftBannerText.style.cssText='font-size:13.5px';draftBannerText.textContent='🕒 이어서 작성 중이던 내용을 불러왔어요.';
+  const draftClearBtn=el('button','btn ghost','새로 시작하기');draftClearBtn.type='button';draftClearBtn.style.cssText='padding:5px 12px;font-size:12.5px';
+  draftBanner.appendChild(draftBannerText);draftBanner.appendChild(draftClearBtn);
+  w.appendChild(draftBanner);
+
   const cols=el('div');cols.style.cssText='display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:14px';
   const leftCol=el('div');leftCol.style.cssText='flex:1 1 460px;min-width:0;display:flex;flex-direction:column;gap:16px';
   const rightCol=el('div');rightCol.style.cssText='flex:0 1 320px;min-width:280px;display:flex;flex-direction:column;gap:16px';
@@ -2006,6 +2154,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
     else{inp=el('input','in');inp.type='text';inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';}
     if(f.ph)inp.placeholder=f.ph;
     if(isEdit&&type==='pattern'&&f.key==='unitId'){inp.value=editId;inp.disabled=true;}
+    inp.oninput=()=>saveDraftLocal();
     wrap.appendChild(inp);
     refs[f.key]=inp;
     form.appendChild(wrap);
@@ -2042,7 +2191,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
       const cell=el('div');cell.style.cssText='position:relative;width:96px;height:96px';
       const img=document.createElement('img');img.src=u;img.style.cssText='width:100%;height:100%;object-fit:cover;border-radius:8px;display:block';
       const rm=el('button','btn ghost','✕');rm.type='button';rm.style.cssText='position:absolute;top:-6px;right:-6px;width:22px;height:22px;padding:0;font-size:11px;border-radius:50%;background:#fff;line-height:1';
-      rm.onclick=()=>{imageUrls.splice(i,1);renderThumbs();refreshPreview();};
+      rm.onclick=()=>{imageUrls.splice(i,1);renderThumbs();refreshPreview();saveDraftLocal();};
       cell.appendChild(img);cell.appendChild(rm);
       thumbWrap.appendChild(cell);
     });
@@ -2058,7 +2207,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
       const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'uploadContentImage',imageBase64:base64,mimeType:file.type||'image/jpeg',filename:file.name||''})});
       const data=await res.json();
       if(!data||!data.ok)throw new Error((data&&data.error)||'업로드하지 못했어요.');
-      imageUrls.push(data.url);renderThumbs();refreshPreview();
+      imageUrls.push(data.url);renderThumbs();refreshPreview();saveDraftLocal();
       uploadMsg.className='fx ok';uploadMsg.textContent='✅ 업로드했어요!';
     }catch(e){ uploadMsg.className='fx no';uploadMsg.textContent=String(e.message||e); }
     finally{ uploadInput.value=''; }
@@ -2071,7 +2220,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
       const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'generateContentImage',prompt})});
       const data=await res.json();
       if(!data||!data.ok)throw new Error((data&&data.error)||'그림을 생성하지 못했어요.');
-      imageUrls.push(data.url);renderThumbs();refreshPreview();
+      imageUrls.push(data.url);renderThumbs();refreshPreview();saveDraftLocal();
       genImgMsg.className='fx ok';genImgMsg.textContent='✅ 그림을 만들었어요! 마음에 안 들면 미리보기에서 지우고 다시 시도해보세요.';
     }catch(e){ genImgMsg.className='fx no';genImgMsg.textContent=String(e.message||e); }
     finally{ genImgBtn.disabled=false; }
@@ -2171,6 +2320,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
       let n=0;
       Object.keys(data.fields||{}).forEach(k=>{ if(refs[k]){refs[k].value=data.fields[k];n++;} });
       if(n)refreshPreview();
+      saveDraftLocal();
       chatMsg.className='fx ok';chatMsg.textContent=n?('✅ '+n+'개 칸을 반영했어요. 아래 미리보기에서 확인해보세요.'):'✅ 답을 받았어요.';
     }catch(e){
       chatMsg.className='fx no';chatMsg.textContent=String(e.message||e);
@@ -2183,6 +2333,20 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
   chatSendBtn.onclick=sendChatMsg;
   chatInput.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendChatMsg(); } };
 
+  function applyDraftValues(d){
+    if(!d)return;
+    if(d.fields)spec.fields.forEach(f=>{ if(refs[f.key]&&d.fields[f.key]!==undefined)refs[f.key].value=d.fields[f.key]; });
+    if(Array.isArray(d.imageUrls)){ imageUrls=d.imageUrls.slice(); renderThumbs(); }
+    if(Array.isArray(d.chatHistory)&&d.chatHistory.length){ chatHistory=d.chatHistory.slice(); renderChatLog(); }
+    refreshPreview();
+    draftBanner.style.display='flex';
+  }
+  draftClearBtn.onclick=()=>{ clearDraftLocal(); viewAddContentForm(type, editId); };
+
+  if(!isEdit){
+    applyDraftValues(loadDraftLocal());
+  }
+
   if(isEdit){
     (async()=>{
       try{
@@ -2191,6 +2355,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
         if(data&&data.ok&&data.fields){
           spec.fields.forEach(f=>{ if(refs[f.key]&&data.fields[f.key]!==undefined) refs[f.key].value=data.fields[f.key]; });
           if(data.fields.imagesText){ imageUrls=String(data.fields.imagesText).split('\n').map(s=>s.trim()).filter(Boolean); renderThumbs(); }
+          applyDraftValues(loadDraftLocal());
           refreshPreview();
           loadMsg.remove();
         } else {
@@ -2225,6 +2390,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
           Object.keys(r.fields).forEach(k=>{ if(refs[k]&&!refs[k].value.trim()){refs[k].value=r.fields[k];n++;} });
           applyBtn.textContent=n?('✅ '+n+'개 칸 적용 완료'):'채울 빈 칸 없음';
           if(n)refreshPreview();
+          saveDraftLocal();
         };
         head.appendChild(applyBtn);
         const preview=el('div');preview.style.cssText='font-size:12.5px;color:#6b7684;margin-top:6px;white-space:pre-wrap;max-height:160px;overflow:auto';
@@ -2306,6 +2472,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
       const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
       let data=null;try{data=await res.json();}catch(e){}
       if(data&&data.ok===false)throw new Error(data.error||'저장 실패');
+      clearDraftLocal();
       msg.className='fx ok';msg.textContent='✅ '+(isEdit?'수정했어요!':'저장했어요!')+' 스프레드시트 담당 선생님이 "🔄 사이트에 반영하기"를 누르면 사이트에 보여요.';
       if(!isEdit)spec.fields.forEach(f=>{refs[f.key].value='';});
     }catch(e){
