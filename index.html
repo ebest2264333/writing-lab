@@ -875,7 +875,7 @@ const LEVELS=[
    "🔄 사이트에 반영하기"를 누르면 이 자리가 최신 내용으로 채워져요. 기존 레벨(L1/L2/L3)은 이름·교재명만
    덮어쓰고, 새로 추가된 레벨은 Pattern Drill 챕터 없이(Paragraph Writing/Article/수행평가/Re-Writing은 바로
    가능) LEVELS 맨 뒤에 추가돼요. */
-const LEVELS_DATA=[{"id":"L1","name":"초6","book":"천일문 WRITING LEVEL 1","seq":1},{"id":"L2","name":"중1","book":"천일문 WRITING LEVEL 2","seq":2},{"id":"L3","name":"중2","book":"천일문 WRITING LEVEL 3","seq":3},{"id":"L4","name":"초5","book":"WRITING LEVEL 1","seq":4}];
+const LEVELS_DATA=[{"id":"L4","name":"초5","book":"LEVEL 1","seq":1},{"id":"L1","name":"초6","book":"LEVEL 2","seq":2},{"id":"L2","name":"중1","book":"LEVEL 3","seq":3},{"id":"L3","name":"중2","book":"LEVEL 4","seq":4}];
 (function applyLevelsData(){
   if(!Array.isArray(LEVELS_DATA)||!LEVELS_DATA.length)return;
   const bySeq=LEVELS_DATA.slice().sort((a,b)=>(a.seq||0)-(b.seq||0));
