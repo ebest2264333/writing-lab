@@ -1963,7 +1963,7 @@ function viewContentEditList(type){setWide(false);mountView(w=>{
     });
   })();
 });}
-function viewAddContentForm(type,editId){setWide(false);mountView(w=>{
+function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
   const spec=CONTENT_FORMS[type];
   const isEdit=!!editId;
   if(isEdit){
@@ -1971,7 +1971,12 @@ function viewAddContentForm(type,editId){setWide(false);mountView(w=>{
   }
   w.appendChild(el('h1','title',spec.emoji+' '+spec.label+(isEdit?' 수정':' 추가')));
   w.appendChild(el('div','hint',isEdit?'기존 내용을 불러왔어요. 원하는 부분만 고친 뒤 저장하면 돼요.':'한 줄 입력 칸은 짧은 정보를, 여러 줄 입력 칸은 안내(placeholder)에 나온 형식대로 한 줄에 하나씩 적어주세요. 필요 없는 줄은 비워둬도 돼요.'));
-  const aiBox=el('div');aiBox.style.cssText='background:#eef0ff;border-radius:12px;padding:14px;margin-top:14px;display:flex;flex-direction:column;gap:8px';
+  const cols=el('div');cols.style.cssText='display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:14px';
+  const leftCol=el('div');leftCol.style.cssText='flex:1 1 460px;min-width:0;display:flex;flex-direction:column;gap:16px';
+  const rightCol=el('div');rightCol.style.cssText='flex:0 1 320px;min-width:280px;display:flex;flex-direction:column;gap:16px';
+  cols.appendChild(leftCol);cols.appendChild(rightCol);
+  w.appendChild(cols);
+  const aiBox=el('div');aiBox.style.cssText='background:#eef0ff;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px';
   aiBox.appendChild(el('div',null,'<b>✨ 제목(주제)만 입력하고 나머지는 AI로 채워볼까요?</b>'));
   aiBox.appendChild(el('div','hint','제목을 입력한 뒤 버튼을 누르면, 아직 비어있는 칸들을 AI가 채워줘요. 채워진 내용은 자유롭게 고친 뒤 저장하면 돼요. (설정 탭에 Claude API 키가 등록돼 있어야 동작해요)'));
   const genRow=el('div');genRow.style.cssText='display:flex;gap:10px;align-items:center;flex-wrap:wrap';
@@ -1988,8 +1993,8 @@ function viewAddContentForm(type,editId){setWide(false);mountView(w=>{
   imgRow.appendChild(imgBtn);imgRow.appendChild(imgMsg);
   aiBox.appendChild(imgRow);aiBox.appendChild(imgInput);
   if(isEdit)aiBox.style.display='none'; // AI 자동 채우기는 새로 만들 때만 필요해요 — 수정 화면에서는 숨겨요.
-  w.appendChild(aiBox);
-  const form=el('div');form.style.cssText='display:flex;flex-direction:column;gap:14px;margin-top:16px';
+  rightCol.appendChild(aiBox);
+  const form=el('div');form.style.cssText='display:flex;flex-direction:column;gap:14px';
   const loadMsg=el('div','hint','불러오는 중…');
   if(isEdit)form.appendChild(loadMsg);
   const refs={};
@@ -2005,29 +2010,31 @@ function viewAddContentForm(type,editId){setWide(false);mountView(w=>{
     refs[f.key]=inp;
     form.appendChild(wrap);
   });
-  w.appendChild(form);
+  leftCol.appendChild(form);
 
-  /* ---- 공통 이미지 추가 (문법/문단/기사/수행평가 어떤 종류든 똑같이 쓸 수 있어요) ---- */
-  const imgBox=el('div');imgBox.style.cssText='background:#f7f7fb;border-radius:12px;padding:14px;margin-top:16px;display:flex;flex-direction:column;gap:10px';
-  imgBox.appendChild(el('div',null,'<b>🖼️ 이미지 추가 (선택)</b>'));
-  imgBox.appendChild(el('div','hint','사진·그림 파일을 올리면 학생 화면에 그대로 보여요. 여러 장 올릴 수 있고, 미리보기에서 ✕를 눌러 뺄 수 있어요.'));
+  /* ---- 사진 업로드 (문법/문단/기사/수행평가 어떤 종류든 똑같이 쓸 수 있어요) ---- */
+  const uploadBox=el('div');uploadBox.style.cssText='background:#f7f7fb;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px';
+  uploadBox.appendChild(el('div',null,'<b>🖼️ 이미지 추가 (선택)</b>'));
+  uploadBox.appendChild(el('div','hint','사진·그림 파일을 올리면 학생 화면에 그대로 보여요. 여러 장 올릴 수 있고, 미리보기에서 ✕를 눌러 뺄 수 있어요.'));
   const thumbWrap=el('div');thumbWrap.style.cssText='display:flex;flex-wrap:wrap;gap:10px';
-  imgBox.appendChild(thumbWrap);
+  uploadBox.appendChild(thumbWrap);
   const uploadRow=el('div');uploadRow.style.cssText='display:flex;gap:10px;align-items:center;flex-wrap:wrap';
   const uploadBtn=el('button','btn ghost','📤 이미지 업로드');uploadBtn.type='button';uploadBtn.style.cssText='padding:8px 14px;font-size:13px';
   const uploadInput=el('input');uploadInput.type='file';uploadInput.accept='image/*';uploadInput.style.display='none';
   const uploadMsg=el('span','fx');
   uploadRow.appendChild(uploadBtn);uploadRow.appendChild(uploadMsg);
-  imgBox.appendChild(uploadRow);imgBox.appendChild(uploadInput);
-  const genImgDivider=el('div','hint','— 또는 —');genImgDivider.style.cssText='margin:2px 0';imgBox.appendChild(genImgDivider);
-  imgBox.appendChild(el('div','hint','올릴 사진이 없으면, 원하는 그림을 설명만 적어서 AI가 직접 그려주는 것도 가능해요 (설정 탭에 OPENAI_API_KEY가 있어야 동작해요).'));
-  const genImgRow=el('div');genImgRow.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap';
-  const genImgInput=el('input','in');genImgInput.type='text';genImgInput.placeholder='예: 도서관에서 책을 읽는 학생, 만화 스타일';genImgInput.style.cssText='flex:1;min-width:200px;padding:8px 10px;font-size:13px;border-radius:8px';
-  const genImgBtn=el('button','btn ghost','🎨 AI로 그림 생성하기');genImgBtn.type='button';genImgBtn.style.cssText='padding:8px 14px;font-size:13px';
-  genImgRow.appendChild(genImgInput);genImgRow.appendChild(genImgBtn);
-  imgBox.appendChild(genImgRow);
-  const genImgMsg=el('span','fx');imgBox.appendChild(genImgMsg);
-  w.appendChild(imgBox);
+  uploadBox.appendChild(uploadRow);uploadBox.appendChild(uploadInput);
+  rightCol.appendChild(uploadBox);
+
+  /* ---- AI로 그림 생성 (업로드할 사진이 없을 때 대신 그려달라고 하는 별도 도구) ---- */
+  const genImgBox=el('div');genImgBox.style.cssText='background:#f7f7fb;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px';
+  genImgBox.appendChild(el('div',null,'<b>🎨 AI로 그림 생성하기</b>'));
+  genImgBox.appendChild(el('div','hint','올릴 사진이 없으면, 원하는 그림을 설명만 적어서 AI가 직접 그려주는 것도 가능해요 (설정 탭에 OPENAI_API_KEY가 있어야 동작해요). 만든 그림은 위 이미지 목록에 같이 추가돼요.'));
+  const genImgInput=el('input','in');genImgInput.type='text';genImgInput.placeholder='예: 도서관에서 책을 읽는 학생, 만화 스타일';genImgInput.style.cssText='padding:8px 10px;font-size:13px;border-radius:8px';
+  const genImgBtn=el('button','btn ghost','🎨 AI로 그림 생성하기');genImgBtn.type='button';genImgBtn.style.cssText='padding:8px 14px;font-size:13px;align-self:flex-start';
+  genImgBox.appendChild(genImgInput);genImgBox.appendChild(genImgBtn);
+  const genImgMsg=el('span','fx');genImgBox.appendChild(genImgMsg);
+  rightCol.appendChild(genImgBox);
   let imageUrls=[];
   function renderThumbs(){
     thumbWrap.innerHTML='';
@@ -2071,7 +2078,7 @@ function viewAddContentForm(type,editId){setWide(false);mountView(w=>{
   };
 
   /* ---- AI와 대화하며 만들기 (여러 번 주고받으며 다듬기 — 추가·수정 화면 둘 다에서 써요) ---- */
-  const chatBox=el('div');chatBox.style.cssText='background:#eef0ff;border-radius:12px;padding:14px;margin-top:16px;display:flex;flex-direction:column;gap:10px';
+  const chatBox=el('div');chatBox.style.cssText='background:#eef0ff;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px';
   chatBox.appendChild(el('div',null,'<b>🤖 AI와 대화하며 만들기</b>'));
   chatBox.appendChild(el('div','hint','채팅으로 요청하면 AI가 위 입력 칸들을 채우거나 고쳐줘요. "이 문장 더 쉽게 바꿔줘", "조건 하나 추가해줘"처럼 여러 번 이어서 다듬을 수 있어요. (설정 탭에 Claude 또는 GPT API 키가 등록돼 있어야 동작해요)'));
   const chatLog=el('div');chatLog.style.cssText='display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto;padding-right:4px';
@@ -2084,10 +2091,10 @@ function viewAddContentForm(type,editId){setWide(false);mountView(w=>{
   chatInputRow.appendChild(chatInput);chatInputRow.appendChild(chatPhotoBtn);chatInputRow.appendChild(chatSendBtn);
   chatBox.appendChild(chatInputRow);chatBox.appendChild(chatPhotoInput);
   const chatMsg=el('div','fx');chatBox.appendChild(chatMsg);
-  w.appendChild(chatBox);
+  rightCol.appendChild(chatBox);
 
   /* ---- 미리보기 (학생 화면 느낌 미리 보기) — AI와 대화하거나 직접 입력 칸을 고칠 때마다 새로고침해서 확인할 수 있어요 ---- */
-  const previewBox=el('div');previewBox.style.cssText='background:#fff;border:1.5px solid #e2e2ee;border-radius:12px;padding:14px;margin-top:16px;display:flex;flex-direction:column;gap:10px';
+  const previewBox=el('div');previewBox.style.cssText='background:#fff;border:1.5px solid #e2e2ee;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px';
   const previewHead=el('div');previewHead.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap';
   previewHead.appendChild(el('div',null,'<b>👀 미리보기 (학생 화면 느낌)</b>'));
   const previewRefreshBtn=el('button','btn ghost','🔄 새로고침');previewRefreshBtn.type='button';previewRefreshBtn.style.cssText='padding:6px 12px;font-size:13px';
@@ -2096,7 +2103,7 @@ function viewAddContentForm(type,editId){setWide(false);mountView(w=>{
   previewBox.appendChild(el('div','hint','실제 학생 화면을 그대로 재현한 건 아니고, 지금까지 채워진 제목·설명·조건·이미지가 대략 어떤 느낌으로 보일지 참고용으로 보여주는 화면이에요.'));
   const previewContent=el('div');previewContent.style.cssText='background:#f7f7fb;border-radius:10px;padding:14px';
   previewBox.appendChild(previewContent);
-  w.appendChild(previewBox);
+  leftCol.appendChild(previewBox);
   function refreshPreview(){
     const vals={};spec.fields.forEach(f=>{ vals[f.key]=refs[f.key]?refs[f.key].value:''; });
     previewContent.innerHTML='';
@@ -2277,13 +2284,13 @@ function viewAddContentForm(type,editId){setWide(false);mountView(w=>{
       imgInput.value='';
     }
   };
-  const msg=el('div','fx');msg.style.marginTop='10px';
-  const btnRow=el('div');btnRow.style.cssText='display:flex;gap:10px;margin-top:16px';
+  const msg=el('div','fx');
+  const btnRow=el('div');btnRow.style.cssText='display:flex;gap:10px';
   const saveBtn=el('button','btn green',isEdit?'수정 저장하기':'저장하기');saveBtn.type='button';
   const back=el('button','btn ghost','← 목록으로');back.type='button';back.onclick=()=>isEdit?viewContentEditList(type):viewContentAdd();
   btnRow.appendChild(saveBtn);btnRow.appendChild(back);
-  w.appendChild(btnRow);
-  w.appendChild(msg);
+  leftCol.appendChild(btnRow);
+  leftCol.appendChild(msg);
   saveBtn.onclick=async()=>{
     const payload={action:isEdit?'editContent':'addContent',contentType:type};
     if(isEdit)payload.id=editId;
