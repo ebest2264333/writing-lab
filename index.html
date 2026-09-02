@@ -1111,6 +1111,7 @@ function toStoryTopic(g){
     starter:p.starter||''
   }));
   return {id:g.id,level:g.level,title:g.title||'',titleKo:g.titleKo||'',intro:g.intro||'',sampleText:g.sampleText||'',pics,
+    minWords:Number(g.minWords||0)||0,
     targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||'',targetClass:g.targetClass||''};
 }
 const STORY={};
@@ -1958,7 +1959,8 @@ const CONTENT_FORMS={
     {key:'targetSchool',label:'대상 학교',type:'text'},
     {key:'targetGrade',label:'대상 학년',type:'text'},
     {key:'targetClass',label:'대상 반',type:'text'},
-    {key:'sampleText',label:'샘플 이야기 (선택 · 학생에게 예시로 보여줘요)',type:'textarea',ph:'First, George draws a picture of bananas in the kitchen. Then, ...'}
+    {key:'sampleText',label:'샘플 이야기 (선택 · 학생에게 예시로 보여줘요)',type:'textarea',ph:'First, George draws a picture of bananas in the kitchen. Then, ...'},
+    {key:'minWords',label:'전체 단어 수 최소 기준 (그림들 합쳐서, 선택)',type:'text',ph:'예) 200 — 비워두면 단어 수 검사를 안 해요'}
   ]}
 };
 /** 컨텐츠 추가/수정 화면의 "👀 미리보기"에서 씀 — 저장하기 전에 지금 입력된 값(또는 AI와 대화해서 나온 값)으로
@@ -2782,7 +2784,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
       msg.className='fx ok';msg.textContent='✅ '+(isEdit?'수정했어요!':'저장했어요!')+' 스프레드시트 담당 선생님이 "🔄 사이트에 반영하기"를 누르면 사이트에 보여요.';
       if(!isEdit)spec.fields.forEach(f=>{refs[f.key].value='';});
     }catch(e){
-      msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요. 잠시 후 다시 시도해주세요.';
+      msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요: '+String((e&&e.message)||e)+' (스프레드시트에 필요한 시트 탭이 없는 경우 이런 오류가 날 수 있어요. 안내서를 참고해 탭을 만들어주세요.)';
     }finally{
       saveBtn.disabled=false;
     }
@@ -2922,7 +2924,7 @@ function viewPicBankForm(editId){setWide(true);mountView(w=>{
       if(data&&data.ok===false)throw new Error(data.error||'저장 실패');
       msg.className='fx ok';msg.textContent='✅ '+(isEdit?'수정했어요!':'저장했어요!')+' 스프레드시트 담당 선생님이 "🔄 사이트에 반영하기"를 누르면 Story Writing에서 바로 가져다 쓸 수 있어요.';
     }catch(e){
-      msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요. 잠시 후 다시 시도해주세요.';
+      msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요: '+String((e&&e.message)||e)+' (스프레드시트에 필요한 시트 탭이 없는 경우 이런 오류가 날 수 있어요. 안내서를 참고해 탭을 만들어주세요.)';
     }finally{
       saveBtn.disabled=false;
     }
@@ -4149,6 +4151,7 @@ function shuffleArr(a){const r=a.slice();for(let i=r.length-1;i>0;i--){const j=M
 /* 그림별로 나눠 쓰는 글을 자연스럽게 이어주는 연결어(순서 표현) 참고 목록이에요. 버튼을 누르면
    지금 커서가 있는(또는 마지막으로 눌러쓴) 그림 글쓰기 칸에 바로 끼워 넣어줘요. */
 const STORY_CONNECTORS=[{en:'First,',ko:'먼저,'},{en:'Then,',ko:'그다음,'},{en:'Next,',ko:'그리고 나서,'},{en:'After that,',ko:'그 후에,'},{en:'Finally,',ko:'마지막으로,'}];
+const countWords=s=>(s||'').trim().split(/\s+/).filter(Boolean).length;
 function runStory(topic){setWide(true);deckInit();
   const storyStart=Date.now();setStudyTimer(storyStart,'⏱ 학습 시간');
   const pics=topic.pics&&topic.pics.length?topic.pics:[{imageUrl:'',crop:'center center',questions:[],words:[],starter:''}];
@@ -4164,7 +4167,7 @@ function runStory(topic){setWide(true);deckInit();
       const card=el('div');card.style.cssText='background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06)';
       if(p.imageUrl){
         const img=document.createElement('img');img.src=fixDriveImageUrl(p.imageUrl);img.alt='picture '+(i+1);img.loading='lazy';
-        img.style.cssText='width:100%;height:220px;object-fit:cover;object-position:'+(p.crop||'center center')+';display:block';
+        img.style.cssText='width:100%;height:220px;object-fit:contain;object-position:'+(p.crop||'center center')+';background:#e9ebf2;display:block';
         card.appendChild(img);
       }
       const body=el('div');body.style.cssText='padding:10px 12px';
@@ -4176,19 +4179,49 @@ function runStory(topic){setWide(true);deckInit();
     });
     b.appendChild(grid);
   },{wide:true,wideMax:'1400px'});
-  // 2) 단어 카드 게임 (뒤집기 매칭, 항상 가운데 정렬)
-  const allWords=[];const seen=new Set();
-  pics.forEach(p=>(p.words||[]).forEach(w=>{if(w.en&&!seen.has(w.en.toLowerCase())){seen.add(w.en.toLowerCase());allWords.push(w);}}));
+  // 2) 단어 학습 — 4단계로 나눠서 진행해요: ① 단어-뜻 미리 보기(전체 단어) → ② 카드 뒤집기 게임 → ③ 짝 연결하기 → ④ 그림 보고 맞추기.
+  //    ①에서는 전체 단어를 다 보여주지만, ②·③·④ 게임 단계는 같은 단어를 반복하지 않도록 전체 단어를 3등분해서
+  //    서로 다른 단어 묶음을 나눠 맡게 해요 — 그래야 한 번에 너무 많지도 않고, 세 단계를 다 거치면 전체 단어를 골고루 익혀요.
+  const seenW=new Set();const wordsByPic=[];
+  pics.forEach((p,pi)=>{const list=[];(p.words||[]).forEach(w=>{if(w.en&&!seenW.has(w.en.toLowerCase())){seenW.add(w.en.toLowerCase());list.push(w);}});wordsByPic.push(list);});
+  const allWordsFull=(function(){
+    const buckets=wordsByPic.map(l=>l.slice());const out=[];let i=0;
+    while(buckets.some(b=>b.length)){const b=buckets[i%buckets.length];if(b.length)out.push(b.shift());i++;}
+    return out;
+  })();
+  function splitInto3(arr){
+    const n=arr.length;if(!n)return[[],[],[]];
+    const per=Math.ceil(n/3);
+    return [arr.slice(0,per),arr.slice(per,per*2),arr.slice(per*2)];
+  }
+  const [wordsFlip,wordsConnect,wordsPicPool]=splitInto3(allWordsFull);
+  // 2-1) 단어-뜻 미리 보기 (전체 단어, 숨김 없이 바로 보여줘요, 눌러서 발음 듣기)
+  slideAdd(b=>{
+    b.appendChild(el('span','badge green','Story · Words 1/4'));
+    b.appendChild(el('h1','title','단어 뜻 알아보기'));
+    if(!allWordsFull.length){b.appendChild(el('div','hint','등록된 단어가 없어요.'));return;}
+    b.appendChild(el('div','hint','카드를 눌러 발음을 들어보세요. 뜻까지 다 익힌 다음 "다음"을 눌러 게임으로 넘어가요.'));
+    const grid=el('div');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:14px';
+    allWordsFull.forEach(w=>{
+      const card=el('button','btn ghost');card.type='button';
+      card.style.cssText='padding:14px 10px;border-radius:12px;display:flex;flex-direction:column;gap:4px;align-items:center;cursor:pointer';
+      card.innerHTML='<span style="font-size:20px">🔊</span><span style="font-size:16px;font-weight:800">'+escH(w.en)+'</span><span style="font-size:13px;color:#6b7684">'+escH(w.ko||'')+'</span>';
+      card.onclick=()=>speakWord(w.en);
+      grid.appendChild(card);
+    });
+    b.appendChild(grid);
+  },{wide:true,wideMax:'900px'});
+  // 2-2) 카드 뒤집기 게임 (기존 매칭 게임, 항상 가운데 정렬)
   slideAdd(b=>{
     b.style.textAlign='center';
-    b.appendChild(el('span','badge green','Story · Word Game'));
-    b.appendChild(el('h1','title','Flip & Match the Words'));
-    if(!allWords.length){b.appendChild(el('div','hint','등록된 단어가 없어요.'));return;}
+    b.appendChild(el('span','badge green','Story · Words 2/4'));
+    b.appendChild(el('h1','title','카드 뒤집기'));
+    if(!wordsFlip.length){b.appendChild(el('div','hint','등록된 단어가 없어요.'));return;}
     b.appendChild(el('div','hint','카드를 두 장씩 뒤집어 짝을 맞춰보세요. 영어 카드를 뒤집으면 발음도 들려요.'));
     const boardWrap=el('div');boardWrap.style.cssText='display:flex;justify-content:center;margin-top:16px';
     const board=el('div');board.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px;max-width:640px;justify-content:center';
     boardWrap.appendChild(board);b.appendChild(boardWrap);
-    let cards=[];allWords.forEach((w,i)=>{cards.push({key:i,type:'en',text:w.en});cards.push({key:i,type:'ko',text:w.ko||w.en});});
+    let cards=[];wordsFlip.forEach((w,i)=>{cards.push({key:i,type:'en',text:w.en});cards.push({key:i,type:'ko',text:w.ko||w.en});});
     cards=shuffleArr(cards);
     let flipped=[],matched=new Set(),lock=false;
     const statusEl=el('div','fx');statusEl.style.marginTop='12px';b.appendChild(statusEl);
@@ -4218,6 +4251,91 @@ function runStory(topic){setWide(true);deckInit();
       board.appendChild(btn);
     });
   },{wide:true,wideMax:'1000px'});
+  // 2-3) 짝 연결하기 (영어 단어를 누르고, 알맞은 뜻을 눌러서 짝짓기)
+  slideAdd(b=>{
+    b.style.textAlign='center';
+    b.appendChild(el('span','badge green','Story · Words 3/4'));
+    b.appendChild(el('h1','title','짝 연결하기'));
+    if(!wordsConnect.length){b.appendChild(el('div','hint','등록된 단어가 없어요.'));return;}
+    b.appendChild(el('div','hint','왼쪽에서 영어 단어를 누르고, 오른쪽에서 알맞은 뜻을 눌러 짝지어보세요.'));
+    const cols=el('div');cols.style.cssText='display:flex;gap:24px;justify-content:center;margin-top:16px;flex-wrap:wrap';
+    const leftCol=el('div');leftCol.style.cssText='display:flex;flex-direction:column;gap:8px;min-width:150px';
+    const rightCol=el('div');rightCol.style.cssText='display:flex;flex-direction:column;gap:8px;min-width:150px';
+    cols.appendChild(leftCol);cols.appendChild(rightCol);b.appendChild(cols);
+    const statusEl2=el('div','fx');statusEl2.style.marginTop='12px';b.appendChild(statusEl2);
+    const enList=shuffleArr(wordsConnect.map((w,i)=>({key:i,text:w.en})));
+    const koList=shuffleArr(wordsConnect.map((w,i)=>({key:i,text:w.ko||w.en})));
+    let selEn=null,selKo=null;const matchedKeys=new Set();
+    const mkBtn=(item,isEn)=>{
+      const btn=el('button','btn ghost',item.text);btn.type='button';
+      btn.style.cssText='padding:10px 14px;font-size:14px;border-radius:10px;cursor:pointer';
+      btn.onclick=()=>{
+        if(matchedKeys.has(item.key))return;
+        if(isEn){speakWord(item.text);selEn={item,btn};}else{selKo={item,btn};}
+        btn.style.background='#eef0ff';
+        if(selEn&&selKo){
+          if(selEn.item.key===selKo.item.key){
+            selEn.btn.style.background='#e3f9ec';selKo.btn.style.background='#e3f9ec';
+            selEn.btn.disabled=true;selKo.btn.disabled=true;
+            matchedKeys.add(item.key);
+            statusEl2.className='fx ok';statusEl2.textContent=matchedKeys.size+' / '+wordsConnect.length+' 짝 연결 완료';
+            if(matchedKeys.size===wordsConnect.length)statusEl2.textContent='모두 연결했어요! 🎉';
+            selEn=null;selKo=null;
+          }else{
+            const be=selEn.btn,bk=selKo.btn;
+            be.style.background='#fde8e8';bk.style.background='#fde8e8';
+            setTimeout(()=>{be.style.background='';bk.style.background='';},500);
+            selEn=null;selKo=null;
+          }
+        }
+      };
+      return btn;
+    };
+    enList.forEach(item=>leftCol.appendChild(mkBtn(item,true)));
+    koList.forEach(item=>rightCol.appendChild(mkBtn(item,false)));
+  },{wide:true,wideMax:'700px'});
+  // 2-4) 그림 보고 맞추기 (사진이 있는 그림에서만, 그 그림의 단어 중 3등분된 마지막 묶음(wordsPicPool)에 속한 단어만 정답 후보로)
+  const picQuizPoolSet=new Set(wordsPicPool.map(w=>w.en.toLowerCase()));
+  const picQuiz=[];
+  pics.forEach((p,pi)=>{
+    const candidates=(wordsByPic[pi]||[]).filter(w=>picQuizPoolSet.has(w.en.toLowerCase()));
+    if(p.imageUrl&&candidates.length){
+      const correct=candidates[Math.floor(Math.random()*candidates.length)];
+      const distractPool=wordsPicPool.filter(w=>w.en.toLowerCase()!==correct.en.toLowerCase());
+      const distracts=shuffleArr(distractPool).slice(0,3);
+      const opts=shuffleArr([correct].concat(distracts));
+      picQuiz.push({pi,imageUrl:p.imageUrl,crop:p.crop,correct,opts});
+    }
+  });
+  if(picQuiz.length){
+    slideAdd(b=>{
+      b.appendChild(el('span','badge green','Story · Words 4/4'));
+      b.appendChild(el('h1','title','그림 보고 맞추기'));
+      b.appendChild(el('div','hint','그림을 보고 알맞은 단어를 골라보세요.'));
+      const grid=el('div');grid.style.cssText='display:flex;flex-direction:column;gap:18px;margin-top:14px';
+      picQuiz.forEach(q=>{
+        const row=el('div');row.style.cssText='display:flex;gap:16px;align-items:center;flex-wrap:wrap';
+        const img=document.createElement('img');img.src=fixDriveImageUrl(q.imageUrl);img.alt='';
+        img.style.cssText='width:150px;height:110px;object-fit:contain;object-position:'+(q.crop||'center center')+';background:#e9ebf2;border-radius:10px;display:block';
+        row.appendChild(img);
+        const optWrap=el('div');optWrap.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
+        const fb=el('span','fx');
+        q.opts.forEach(o=>{
+          const btn=el('button','btn ghost',o.en);btn.type='button';btn.style.cssText='padding:8px 14px;font-size:13.5px;border-radius:10px;cursor:pointer';
+          btn.onclick=()=>{
+            speakWord(o.en);
+            const ok=o.en.toLowerCase()===q.correct.en.toLowerCase();
+            btn.style.background=ok?'#e3f9ec':'#fde8e8';
+            fb.className='fx '+(ok?'ok':'no');fb.textContent=ok?'정답이에요! 🎉':'다시 생각해보세요.';
+          };
+          optWrap.appendChild(btn);
+        });
+        row.appendChild(optWrap);row.appendChild(fb);
+        grid.appendChild(row);
+      });
+      b.appendChild(grid);
+    },{wide:true,wideMax:'900px'});
+  }
   // 3) 그림별 글쓰기 + 실시간 이야기 합치기
   let bannerSlot;
   slideAdd(b=>{
@@ -4248,7 +4366,7 @@ function runStory(topic){setWide(true);deckInit();
     const tas=[];
     pics.forEach((p,i)=>{
       const col=el('div');
-      if(p.imageUrl){const img=document.createElement('img');img.src=fixDriveImageUrl(p.imageUrl);img.alt='';img.style.cssText='width:100%;height:150px;object-fit:cover;object-position:'+(p.crop||'center center')+';border-radius:10px;display:block;margin-bottom:8px';col.appendChild(img);}
+      if(p.imageUrl){const img=document.createElement('img');img.src=fixDriveImageUrl(p.imageUrl);img.alt='';img.style.cssText='width:100%;height:150px;object-fit:contain;object-position:'+(p.crop||'center center')+';background:#e9ebf2;border-radius:10px;display:block;margin-bottom:8px';col.appendChild(img);}
       col.appendChild(el('div','fl','Picture '+(i+1)));
       col.appendChild(makeDictBtn());
       const ta=el('textarea','in');ta.placeholder=p.starter||'Write 1-2 sentences about this picture in English.';ta.style.minHeight='90px';
@@ -4260,7 +4378,11 @@ function runStory(topic){setWide(true);deckInit();
     b.appendChild(el('div','fl','Story So Far'));
     const storyBox=el('div');storyBox.style.cssText='background:#f6f7fb;border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.7;min-height:60px;white-space:pre-wrap';
     b.appendChild(storyBox);
-    const refresh=()=>{ST.texts=tas.map(t=>t.value);storyBox.textContent=ST.texts.filter(Boolean).join(' ')||'(Nothing written yet)';};
+    const wcEl=el('div','hint');wcEl.style.cssText='margin-top:6px';b.appendChild(wcEl);
+    const refresh=()=>{ST.texts=tas.map(t=>t.value);storyBox.textContent=ST.texts.filter(Boolean).join(' ')||'(Nothing written yet)';
+      const wc=countWords(ST.texts.filter(Boolean).join(' '));
+      if(topic.minWords>0){wcEl.textContent='현재 '+wc+'단어 / 목표 '+topic.minWords+'단어';wcEl.style.color=wc>=topic.minWords?'#2e9e5b':'#8a8f9c';}
+      else{wcEl.textContent='현재 '+wc+'단어';wcEl.style.color='#8a8f9c';}};
     const doAutosave=debounce(()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='자동 저장됨';},2500);
     tas.forEach(ta=>{ta.addEventListener('input',()=>{refresh();doAutosave();});ta.addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});});
     saveBtn.onclick=()=>{refresh();saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='저장했어요! 나중에 이어서 쓸 수 있어요.';};
@@ -4286,6 +4408,9 @@ function runStory(topic){setWide(true);deckInit();
     {label:'문장이 대문자로 시작해요',test:()=>ST.texts.filter(Boolean).every(t=>t.split(/[.!?]\s+/).filter(s=>s.trim()).every(s=>/^[A-Z]/.test(s.trim())))},
     {label:'문장이 마침표로 끝나요',test:()=>ST.texts.filter(Boolean).every(t=>/[.!?]\s*$/.test(t.trim()))}
   ];
+  if(topic.minWords>0){
+    conds.push({label:'그림들을 합쳐서 총 '+topic.minWords+'단어 이상 쓰기',test:()=>countWords(ST.texts.filter(Boolean).join(' '))>=topic.minWords});
+  }
   slideAdd(b=>{b.appendChild(el('span','badge green','Story · Result'));b.appendChild(el('h1','title','체크리스트 & 제출'));
     const render=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());
       const fullText=ST.texts.filter(Boolean).join(' ');
