@@ -2512,8 +2512,8 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
         const aiFillMsg=el('div','fx');
         aiFillBtn.onclick=async()=>{
           const picFields=[
-            {key:'questions',label:'질문 (영어, 한 줄에 하나)',hint:'Who is it?\nWhat are they doing?'},
-            {key:'words',label:'단어 (영어|한글, 한 줄에 하나)',hint:'banana|바나나\ndraw|그리다'},
+            {key:'questions',label:'질문 (영어, 한 줄에 하나, 예/아니오로 답할 수 없는 상상 질문 정확히 2개)',hint:'What is the boy going to do next?\nHow do you think the girl feels, and why?'},
+            {key:'words',label:'단어 (영어|한글, 한 줄에 하나, 그림에 실제로 보이는 것만 3~5개)',hint:'banana|바나나\ndraw|그리다'},
             {key:'starter',label:'시작 문장 (선택, 영어 한 문장)',hint:'First, George draws a picture.'}
           ];
           const seed={};
@@ -2577,7 +2577,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
         const aiFillRow=el('div');aiFillRow.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap';
         aiFillRow.appendChild(aiFillBtn);aiFillRow.appendChild(aiFillDifficultySel);aiFillRow.appendChild(aiFillMsg);
         fieldsCol.appendChild(aiFillRow);
-        fieldsCol.appendChild(mkField('질문 (한 줄에 하나, 영어로)','Who is it?\nWhat are they doing?',2,p.questions,v=>p.questions=v));
+        fieldsCol.appendChild(mkField('질문 (한 줄에 하나, 영어로, 예/아니오 질문 X, 상상 질문 2개 권장)','What is the boy going to do next?\nHow do you think the girl feels, and why?',2,p.questions,v=>p.questions=v));
         const wordsWrap=mkField('단어 (한 줄에 하나: en|ko)','banana|바나나\ndraw|그리다',3,p.words,v=>p.words=v);
         const wordsTa=wordsWrap.querySelector('textarea');
         const wordImgBtn=el('button','btn ghost','🖼️ 단어 그림 자동 생성 ("그림 보고 맞추기"용)');wordImgBtn.type='button';wordImgBtn.style.cssText='padding:6px 10px;font-size:12px;align-self:flex-start;margin-top:4px';
@@ -4197,7 +4197,7 @@ function runStory(topic){setWide(true);deckInit();
   const texts=pics.map(()=>'');
   const DRAFT_CHAPTER='Story Writing',DRAFT_POINT=topic.title||topic.id;
   const ST={texts:texts.slice()};
-  // 1) 그림 보기 + 질문 (힌트 없음)
+  // 1) 그림 보기 + 질문 (질문은 바로 보이지 않고 "💡 힌트 보기" 버튼을 눌러야 보여요)
   slideAdd(b=>{b.appendChild(el('span','badge accent','Story · Look & Think'));
     b.appendChild(el('h1','title',topic.title||topic.titleKo||''));
     if(topic.intro)b.appendChild(el('div','lead',topic.intro));
@@ -4213,8 +4213,13 @@ function runStory(topic){setWide(true);deckInit();
       }
       const body=el('div');body.style.cssText='padding:10px 12px';
       body.appendChild(el('div','fl','Picture '+(i+1)));
-      if(p.questions&&p.questions.length){const ul=el('ul');ul.style.cssText='margin:6px 0 0;padding-left:18px;font-size:13.5px;color:#4a5160;line-height:1.6';
+      if(p.questions&&p.questions.length){
+        const hintBtn=el('button','btn ghost','💡 힌트 보기');hintBtn.type='button';hintBtn.style.cssText='padding:5px 10px;font-size:12px;margin-top:6px';
+        const ul=el('ul');ul.style.cssText='display:none;margin:6px 0 0;padding-left:18px;font-size:13.5px;color:#4a5160;line-height:1.6';
         p.questions.forEach(q=>{const li=document.createElement('li');li.textContent=q;ul.appendChild(li);});
+        let shown=false;
+        hintBtn.onclick=()=>{shown=!shown;ul.style.display=shown?'block':'none';hintBtn.textContent=shown?'🙈 힌트 숨기기':'💡 힌트 보기';};
+        body.appendChild(hintBtn);
         body.appendChild(ul);}
       card.appendChild(body);grid.appendChild(card);
     });
