@@ -1107,7 +1107,7 @@ function toStoryTopic(g){
   const pics=(g.pics||[]).slice(0,4).map(p=>({
     imageUrl:p.imageUrl||'',crop:p.crop||'center center',
     questions:String(p.questions||'').split('\n').map(s=>s.trim()).filter(Boolean),
-    words:String(p.words||'').split('\n').map(s=>s.trim()).filter(Boolean).map(w=>{const i=w.indexOf('|');return i>=0?{en:w.slice(0,i).trim(),ko:w.slice(i+1).trim()}:{en:w,ko:''};}),
+    words:String(p.words||'').split('\n').map(s=>s.trim()).filter(Boolean).map(w=>{const parts=w.split('|');return {en:(parts[0]||'').trim(),ko:(parts[1]||'').trim(),img:(parts[2]||'').trim()};}),
     starter:p.starter||''
   }));
   return {id:g.id,level:g.level,title:g.title||'',titleKo:g.titleKo||'',intro:g.intro||'',sampleText:g.sampleText||'',pics,
@@ -1429,8 +1429,49 @@ function makeDictBtn(){
 /** 예전에 저장된 이미지가 'drive.google.com/uc?export=view&id=...' 형식이면, 구글이 최근 이 방식의
  *  외부 사이트 삽입(hotlink)을 자주 막아서 <img> 태그 안에서 깨진 이미지로 나와요. 화면에 그릴 때마다
  *  더 안정적인 썸네일 링크 형식으로 자동 변환해줘서, 예전에 올린 이미지를 다시 올릴 필요 없게 해요. */
-/* 그림 업로드 시 9방향 크롭(잘림) 위치를 고를 때 공통으로 쓰는 값이에요 — CSS object-position/background-position 값과 그대로 대응돼요. */
+/* 그림 업로드 시 9방향 크롭(잘림) 위치를 고를 때 공통으로 쓰는 값이에요 — CSS object-position/background-position 값과 그대로 대응돼요.
+   (이제는 자유 위치 드래그 크롭 선택기(buildCropPicker)가 기본이지만, 옛 콘텐츠에 저장된 이 9방향 키워드 문자열도
+   CSS object-position 값으로 그대로 유효하기 때문에 별도 변환 없이 계속 잘 표시돼요.) */
 const CROP_OPTS=['left top','center top','right top','left center','center center','right center','left bottom','center bottom','right bottom'];
+/** 저장된 crop 값(9방향 키워드 또는 "X% Y%" 형식)을 [x,y] 퍼센트 숫자로 변환해요. buildCropPicker의 마커 위치 계산에 써요. */
+function cropToPercent(crop){
+  const map={'left top':[0,0],'center top':[50,0],'right top':[100,0],'left center':[0,50],'center center':[50,50],'right center':[100,50],'left bottom':[0,100],'center bottom':[50,100],'right bottom':[100,100]};
+  if(map[crop])return map[crop];
+  const m=String(crop||'').trim().match(/^(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/);
+  if(m)return [parseFloat(m[1]),parseFloat(m[2])];
+  return [50,50];
+}
+/** 그림을 어느 부분이 보이도록 자를지, 클릭·드래그로 자유롭게 고를 수 있는 크롭 선택기예요.
+ *  9방향 버튼과 달리 임의의 지점을 고를 수 있어서 원하는 부분이 잘리지 않게 세밀하게 맞출 수 있어요.
+ *  pic: {crop} 속성을 가진 객체(직접 갱신돼요), getUrl: 현재 이미지 URL을 돌려주는 함수, size: 정사각형 미리보기 한 변(px),
+ *  onChange: 크롭 값이 바뀔 때마다 호출돼요(다시 렌더링·임시저장 등에 씀). */
+function buildCropPicker(pic,getUrl,size,onChange){
+  const wrap=el('div');wrap.style.cssText='position:relative;width:'+size+'px;height:'+size+'px;border-radius:10px;overflow:hidden;background:#e6e8f0;cursor:crosshair;touch-action:none;flex:none';
+  const bg=el('div');bg.style.cssText='position:absolute;inset:0;background-size:cover;background-repeat:no-repeat;';
+  wrap.appendChild(bg);
+  const marker=el('div');marker.style.cssText='position:absolute;width:14px;height:14px;margin-left:-7px;margin-top:-7px;border-radius:50%;background:#fff;border:2px solid #4338ca;box-shadow:0 0 0 2px rgba(0,0,0,.35);pointer-events:none';
+  wrap.appendChild(marker);
+  function render(){
+    const url=getUrl();
+    bg.style.backgroundImage=url?('url('+fixDriveImageUrl(url)+')'):'none';
+    const pos=cropToPercent(pic.crop);
+    bg.style.backgroundPosition=pos[0]+'% '+pos[1]+'%';
+    marker.style.left=pos[0]+'%';marker.style.top=pos[1]+'%';
+  }
+  function setFromEvent(e){
+    const rect=wrap.getBoundingClientRect();
+    const x=Math.max(0,Math.min(100,Math.round((e.clientX-rect.left)/rect.width*100)));
+    const y=Math.max(0,Math.min(100,Math.round((e.clientY-rect.top)/rect.height*100)));
+    pic.crop=x+'% '+y+'%';
+    render();
+    onChange&&onChange();
+  }
+  wrap.addEventListener('pointerdown',e=>{wrap.setPointerCapture(e.pointerId);setFromEvent(e);});
+  wrap.addEventListener('pointermove',e=>{if(e.buttons===1)setFromEvent(e);});
+  wrap._render=render;
+  render();
+  return wrap;
+}
 function fixDriveImageUrl(u){
   const s=String(u||'').trim();
   const m=s.match(/drive\.google\.com\/uc\?(?:[^#]*&)?id=([^&#]+)/);
@@ -2300,6 +2341,66 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
     const cardsWrap=el('div');cardsWrap.style.cssText='display:flex;flex-direction:column;gap:12px';storyPicsBox.appendChild(cardsWrap);
     const addPicBtn=el('button','btn ghost','+ 그림 추가');addPicBtn.type='button';addPicBtn.style.cssText='align-self:flex-start;padding:8px 14px;font-size:13px';
     storyPicsBox.appendChild(addPicBtn);
+    const picBtnRow2=el('div');picBtnRow2.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:-6px';
+    const splitBtn=el('button','btn ghost','🔪 그림 1장을 3~4등분해서 넣기');splitBtn.type='button';splitBtn.style.cssText='align-self:flex-start;padding:8px 14px;font-size:13px';
+    picBtnRow2.appendChild(splitBtn);storyPicsBox.appendChild(picBtnRow2);
+    const splitPanel=el('div');splitPanel.style.cssText='display:none;background:#f0f2ff;border-radius:10px;padding:12px;flex-direction:column;gap:8px';
+    storyPicsBox.appendChild(splitPanel);
+    splitPanel.appendChild(el('div','hint','필름스트립처럼 한 장짜리 그림 안에 여러 장면이 나란히 들어있을 때, 그 그림을 똑같은 크기로 나눠서 위의 "그림별 정보" 칸에 자동으로 채워줘요. (나누면 기존에 넣어둔 그림 정보는 사라지고 나눈 조각들로 새로 채워져요)'));
+    const splitRow=el('div');splitRow.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+    const splitFileBtn=el('button','btn ghost','🖼️ 나눌 이미지 선택');splitFileBtn.type='button';splitFileBtn.style.cssText='padding:6px 10px;font-size:12px';
+    const splitFileInput=el('input');splitFileInput.type='file';splitFileInput.accept='image/*';splitFileInput.style.display='none';
+    const splitCountSel=el('select','in');splitCountSel.style.cssText='padding:6px 10px;font-size:12px;border-radius:8px';
+    [['3','3등분'],['4','4등분']].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;splitCountSel.appendChild(o);});
+    const splitDirSel=el('select','in');splitDirSel.style.cssText='padding:6px 10px;font-size:12px;border-radius:8px';
+    [['h','가로로 나란히 있는 그림 (세로선으로 자르기)'],['v','세로로 나란히 있는 그림 (가로선으로 자르기)']].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;splitDirSel.appendChild(o);});
+    const splitPreviewName=el('span','hint');splitPreviewName.style.fontSize='12px';
+    const splitGoBtn=el('button','btn blue','나누기');splitGoBtn.type='button';splitGoBtn.style.cssText='padding:6px 14px;font-size:12px';
+    splitGoBtn.disabled=true;
+    const splitMsg=el('div','fx');
+    splitRow.appendChild(splitFileBtn);splitRow.appendChild(splitPreviewName);splitRow.appendChild(splitCountSel);splitRow.appendChild(splitDirSel);splitRow.appendChild(splitGoBtn);
+    splitPanel.appendChild(splitRow);splitPanel.appendChild(splitMsg);splitPanel.appendChild(splitFileInput);
+    splitBtn.onclick=()=>{ splitPanel.style.display=(splitPanel.style.display==='none'?'flex':'none'); };
+    let splitFile=null;
+    splitFileBtn.onclick=()=>splitFileInput.click();
+    splitFileInput.onchange=()=>{
+      splitFile=splitFileInput.files&&splitFileInput.files[0];
+      splitPreviewName.textContent=splitFile?splitFile.name:'';
+      splitGoBtn.disabled=!splitFile;
+    };
+    splitGoBtn.onclick=async()=>{
+      if(!splitFile)return;
+      splitGoBtn.disabled=true;splitMsg.className='fx';splitMsg.textContent='나누는 중…';
+      try{
+        const n=Number(splitCountSel.value)||3;
+        const dir=splitDirSel.value;
+        const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(splitFile);});
+        const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=dataUrl;});
+        const pieces=[];
+        for(let i=0;i<n;i++){
+          const cw=dir==='h'?Math.floor(img.width/n):img.width;
+          const ch=dir==='h'?img.height:Math.floor(img.height/n);
+          const sx=dir==='h'?cw*i:0;
+          const sy=dir==='h'?0:ch*i;
+          const canvas=document.createElement('canvas');
+          const maxW=640;
+          const scale=Math.min(1,maxW/cw);
+          canvas.width=Math.max(1,Math.round(cw*scale));canvas.height=Math.max(1,Math.round(ch*scale));
+          const ctx=canvas.getContext('2d');
+          ctx.drawImage(img,sx,sy,cw,ch,0,0,canvas.width,canvas.height);
+          let quality=0.85,out=canvas.toDataURL('image/jpeg',quality);
+          while(out.length>40000&&quality>0.35){quality-=0.1;out=canvas.toDataURL('image/jpeg',quality);}
+          pieces.push(out);
+        }
+        storyPics=pieces.map(url=>({url,crop:'center center',questions:'',words:'',starter:''}));
+        renderStoryPics();refreshPreview();saveDraftLocal();
+        splitMsg.className='fx ok';splitMsg.textContent=n+'등분해서 그림 칸을 새로 채웠어요! 이제 각 칸에 질문·단어를 채워주세요.';
+      }catch(e){
+        splitMsg.className='fx no';splitMsg.textContent='나누지 못했어요: '+String(e.message||e);
+      }finally{
+        splitGoBtn.disabled=false;
+      }
+    };
     function newPic(){ return {url:'', crop:'center center', questions:'', words:'', starter:''}; }
     renderStoryPics=function(){
       cardsWrap.innerHTML='';
@@ -2313,9 +2414,8 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
         head.appendChild(rmBtn);card.appendChild(head);
         const row=el('div');row.style.cssText='display:flex;gap:12px;flex-wrap:wrap';
         const thumbCol=el('div');thumbCol.style.cssText='display:flex;flex-direction:column;gap:6px;width:150px';
-        const thumb=el('div');thumb.style.cssText='width:150px;height:150px;border-radius:10px;background:#e6e8f0 center/cover no-repeat;background-position:'+p.crop;
-        if(p.url)thumb.style.backgroundImage='url('+fixDriveImageUrl(p.url)+')';
-        thumbCol.appendChild(thumb);
+        thumbCol.appendChild(buildCropPicker(p,()=>p.url,150,()=>{refreshPreview();saveDraftLocal();}));
+        thumbCol.appendChild(el('div','hint','👆 그림을 눌러(또는 드래그해서) 보여줄 부분을 정확히 골라보세요.'));
         const upRow=el('div');upRow.style.cssText='display:flex;gap:6px;flex-wrap:wrap';
         const upBtn=el('button','btn ghost','📤 업로드');upBtn.type='button';upBtn.style.cssText='padding:6px 10px;font-size:12px';
         const upInput=el('input');upInput.type='file';upInput.accept='image/*';upInput.style.display='none';
@@ -2424,14 +2524,6 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
             aiFillBtn.disabled=false;
           }
         };
-        const cropGrid=el('div');cropGrid.style.cssText='display:grid;grid-template-columns:repeat(3,20px);gap:3px';
-        STORY_CROP_OPTS.forEach(pos=>{
-          const cb=el('button');cb.type='button';
-          cb.style.cssText='width:20px;height:20px;border-radius:4px;border:1px solid '+(p.crop===pos?'#4338ca':'#d8d8e6')+';background:'+(p.crop===pos?'#4338ca':'#fff');cb.title=pos;
-          cb.onclick=()=>{p.crop=pos;renderStoryPics();refreshPreview();saveDraftLocal();};
-          cropGrid.appendChild(cb);
-        });
-        thumbCol.appendChild(el('div','hint','👆 크롭 위치'));thumbCol.appendChild(cropGrid);
         row.appendChild(thumbCol);
         const fieldsCol=el('div');fieldsCol.style.cssText='flex:1 1 220px;display:flex;flex-direction:column;gap:8px;min-width:200px';
         const mkField=(labelText,ph,rows,val,onInput)=>{
@@ -2449,7 +2541,37 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
         aiFillRow.appendChild(aiFillBtn);aiFillRow.appendChild(aiFillMsg);
         fieldsCol.appendChild(aiFillRow);
         fieldsCol.appendChild(mkField('질문 (한 줄에 하나, 영어로)','Who is it?\nWhat are they doing?',2,p.questions,v=>p.questions=v));
-        fieldsCol.appendChild(mkField('단어 (한 줄에 하나: en|ko)','banana|바나나\ndraw|그리다',3,p.words,v=>p.words=v));
+        const wordsWrap=mkField('단어 (한 줄에 하나: en|ko)','banana|바나나\ndraw|그리다',3,p.words,v=>p.words=v);
+        const wordsTa=wordsWrap.querySelector('textarea');
+        const wordImgBtn=el('button','btn ghost','🖼️ 단어 그림 자동 생성 ("그림 보고 맞추기"용)');wordImgBtn.type='button';wordImgBtn.style.cssText='padding:6px 10px;font-size:12px;align-self:flex-start;margin-top:4px';
+        const wordImgMsg=el('div','fx');
+        wordImgBtn.onclick=async()=>{
+          const lines=String(wordsTa.value||'').split('\n').map(s=>s.trim()).filter(Boolean);
+          if(!lines.length){wordImgMsg.className='fx no';wordImgMsg.textContent='먼저 단어를 입력해주세요.';return;}
+          const parsed=lines.map(l=>{const parts=l.split('|');return {en:(parts[0]||'').trim(),ko:(parts[1]||'').trim(),img:(parts[2]||'').trim()};});
+          const todo=parsed.filter(w=>w.en&&!w.img);
+          if(!todo.length){wordImgMsg.className='fx';wordImgMsg.textContent='이미 모든 단어에 그림이 있어요.';return;}
+          wordImgBtn.disabled=true;
+          for(let idx=0;idx<todo.length;idx++){
+            const w=todo[idx];
+            wordImgMsg.className='fx';wordImgMsg.textContent='그림 생성 중… ('+(idx+1)+'/'+todo.length+': '+w.en+')';
+            try{
+              const prompt='a single "'+w.en+'", simple flat icon illustration, plain white background, no text, no letters';
+              const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'generateContentImage',prompt})});
+              const data=await res.json();
+              if(!data||!data.ok)throw new Error((data&&data.error)||'그림 생성 실패');
+              w.img=data.url;
+            }catch(e){
+              wordImgMsg.className='fx no';wordImgMsg.textContent='"'+w.en+'" 그림 생성 실패: '+String(e.message||e)+' (나머지는 계속 진행해요)';
+            }
+          }
+          const newText=parsed.map(w=>w.en+'|'+w.ko+(w.img?'|'+w.img:'')).join('\n');
+          wordsTa.value=newText;p.words=newText;saveDraftLocal();
+          wordImgMsg.className='fx ok';wordImgMsg.textContent='단어 그림 생성 완료!';
+          wordImgBtn.disabled=false;
+        };
+        wordsWrap.appendChild(wordImgBtn);wordsWrap.appendChild(wordImgMsg);
+        fieldsCol.appendChild(wordsWrap);
         fieldsCol.appendChild(mkField('시작 문장 (선택)','First, George draws ...',0,p.starter,v=>p.starter=v));
         row.appendChild(fieldsCol);
         card.appendChild(row);
@@ -2832,15 +2954,17 @@ function viewPicBankForm(editId){setWide(true);mountView(w=>{
   cols.appendChild(leftCol);cols.appendChild(rightCol);
 
   let pic={url:'',crop:'center center'};
-  const thumb=el('div');thumb.style.cssText='width:100%;max-width:260px;height:220px;border-radius:12px;background:#e6e8f0 center/cover no-repeat;background-position:center center';
+  const thumb=buildCropPicker(pic,()=>pic.url,220,()=>{});
+  thumb.style.maxWidth='260px';thumb.style.width='100%';
   leftCol.appendChild(thumb);
+  leftCol.appendChild(el('div','hint','👆 그림을 눌러(또는 드래그해서) 보여줄 부분을 정확히 골라보세요.'));
   const upRow=el('div');upRow.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-top:8px';
   const upBtn=el('button','btn ghost','📤 업로드');upBtn.type='button';
   const upInput=el('input');upInput.type='file';upInput.accept='image/*';upInput.style.display='none';
   const genBtn=el('button','btn ghost','🎨 AI 생성');genBtn.type='button';
   upRow.appendChild(upBtn);upRow.appendChild(genBtn);leftCol.appendChild(upRow);
   const upMsg=el('div','fx');leftCol.appendChild(upMsg);
-  const renderThumb=()=>{thumb.style.backgroundPosition=pic.crop;thumb.style.backgroundImage=pic.url?('url('+fixDriveImageUrl(pic.url)+')'):'none';};
+  const renderThumb=()=>{thumb._render();};
   upBtn.onclick=()=>upInput.click();
   upInput.onchange=async()=>{
     const file=upInput.files&&upInput.files[0];if(!file)return;
@@ -4167,7 +4291,7 @@ function runStory(topic){setWide(true);deckInit();
       const card=el('div');card.style.cssText='background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06)';
       if(p.imageUrl){
         const img=document.createElement('img');img.src=fixDriveImageUrl(p.imageUrl);img.alt='picture '+(i+1);img.loading='lazy';
-        img.style.cssText='width:100%;height:220px;object-fit:contain;object-position:'+(p.crop||'center center')+';background:#e9ebf2;display:block';
+        img.style.cssText='width:100%;height:220px;object-fit:cover;object-position:'+(p.crop||'center center')+';background:#e9ebf2;display:block';
         card.appendChild(img);
       }
       const body=el('div');body.style.cssText='padding:10px 12px';
@@ -4251,81 +4375,130 @@ function runStory(topic){setWide(true);deckInit();
       board.appendChild(btn);
     });
   },{wide:true,wideMax:'1000px'});
-  // 2-3) 짝 연결하기 (영어 단어를 누르고, 알맞은 뜻을 눌러서 짝짓기)
+  // 2-3) 짝 연결하기 (왼쪽 단어의 점에서 오른쪽 뜻의 점까지 손가락/마우스로 선을 그어서 짝짓기)
   slideAdd(b=>{
     b.style.textAlign='center';
     b.appendChild(el('span','badge green','Story · Words 3/4'));
     b.appendChild(el('h1','title','짝 연결하기'));
     if(!wordsConnect.length){b.appendChild(el('div','hint','등록된 단어가 없어요.'));return;}
-    b.appendChild(el('div','hint','왼쪽에서 영어 단어를 누르고, 오른쪽에서 알맞은 뜻을 눌러 짝지어보세요.'));
-    const cols=el('div');cols.style.cssText='display:flex;gap:24px;justify-content:center;margin-top:16px;flex-wrap:wrap';
-    const leftCol=el('div');leftCol.style.cssText='display:flex;flex-direction:column;gap:8px;min-width:150px';
-    const rightCol=el('div');rightCol.style.cssText='display:flex;flex-direction:column;gap:8px;min-width:150px';
-    cols.appendChild(leftCol);cols.appendChild(rightCol);b.appendChild(cols);
+    b.appendChild(el('div','hint','왼쪽 단어의 점을 누른 채로 끌어서, 오른쪽의 알맞은 뜻 점까지 선을 이어보세요.'));
+    const stage=el('div');stage.style.cssText='position:relative;display:flex;gap:110px;justify-content:center;align-items:flex-start;margin-top:18px;touch-action:none';
+    const leftCol=el('div');leftCol.style.cssText='display:flex;flex-direction:column;gap:14px;min-width:150px';
+    const rightCol=el('div');rightCol.style.cssText='display:flex;flex-direction:column;gap:14px;min-width:150px';
+    stage.appendChild(leftCol);stage.appendChild(rightCol);
+    const svgNS='http://www.w3.org/2000/svg';
+    const svg=document.createElementNS(svgNS,'svg');
+    svg.setAttribute('style','position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:visible');
+    stage.appendChild(svg);
+    b.appendChild(stage);
     const statusEl2=el('div','fx');statusEl2.style.marginTop='12px';b.appendChild(statusEl2);
     const enList=shuffleArr(wordsConnect.map((w,i)=>({key:i,text:w.en})));
     const koList=shuffleArr(wordsConnect.map((w,i)=>({key:i,text:w.ko||w.en})));
-    let selEn=null,selKo=null;const matchedKeys=new Set();
-    const mkBtn=(item,isEn)=>{
-      const btn=el('button','btn ghost',item.text);btn.type='button';
-      btn.style.cssText='padding:10px 14px;font-size:14px;border-radius:10px;cursor:pointer';
-      btn.onclick=()=>{
-        if(matchedKeys.has(item.key))return;
-        if(isEn){speakWord(item.text);selEn={item,btn};}else{selKo={item,btn};}
-        btn.style.background='#eef0ff';
-        if(selEn&&selKo){
-          if(selEn.item.key===selKo.item.key){
-            selEn.btn.style.background='#e3f9ec';selKo.btn.style.background='#e3f9ec';
-            selEn.btn.disabled=true;selKo.btn.disabled=true;
-            matchedKeys.add(item.key);
-            statusEl2.className='fx ok';statusEl2.textContent=matchedKeys.size+' / '+wordsConnect.length+' 짝 연결 완료';
-            if(matchedKeys.size===wordsConnect.length)statusEl2.textContent='모두 연결했어요! 🎉';
-            selEn=null;selKo=null;
-          }else{
-            const be=selEn.btn,bk=selKo.btn;
-            be.style.background='#fde8e8';bk.style.background='#fde8e8';
-            setTimeout(()=>{be.style.background='';bk.style.background='';},500);
-            selEn=null;selKo=null;
-          }
-        }
-      };
-      return btn;
-    };
-    enList.forEach(item=>leftCol.appendChild(mkBtn(item,true)));
-    koList.forEach(item=>rightCol.appendChild(mkBtn(item,false)));
-  },{wide:true,wideMax:'700px'});
-  // 2-4) 그림 보고 맞추기 (사진이 있는 그림에서만, 그 그림의 단어 중 3등분된 마지막 묶음(wordsPicPool)에 속한 단어만 정답 후보로)
-  const picQuizPoolSet=new Set(wordsPicPool.map(w=>w.en.toLowerCase()));
-  const picQuiz=[];
-  pics.forEach((p,pi)=>{
-    const candidates=(wordsByPic[pi]||[]).filter(w=>picQuizPoolSet.has(w.en.toLowerCase()));
-    if(p.imageUrl&&candidates.length){
-      const correct=candidates[Math.floor(Math.random()*candidates.length)];
-      const distractPool=wordsPicPool.filter(w=>w.en.toLowerCase()!==correct.en.toLowerCase());
-      const distracts=shuffleArr(distractPool).slice(0,3);
-      const opts=shuffleArr([correct].concat(distracts));
-      picQuiz.push({pi,imageUrl:p.imageUrl,crop:p.crop,correct,opts});
+    const matchedKeys=new Set();
+    function mkRow(item,isEn){
+      const row=el('div');row.style.cssText='display:flex;align-items:center;gap:8px;'+(isEn?'flex-direction:row-reverse;':'');
+      const lbl=el('button','btn ghost',item.text);lbl.type='button';
+      lbl.style.cssText='padding:10px 14px;font-size:14px;border-radius:10px;cursor:pointer';
+      if(isEn)lbl.onclick=()=>speakWord(item.text);
+      const dot=el('div');
+      dot.style.cssText='width:18px;height:18px;border-radius:50%;background:#c7cbe8;border:2px solid #4338ca;cursor:pointer;flex:none;touch-action:none';
+      dot.dataset.key=String(item.key);dot.dataset.side=isEn?'en':'ko';
+      row.appendChild(lbl);row.appendChild(dot);
+      return {row,lbl,dot,key:item.key,isEn};
     }
+    const leftRows=enList.map(item=>mkRow(item,true));
+    const rightRows=koList.map(item=>mkRow(item,false));
+    leftRows.forEach(r=>leftCol.appendChild(r.row));
+    rightRows.forEach(r=>rightCol.appendChild(r.row));
+    let dragLine=null,dragFrom=null;
+    function stagePt(clientX,clientY){const rect=stage.getBoundingClientRect();return {x:clientX-rect.left,y:clientY-rect.top};}
+    function dotCenter(dot){const r=dot.getBoundingClientRect();return stagePt(r.left+r.width/2,r.top+r.height/2);}
+    function startDrag(row,e){
+      if(matchedKeys.has(row.key))return;
+      dragFrom=row;
+      const p=dotCenter(row.dot);
+      dragLine=document.createElementNS(svgNS,'line');
+      dragLine.setAttribute('x1',p.x);dragLine.setAttribute('y1',p.y);
+      dragLine.setAttribute('x2',p.x);dragLine.setAttribute('y2',p.y);
+      dragLine.setAttribute('stroke','#4338ca');dragLine.setAttribute('stroke-width','3');dragLine.setAttribute('stroke-dasharray','5,4');
+      svg.appendChild(dragLine);
+      try{row.dot.setPointerCapture(e.pointerId);}catch(err){}
+    }
+    function moveDrag(e){
+      if(!dragLine)return;
+      const p=stagePt(e.clientX,e.clientY);
+      dragLine.setAttribute('x2',p.x);dragLine.setAttribute('y2',p.y);
+    }
+    function finishFail(){
+      statusEl2.className='fx no';statusEl2.textContent='다시 생각해보세요.';
+      setTimeout(()=>{if(statusEl2.textContent==='다시 생각해보세요.')statusEl2.textContent='';},700);
+    }
+    function endDrag(e){
+      if(!dragLine){dragFrom=null;return;}
+      const p=stagePt(e.clientX,e.clientY);
+      const pool=dragFrom.isEn?rightRows:leftRows;
+      let target=null,minD=30;
+      pool.forEach(r=>{
+        if(matchedKeys.has(r.key))return;
+        const c=dotCenter(r.dot);
+        const d=Math.hypot(c.x-p.x,c.y-p.y);
+        if(d<minD){minD=d;target=r;}
+      });
+      svg.removeChild(dragLine);dragLine=null;
+      if(target){
+        if(target.key===dragFrom.key){
+          const p1=dotCenter(dragFrom.dot),p2=dotCenter(target.dot);
+          const line=document.createElementNS(svgNS,'line');
+          line.setAttribute('x1',p1.x);line.setAttribute('y1',p1.y);line.setAttribute('x2',p2.x);line.setAttribute('y2',p2.y);
+          line.setAttribute('stroke','#34b467');line.setAttribute('stroke-width','4');
+          svg.appendChild(line);
+          matchedKeys.add(dragFrom.key);
+          dragFrom.dot.style.background='#34b467';target.dot.style.background='#34b467';
+          statusEl2.className='fx ok';statusEl2.textContent=matchedKeys.size+' / '+wordsConnect.length+' 짝 연결 완료';
+          if(matchedKeys.size===wordsConnect.length)statusEl2.textContent='모두 연결했어요! 🎉';
+        }else{
+          finishFail();
+        }
+      }
+      dragFrom=null;
+    }
+    leftRows.concat(rightRows).forEach(r=>{
+      r.dot.addEventListener('pointerdown',e=>startDrag(r,e));
+    });
+    stage.addEventListener('pointermove',moveDrag);
+    stage.addEventListener('pointerup',endDrag);
+    stage.addEventListener('pointercancel',()=>{if(dragLine){svg.removeChild(dragLine);dragLine=null;}dragFrom=null;});
+  },{wide:true,wideMax:'760px'});
+  // 2-4) 그림 보고 맞추기 — 이야기 속 사진이 아니라, 그 "단어"에 맞는 그림(선생님이 미리 만들어둔 단어별 그림, words의 3번째 en|ko|img 항목)이
+  //      자동으로 나와요. 단어에 그림이 없으면 그 단어는 건너뛰고, 그림이 하나도 없으면 이 단계 자체가 생략돼요.
+  const picQuizWords=wordsPicPool.filter(w=>w.img);
+  const picQuiz=picQuizWords.map(correct=>{
+    const distractPool=picQuizWords.filter(w=>w.en.toLowerCase()!==correct.en.toLowerCase());
+    const distracts=shuffleArr(distractPool).slice(0,3);
+    const opts=shuffleArr([correct].concat(distracts));
+    return {correct,opts};
   });
   if(picQuiz.length){
     slideAdd(b=>{
       b.appendChild(el('span','badge green','Story · Words 4/4'));
       b.appendChild(el('h1','title','그림 보고 맞추기'));
-      b.appendChild(el('div','hint','그림을 보고 알맞은 단어를 골라보세요.'));
+      b.appendChild(el('div','hint','단어를 보고(눌러서 발음도 들어보고) 알맞은 그림을 골라보세요.'));
       const grid=el('div');grid.style.cssText='display:flex;flex-direction:column;gap:18px;margin-top:14px';
       picQuiz.forEach(q=>{
         const row=el('div');row.style.cssText='display:flex;gap:16px;align-items:center;flex-wrap:wrap';
-        const img=document.createElement('img');img.src=fixDriveImageUrl(q.imageUrl);img.alt='';
-        img.style.cssText='width:150px;height:110px;object-fit:contain;object-position:'+(q.crop||'center center')+';background:#e9ebf2;border-radius:10px;display:block';
-        row.appendChild(img);
+        const wordBtn=el('button','btn ghost','🔊 '+q.correct.en);wordBtn.type='button';wordBtn.style.cssText='padding:10px 16px;font-size:15px;font-weight:700;border-radius:10px;cursor:pointer;min-width:110px';
+        wordBtn.onclick=()=>speakWord(q.correct.en);
+        row.appendChild(wordBtn);
         const optWrap=el('div');optWrap.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
         const fb=el('span','fx');
         q.opts.forEach(o=>{
-          const btn=el('button','btn ghost',o.en);btn.type='button';btn.style.cssText='padding:8px 14px;font-size:13.5px;border-radius:10px;cursor:pointer';
+          const btn=el('button','btn ghost');btn.type='button';btn.style.cssText='padding:4px;border-radius:10px;cursor:pointer;line-height:0';
+          const oimg=document.createElement('img');oimg.src=fixDriveImageUrl(o.img);oimg.alt=o.en;
+          oimg.style.cssText='width:84px;height:84px;object-fit:cover;border-radius:8px;display:block';
+          btn.appendChild(oimg);
           btn.onclick=()=>{
-            speakWord(o.en);
             const ok=o.en.toLowerCase()===q.correct.en.toLowerCase();
-            btn.style.background=ok?'#e3f9ec':'#fde8e8';
+            btn.style.outline=ok?'3px solid #34b467':'3px solid #e0526b';
             fb.className='fx '+(ok?'ok':'no');fb.textContent=ok?'정답이에요! 🎉':'다시 생각해보세요.';
           };
           optWrap.appendChild(btn);
@@ -4366,7 +4539,7 @@ function runStory(topic){setWide(true);deckInit();
     const tas=[];
     pics.forEach((p,i)=>{
       const col=el('div');
-      if(p.imageUrl){const img=document.createElement('img');img.src=fixDriveImageUrl(p.imageUrl);img.alt='';img.style.cssText='width:100%;height:150px;object-fit:contain;object-position:'+(p.crop||'center center')+';background:#e9ebf2;border-radius:10px;display:block;margin-bottom:8px';col.appendChild(img);}
+      if(p.imageUrl){const img=document.createElement('img');img.src=fixDriveImageUrl(p.imageUrl);img.alt='';img.style.cssText='width:100%;height:150px;object-fit:cover;object-position:'+(p.crop||'center center')+';background:#e9ebf2;border-radius:10px;display:block;margin-bottom:8px';col.appendChild(img);}
       col.appendChild(el('div','fl','Picture '+(i+1)));
       col.appendChild(makeDictBtn());
       const ta=el('textarea','in');ta.placeholder=p.starter||'Write 1-2 sentences about this picture in English.';ta.style.minHeight='90px';
