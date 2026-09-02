@@ -3016,9 +3016,99 @@ function viewPicBankList(){setWide(false);mountView(w=>{
   const bk=el('button','backbtn','◀ 학생 목록으로');bk.onclick=viewTeacherHome;w.appendChild(bk);
   w.appendChild(el('h1','title','🖼️ 그림 표현 은행'));
   w.appendChild(el('div','hint','그림마다 초등 3-4학년 · 초등 5-6학년 · 중등 3단계 표현 문장과 핵심 단어를 미리 만들어두는 곳이에요. Story Writing 컨텐츠를 만들 때 여기서 그림을 골라 바로 가져다 쓸 수 있어요. 여기서 만든 내용도 다른 컨텐츠처럼 스프레드시트에 저장되고, "🔄 사이트에 반영하기"를 눌러야 실제로 쓸 수 있게 반영돼요.'));
-  const addBtn=el('button','btn green','+ 새 그림 추가');addBtn.type='button';addBtn.style.marginBottom='12px';
+  const addBtn=el('button','btn green','+ 새 그림 추가');addBtn.type='button';addBtn.style.marginBottom='8px';
   addBtn.onclick=()=>viewPicBankForm();
   w.appendChild(addBtn);
+
+  /* ---- 한 장짜리 필름스트립/십자(2x2) 이미지를 3~4등분해서 은행 항목 여러 개로 자동 등록 ---- */
+  const bsplitBtn=el('button','btn ghost','🔪 그림 1장을 3~4등분해서 은행에 넣기');bsplitBtn.type='button';bsplitBtn.style.cssText='margin-bottom:12px;margin-left:8px;padding:8px 14px;font-size:13px';
+  w.appendChild(bsplitBtn);
+  const bsplitPanel=el('div');bsplitPanel.style.cssText='display:none;background:#f0f2ff;border-radius:10px;padding:12px;flex-direction:column;gap:8px;margin-bottom:14px';
+  w.appendChild(bsplitPanel);
+  bsplitPanel.appendChild(el('div','hint','필름스트립처럼 한 장짜리 그림 안에 여러 장면이 나란히 들어있을 때, 그 그림을 똑같은 크기로 나눠서 그림 표현 은행에 새 항목으로 한 번에 등록해요(장면 설명·단어·표현 문장은 비어있는 채로 만들어지니, 등록 후 각 항목을 열어서 "✨ AI로 사진 보고 채우기"나 직접 입력으로 채워주세요).'));
+  const bsplitRow=el('div');bsplitRow.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+  const bsplitFileBtn=el('button','btn ghost','🖼️ 나눌 이미지 선택');bsplitFileBtn.type='button';bsplitFileBtn.style.cssText='padding:6px 10px;font-size:12px';
+  const bsplitFileInput=el('input');bsplitFileInput.type='file';bsplitFileInput.accept='image/*';bsplitFileInput.style.display='none';
+  const bsplitCountSel=el('select','in');bsplitCountSel.style.cssText='padding:6px 10px;font-size:12px;border-radius:8px';
+  [['3','3등분'],['4','4등분']].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;bsplitCountSel.appendChild(o);});
+  const bsplitDirSel=el('select','in');bsplitDirSel.style.cssText='padding:6px 10px;font-size:12px;border-radius:8px';
+  function updateBsplitDirOptions(){
+    const n=Number(bsplitCountSel.value)||3;
+    const prevVal=bsplitDirSel.value;
+    bsplitDirSel.innerHTML='';
+    const opts=[['h','가로로 나란히 있는 그림 (세로선으로 자르기)'],['v','세로로 나란히 있는 그림 (가로선으로 자르기)']];
+    if(n===4)opts.push(['grid','십자 모양(2x2)으로 나뉘어 있는 그림 (가로+세로선으로 4등분)']);
+    opts.forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;bsplitDirSel.appendChild(o);});
+    if(opts.some(o=>o[0]===prevVal))bsplitDirSel.value=prevVal;
+  }
+  bsplitCountSel.onchange=updateBsplitDirOptions;
+  updateBsplitDirOptions();
+  const bsplitPreviewName=el('span','hint');bsplitPreviewName.style.fontSize='12px';
+  const bsplitGoBtn=el('button','btn blue','나누기');bsplitGoBtn.type='button';bsplitGoBtn.style.cssText='padding:6px 14px;font-size:12px';
+  bsplitGoBtn.disabled=true;
+  const bsplitMsg=el('div','fx');
+  bsplitRow.appendChild(bsplitFileBtn);bsplitRow.appendChild(bsplitPreviewName);bsplitRow.appendChild(bsplitCountSel);bsplitRow.appendChild(bsplitDirSel);bsplitRow.appendChild(bsplitGoBtn);
+  bsplitPanel.appendChild(bsplitRow);bsplitPanel.appendChild(bsplitMsg);bsplitPanel.appendChild(bsplitFileInput);
+  bsplitBtn.onclick=()=>{ bsplitPanel.style.display=(bsplitPanel.style.display==='none'?'flex':'none'); };
+  let bsplitFile=null;
+  bsplitFileBtn.onclick=()=>bsplitFileInput.click();
+  bsplitFileInput.onchange=()=>{
+    bsplitFile=bsplitFileInput.files&&bsplitFileInput.files[0];
+    bsplitPreviewName.textContent=bsplitFile?bsplitFile.name:'';
+    bsplitGoBtn.disabled=!bsplitFile;
+  };
+  bsplitGoBtn.onclick=async()=>{
+    if(!bsplitFile)return;
+    bsplitGoBtn.disabled=true;bsplitMsg.className='fx';bsplitMsg.textContent='나누는 중…';
+    try{
+      const n=Number(bsplitCountSel.value)||3;
+      const dir=bsplitDirSel.value;
+      const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(bsplitFile);});
+      const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=dataUrl;});
+      const pieces=[];
+      for(let i=0;i<n;i++){
+        let cw,ch,sx,sy;
+        if(dir==='grid'){
+          cw=Math.floor(img.width/2);ch=Math.floor(img.height/2);
+          const col=i%2, row=Math.floor(i/2);
+          sx=cw*col;sy=ch*row;
+        }else{
+          cw=dir==='h'?Math.floor(img.width/n):img.width;
+          ch=dir==='h'?img.height:Math.floor(img.height/n);
+          sx=dir==='h'?cw*i:0;
+          sy=dir==='h'?0:ch*i;
+        }
+        const canvas=document.createElement('canvas');
+        const maxW=640;
+        const scale=Math.min(1,maxW/cw);
+        canvas.width=Math.max(1,Math.round(cw*scale));canvas.height=Math.max(1,Math.round(ch*scale));
+        const ctx=canvas.getContext('2d');
+        ctx.drawImage(img,sx,sy,cw,ch,0,0,canvas.width,canvas.height);
+        let quality=0.85,out=canvas.toDataURL('image/jpeg',quality);
+        while(out.length>40000&&quality>0.35){quality-=0.1;out=canvas.toDataURL('image/jpeg',quality);}
+        pieces.push(out);
+      }
+      bsplitMsg.textContent='은행에 '+n+'개 항목을 등록하는 중…';
+      for(let i=0;i<pieces.length;i++){
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({
+          action:'addContent',contentType:'picbank',
+          imageUrl:pieces[i],crop:'center center',zoom:100,
+          sceneKo:'(자동 분할 '+(i+1)+'/'+pieces.length+' — 장면 설명을 입력해주세요)',
+          words:'',expr34:'',expr56:'',exprMid:''
+        })});
+        let data=null;try{data=await res.json();}catch(e){}
+        if(data&&data.ok===false)throw new Error((i+1)+'번째 조각 저장 실패: '+(data.error||''));
+      }
+      bsplitMsg.className='fx ok';bsplitMsg.textContent=n+'등분해서 은행에 새 항목 '+n+'개를 등록했어요! 목록에서 각 항목을 열어 장면 설명·단어·표현 문장을 채워주세요.';
+      bsplitFile=null;bsplitFileInput.value='';bsplitPreviewName.textContent='';bsplitGoBtn.disabled=true;
+      viewPicBankList();
+    }catch(e){
+      bsplitMsg.className='fx no';bsplitMsg.textContent='나누지 못했어요: '+String(e.message||e);
+    }finally{
+      bsplitGoBtn.disabled=false;
+    }
+  };
+
   const box=el('div','chapter');box.appendChild(el('div','ch-h','등록된 그림'));
   const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
   w.appendChild(box);
