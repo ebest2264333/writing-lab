@@ -2416,6 +2416,11 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
         const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(splitFile);});
         const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=dataUrl;});
         const pieces=[];
+        // 그림칸은 항상 정사각형으로 꽉 채워 보여주기(cover) 때문에, 조각이 정사각형이 아니면 화면에
+        // 표시될 때 길쭉한 방향의 양 끝이 밀려나 안 보일 수 있어요. 그래서 조각을 자를 때부터 아예
+        // 정사각형 캔버스 한가운데에 비율 그대로(레터박스) 그려 넣어요 — 남는 위아래(또는 좌우) 여백은
+        // 검은색으로 채우고, 이렇게 만들어진 정사각형 이미지 자체를 저장하니 나중에 크롭/줌을 어떻게
+        // 조정해도 원본 조각의 어느 부분도 잘리지 않아요.
         for(let i=0;i<n;i++){
           let cw,ch,sx,sy;
           if(dir==='grid'){
@@ -2429,19 +2434,22 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
             sx=dir==='h'?cw*i:0;
             sy=dir==='h'?0:ch*i;
           }
+          const side=640;
           const canvas=document.createElement('canvas');
-          const maxW=640;
-          const scale=Math.min(1,maxW/cw);
-          canvas.width=Math.max(1,Math.round(cw*scale));canvas.height=Math.max(1,Math.round(ch*scale));
+          canvas.width=side;canvas.height=side;
           const ctx=canvas.getContext('2d');
-          ctx.drawImage(img,sx,sy,cw,ch,0,0,canvas.width,canvas.height);
+          ctx.fillStyle='#000';ctx.fillRect(0,0,side,side);
+          const fitScale=Math.min(side/cw,side/ch);
+          const dw=Math.max(1,Math.round(cw*fitScale)),dh=Math.max(1,Math.round(ch*fitScale));
+          const dx=Math.round((side-dw)/2),dy=Math.round((side-dh)/2);
+          ctx.drawImage(img,sx,sy,cw,ch,dx,dy,dw,dh);
           let quality=0.85,out=canvas.toDataURL('image/jpeg',quality);
           while(out.length>40000&&quality>0.35){quality-=0.1;out=canvas.toDataURL('image/jpeg',quality);}
           pieces.push(out);
         }
         storyPics=pieces.map(url=>({url,crop:'center center',zoom:100,questions:'',words:'',starter:''}));
         renderStoryPics();refreshPreview();saveDraftLocal();
-        splitMsg.className='fx ok';splitMsg.textContent=n+'등분해서 그림 칸을 새로 채웠어요! 이제 각 칸에 질문·단어를 채워주세요.';
+        splitMsg.className='fx ok';splitMsg.textContent=n+'등분해서 그림 칸을 새로 채웠어요! 조각이 정사각형이 아니어도 잘리지 않도록 위아래(또는 좌우) 여백을 검은색으로 채워 전체가 다 보이게 넣었어요. 이제 각 칸에 질문·단어를 채워주세요.';
       }catch(e){
         splitMsg.className='fx no';splitMsg.textContent='나누지 못했어요: '+String(e.message||e);
       }finally{
