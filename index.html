@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>English Writing Lab · 천일문 WRITING</title>
+<title>English Writing Lab</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%8F%EF%B8%8F%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/fonts-archive/GmarketSans/GmarketSans.css">
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
@@ -391,7 +391,7 @@ function findCopiedRun(bodyText,summaryText,minWords,excludeWords){
   return null;
 }
 
-/* ================= CONTENT (천일문 WRITING 표준 목차) ================= */
+/* ================= CONTENT (WRITING 표준 목차) ================= */
 /* point: {id,title,explain(html with .key via {k,note}), quiz[10], arrange[15]{ko,a}, compose[15]{k,a,h,alt}, task{prompt,conds,sample}} */
 
 const P_be1={ id:'L1C1U1', title:'be동사의 긍정문',
@@ -900,8 +900,8 @@ const P_some={ id:'L1C6U3', title:'one, some, any',
    새 index.html을 올리는 즉시 항상 홈 화면에 나타나요. Story Writing 컨텐츠의 "레벨" 칸에는
    이 고정 id인 "L0"을 그대로 적으면 돼요. */
 const LEVELS=[
- {id:'L0',name:'초5',book:'천일문 WRITING PICTURE',chapters:[]},
- {id:'L1',name:'초6',book:'천일문 WRITING LEVEL 1',chapters:[
+ {id:'L0',name:'초5',book:'WRITING PICTURE',chapters:[]},
+ {id:'L1',name:'초6',book:'WRITING LEVEL 1',chapters:[
    {id:'L1C1',t:'CHAPTER 01 be동사',points:[P_be1,P_be2]},
    {id:'L1C2',t:'CHAPTER 02 일반동사',points:[P_do1,P_do2,P_do3]},
    {id:'L1C3',t:'CHAPTER 03 현재진행형과 미래 표현',points:[P_prog,P_future]},
@@ -915,7 +915,7 @@ const LEVELS=[
    {id:'L1C11',t:'CHAPTER 11 전치사',points:[{id:'L1C11U1',title:'장소, 위치, 방향 전치사',soon:true},{id:'L1C11U2',title:'시간을 나타내는 전치사',soon:true},{id:'L1C11U3',title:'여러 가지 전치사',soon:true}]},
    {id:'L1C12',t:'CHAPTER 12 접속사',points:[{id:'L1C12U1',title:'and / but / or',soon:true},{id:'L1C12U2',title:'여러 가지 접속사',soon:true}]}
  ]},
- {id:'L2',name:'중1',book:'천일문 WRITING LEVEL 2',chapters:[
+ {id:'L2',name:'중1',book:'WRITING LEVEL 2',chapters:[
    {id:'L2C1',t:'CHAPTER 01 문장의 주요 형식',points:[{id:'L2C1U1',title:'SVC / SVOO',soon:true},{id:'L2C1U2',title:'SVOC – 목적격보어의 종류',soon:true}]},
    {id:'L2C2',t:'CHAPTER 02 시제',points:[{id:'L2C2U1',title:'현재, 과거, 미래 & 진행형',soon:true},{id:'L2C2U2',title:'현재완료의 개념과 형태',soon:true},{id:'L2C2U3',title:'현재완료의 주요 의미',soon:true}]},
    {id:'L2C3',t:'CHAPTER 03 조동사',points:[{id:'L2C3U1',title:'can / may / will',soon:true},{id:'L2C3U2',title:'must / have to / should',soon:true},{id:'L2C3U3',title:'had better / would like to / used to',soon:true}]},
@@ -929,7 +929,7 @@ const LEVELS=[
    {id:'L2C11',t:'CHAPTER 11 접속사',points:[{id:'L2C11U1',title:'and, or, but의 주의할 쓰임',soon:true},{id:'L2C11U2',title:'부사절을 이끄는 접속사',soon:true},{id:'L2C11U3',title:'명사절을 이끄는 접속사',soon:true}]},
    {id:'L2C12',t:'CHAPTER 12 관계대명사',points:[{id:'L2C12U1',title:'who, which, that',soon:true},{id:'L2C12U2',title:'who(m), which, that',soon:true},{id:'L2C12U3',title:'whose, what',soon:true}]}
  ]},
- {id:'L3',name:'중2',book:'천일문 WRITING LEVEL 3',chapters:[
+ {id:'L3',name:'중2',book:'WRITING LEVEL 3',chapters:[
    {id:'L3C1',t:'CHAPTER 01 완료 시제',points:[{id:'L3C1U1',title:'현재완료, 현재완료진행',soon:true},{id:'L3C1U2',title:'과거완료',soon:true}]},
    {id:'L3C2',t:'CHAPTER 02 조동사',points:[{id:'L3C2U1',title:'can / may / will',soon:true},{id:'L3C2U2',title:'must / have to / should',soon:true},{id:'L3C2U3',title:'had better / used to / would',soon:true},{id:'L3C2U4',title:'조동사 + have p.p.',soon:true}]},
    {id:'L3C3',t:'CHAPTER 03 수동태',points:[{id:'L3C3U1',title:'수동태의 형태',soon:true},{id:'L3C3U2',title:'SVOO / SVOC 문형의 수동태',soon:true},{id:'L3C3U3',title:'주의해야 할 수동태',soon:true}]},
@@ -1612,6 +1612,48 @@ function fixDriveImageUrl(u){
   if(m)return 'https://drive.google.com/thumbnail?id='+m[1]+'&sz=w1600';
   return s;
 }
+/** 그림 자르기/줌 기능이 남긴, 그림 가장자리를 채운 순검정 여백(레터박스)을 찾아내요.
+ *  픽셀을 직접 읽어야 해서 다른 서버 이미지는 브라우저 보안 정책(CORS) 때문에 못 읽을 수 있는데,
+ *  그때는 조용히 null을 돌려줘서(원본 그림 그대로 보여주는 쪽으로) 화면이 깨지지 않게 해요.
+ *  결과는 {left,right,top,bottom}(0~1 사이, 그 방향으로 잘라내야 하는 비율)이거나, 의미 있는
+ *  검정 여백이 없으면 null이에요. url별로 결과를 캐시해서 같은 그림을 다시 계산하지 않아요. */
+const __blackBorderCache=new Map();
+function detectBlackBorders(url){
+  if(__blackBorderCache.has(url))return __blackBorderCache.get(url);
+  const p=new Promise(resolve=>{
+    let done=false;const finish=v=>{if(done)return;done=true;resolve(v);};
+    const timer=setTimeout(()=>finish(null),4000);
+    const probe=new Image();
+    probe.crossOrigin='anonymous';
+    probe.onerror=()=>{clearTimeout(timer);finish(null);};
+    probe.onload=()=>{
+      clearTimeout(timer);
+      try{
+        const nw=probe.naturalWidth,nh=probe.naturalHeight;
+        if(!nw||!nh)return finish(null);
+        const scale=Math.min(1,220/Math.max(nw,nh));
+        const cw=Math.max(1,Math.round(nw*scale)),ch=Math.max(1,Math.round(nh*scale));
+        const cvs=document.createElement('canvas');cvs.width=cw;cvs.height=ch;
+        const ctx=cvs.getContext('2d');ctx.drawImage(probe,0,0,cw,ch);
+        const data=ctx.getImageData(0,0,cw,ch).data;
+        const isBlack=(x,y)=>{const i=(y*cw+x)*4;return data[i]<18&&data[i+1]<18&&data[i+2]<18;};
+        const stepX=Math.max(1,Math.floor(cw/60)),stepY=Math.max(1,Math.floor(ch/60));
+        const rowBlackFrac=y=>{let b=0,t=0;for(let x=0;x<cw;x+=stepX){t++;if(isBlack(x,y))b++;}return t?b/t:0;};
+        const colBlackFrac=x=>{let b=0,t=0;for(let y=0;y<ch;y+=stepY){t++;if(isBlack(x,y))b++;}return t?b/t:0;};
+        let top=0;while(top<ch*0.45&&rowBlackFrac(top)>0.9)top++;
+        let bottom=ch-1;while(bottom>ch*0.55&&rowBlackFrac(bottom)>0.9)bottom--;
+        let left=0;while(left<cw*0.45&&colBlackFrac(left)>0.9)left++;
+        let right=cw-1;while(right>cw*0.55&&colBlackFrac(right)>0.9)right--;
+        const res={top:top/ch,bottom:(ch-1-bottom)/ch,left:left/cw,right:(cw-1-right)/cw};
+        if(res.top+res.bottom+res.left+res.right<0.04)return finish(null);
+        finish(res);
+      }catch(e){finish(null);}
+    };
+    probe.src=url;
+  });
+  __blackBorderCache.set(url,p);
+  return p;
+}
 /** 선생님이 컨텐츠 추가/수정 화면에서 올린 이미지들을(한 줄에 URL 하나씩) 화면에 세로로 쌓아 보여줘요.
  *  이미지가 없으면 null을 돌려줘서, 호출하는 쪽에서 그냥 appendChild를 건너뛰면 돼요. */
 function renderImages(imagesText){
@@ -1689,6 +1731,64 @@ function renderDrillWrongReport(wrongArr){
       '</div>';
   }).join('');
   return '<div style="margin-top:8px"><div class="fl" style="margin-bottom:4px">틀린 문항 '+wrongArr.length+'개</div>'+rows+'</div>';
+}
+/** 제출물 하나를 학부모님께 보내기 좋은 리포트 형태(새 탭 → 인쇄/PDF 저장)로 열어줘요.
+ *  학생이 쓴 글 + 선생님 첨삭(있으면 AI 첨삭도 함께)을 깔끔하게 정리해서 보여주고,
+ *  버튼을 누르면 브라우저 인쇄창이 뜨는데, 거기서 "PDF로 저장"을 고르면 파일로도 받을 수 있어요. */
+function printSubmissionReport(s,studentName,studentId,academyName){
+  const fb=parseFeedback(s.feedback);
+  const aifb=parseAiFeedback(s.aiFeedback);
+  const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
+  const sents=s.text?splitSentences(s.text):[];
+  const bodyHtml=sents.length?sents.map(sent=>'<p>'+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
+  const feedbackBlocks=[];
+  if(aifb.overall)feedbackBlocks.push('<div class="fb-box fb-a"><b>선생님 첨삭</b><p>'+escH(aifb.overall).replace(/\n/g,'<br>')+'</p></div>');
+  if(aifbGpt.overall)feedbackBlocks.push('<div class="fb-box fb-b"><b>선생님 첨삭</b><p>'+escH(aifbGpt.overall).replace(/\n/g,'<br>')+'</p></div>');
+  if(fb.overall)feedbackBlocks.push('<div class="fb-box fb-c"><b>선생님 첨삭</b><p>'+escH(fb.overall).replace(/\n/g,'<br>')+'</p></div>');
+  const wrongArr=parseWrongReport(s.wrongReport);
+  let wrongHtml='';
+  if(s.wrongReport&&wrongArr.length){
+    wrongHtml='<h2>틀린 문항 다시 보기</h2><table class="wrong-table"><thead><tr><th>문제</th><th>학생 답</th><th>정답</th></tr></thead><tbody>'+
+      wrongArr.map(w=>'<tr><td>'+escH(undl(String(w.ko||'')))+'</td><td>'+escH(String(w.user||''))+'</td><td>'+escH(String(w.a||''))+'</td></tr>').join('')+
+      '</tbody></table>';
+  }
+  const html='<!doctype html><html><head><meta charset="utf-8"><title>'+escH(studentName||'')+' - '+escH(s.point||s.chapter||'')+' 리포트</title>'+
+    '<style>'+
+    "body{font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#1f2430;max-width:760px;margin:0 auto;padding:32px 28px;line-height:1.6}"+
+    'h1{font-size:20px;margin:0 0 4px}'+
+    '.sub{color:#6b7684;font-size:13px;margin-bottom:20px}'+
+    '.meta{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:#444;border:1px solid #e5e5ea;border-radius:10px;padding:12px 16px;margin-bottom:20px}'+
+    '.meta div b{color:#111}'+
+    'h2{font-size:15px;margin:22px 0 8px;border-bottom:2px solid #1f2430;padding-bottom:4px}'+
+    'p{margin:0 0 8px;font-size:14px}'+
+    '.fb-box{border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:13px}'+
+    '.fb-a{background:#eef0ff}.fb-b{background:#e6f6f3}.fb-c{background:#e9f9ec}'+
+    '.wrong-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}'+
+    '.wrong-table th,.wrong-table td{border:1px solid #ddd;padding:6px 8px;text-align:left}'+
+    '.score{font-weight:700}'+
+    '.noprint{margin-top:24px;text-align:center}'+
+    '.noprint button{padding:10px 22px;font-size:14px;border-radius:10px;border:none;background:#1f2430;color:#fff;cursor:pointer}'+
+    '@media print{.noprint{display:none}body{padding:0}}'+
+    '</style></head><body>'+
+    '<h1>English Writing Lab · 학습 리포트</h1>'+
+    '<div class="sub">학생이 제출한 영작 결과와 선생님 첨삭을 정리한 리포트예요.</div>'+
+    '<div class="meta">'+
+      '<div><b>이름</b> '+escH(studentName||'')+'</div>'+
+      '<div><b>아이디</b> '+escH(studentId||'')+'</div>'+
+      (academyName?('<div><b>학원</b> '+escH(academyName)+'</div>'):'')+
+      '<div><b>유형</b> '+escH(s.type||'')+'</div>'+
+      '<div><b>주제/포인트</b> '+escH(s.point||s.chapter||'')+'</div>'+
+      '<div><b>제출일시</b> '+escH(s.datetime||'')+'</div>'+
+      '<div class="score"><b>점수</b> '+escH(String(s.total||'-'))+(s.grade?(' · '+escH(s.grade)+'등급'):'')+'</div>'+
+    '</div>'+
+    '<h2>작성한 글</h2>'+bodyHtml+
+    (feedbackBlocks.length?('<h2>선생님 첨삭</h2>'+feedbackBlocks.join('')):'')+
+    wrongHtml+
+    '<div class="noprint"><button onclick="window.print()">🖨 인쇄하기 · PDF 만들기</button></div>'+
+    '</body></html>';
+  const win=window.open('','_blank');
+  if(!win){alert('팝업이 차단되어 있어요. 브라우저 팝업 차단을 해제한 뒤 다시 시도해주세요.');return;}
+  win.document.open();win.document.write(html);win.document.close();
 }
 /** 선생님 화면에서 문장별 AI 첨삭(errors[]+corrected)을 보여주고, "✏️ 수정" 버튼으로 그 문장의
  *  AI 첨삭 내용을 직접 고쳐 쓸 수 있게 해요. 저장하면 같은 문장 번호(idx)의 내용만 덮어쓰고
@@ -1787,6 +1887,9 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
       card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-bottom:14px;background:#fff';
       card.innerHTML='<div style="font-weight:800">'+(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+(s.type||'')+' · '+(s.datetime||'')+')</span></div>'+
         '<div style="margin-top:6px;color:#6b7684;font-size:13px">점수: '+(s.total||'-')+(s.grade?(' · '+s.grade+'등급'):'')+'</div>';
+      const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
+      printBtn.onclick=()=>printSubmissionReport(s,USER.name,USER.id,USER.academy);
+      card.appendChild(printBtn);
       const fb=parseFeedback(s.feedback);
       const aifb=parseAiFeedback(s.aiFeedback);
       const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
@@ -3526,6 +3629,9 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
       card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-top:14px;background:#fff';
       card.innerHTML='<div style="color:#6b7684;font-size:13px">점수: '+(s.total||'-')+(s.grade?(' · '+s.grade+'등급'):'')+'</div>';
       w.appendChild(card);
+      const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기 (학부모님께 보내기 좋아요)');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
+      printBtn.onclick=()=>printSubmissionReport(s,studentName,studentId,s.academy);
+      card.appendChild(printBtn);
       if(s.wrongReport){
         const wrongWrap=el('div');wrongWrap.innerHTML=renderDrillWrongReport(parseWrongReport(s.wrongReport));
         card.appendChild(wrongWrap);
@@ -4711,9 +4817,51 @@ function runStory(topic){setWide(true);deckInit();
     const nextPicBtn=el('button','btn ghost','▶');nextPicBtn.type='button';nextPicBtn.style.cssText='padding:8px 14px;font-size:16px';
     nav2.appendChild(prevPicBtn);nav2.appendChild(picLabel);nav2.appendChild(nextPicBtn);
     b.appendChild(nav2);
-    const imgBox=el('div');imgBox.style.cssText='width:100%;max-height:420px;min-height:220px;overflow:hidden;background:#000;border-radius:12px;margin-bottom:10px;display:flex;align-items:center;justify-content:center';
-    const img=document.createElement('img');img.alt='';img.style.cssText='max-width:100%;max-height:420px;object-fit:contain;display:block';
-    imgBox.appendChild(img);b.appendChild(imgBox);
+    // 그림 상자를 화면 높이에 맞춰 최대한 크게 보여주되, 그림의 실제 가로세로 비율 그대로
+    // 딱 맞는 크기로 만들어서(자르지 않고) 불필요한 검은 여백이 남지 않게 해요.
+    const imgBoxWrap=el('div');imgBoxWrap.style.cssText='text-align:center;margin-bottom:10px';
+    const imgBox=el('div');imgBox.style.cssText='display:inline-flex;overflow:hidden;background:#000;border-radius:12px;max-width:100%';
+    const img=document.createElement('img');img.alt='';img.style.cssText='width:100%;height:100%;display:block;object-fit:contain';
+    imgBox.appendChild(img);imgBoxWrap.appendChild(imgBox);b.appendChild(imgBoxWrap);
+    let curBorders=null,curToken=0;
+    // curBorders가 있으면(검정 여백을 찾았으면) 그 부분을 화면 밖으로 밀어내서(overflow:hidden으로 잘라서)
+    // 실제 그림 내용만 상자에 꽉 차게 보여주고, 없으면 예전처럼 원본 전체를 그대로(object-fit:contain) 보여줘요.
+    const fitImgBox=()=>{
+      const nw=img.naturalWidth,nh=img.naturalHeight;
+      if(!nw||!nh)return;
+      const wrapW=imgBoxWrap.clientWidth||900;
+      const targetH=Math.min(window.innerHeight*0.58,520);
+      if(curBorders){
+        const bd=curBorders;
+        const cw=nw*(1-bd.left-bd.right),ch=nh*(1-bd.top-bd.bottom);
+        let h=targetH,scale=h/ch,w=cw*scale;
+        if(w>wrapW){w=wrapW;scale=w/cw;h=ch*scale;}
+        if(h<200){h=200;scale=h/ch;w=Math.min(cw*scale,wrapW);}
+        imgBox.style.width=w+'px';imgBox.style.height=h+'px';
+        img.style.objectFit='none';
+        img.style.width=(nw*scale)+'px';img.style.height=(nh*scale)+'px';
+        img.style.transform='translate('+(-bd.left*nw*scale)+'px,'+(-bd.top*nh*scale)+'px)';
+      }else{
+        let h=targetH,w=h*(nw/nh);
+        if(w>wrapW){w=wrapW;h=w*(nh/nw);}
+        if(h<200){h=200;w=Math.min(h*(nw/nh),wrapW);}
+        imgBox.style.width=w+'px';imgBox.style.height=h+'px';
+        img.style.objectFit='contain';img.style.width='100%';img.style.height='100%';img.style.transform='none';
+      }
+    };
+    const showPic=(url)=>{
+      curBorders=null;
+      const token=++curToken;
+      const onReady=()=>{
+        if(token!==curToken)return;
+        fitImgBox();
+        detectBlackBorders(url).then(res=>{if(token!==curToken)return;if(res){curBorders=res;fitImgBox();}});
+      };
+      img.onload=onReady;
+      img.src=url;
+      if(img.complete&&img.naturalWidth)onReady();
+    };
+    window.addEventListener('resize',fitImgBox);
     const tas=pics.map(()=>{const ta=el('textarea','in');ta.style.minHeight='110px';ta.addEventListener('focus',()=>{lastFocusedTa=ta;});return ta;});
     const taSlot=el('div');b.appendChild(taSlot);
     let writeIdx=0;
@@ -4721,7 +4869,7 @@ function runStory(topic){setWide(true);deckInit();
       const p=pics[writeIdx];
       picLabel.textContent='Picture '+(writeIdx+1)+' / '+pics.length;
       prevPicBtn.disabled=writeIdx===0;nextPicBtn.disabled=writeIdx===pics.length-1;
-      if(p.imageUrl){imgBox.style.display='flex';img.src=fixDriveImageUrl(p.imageUrl);}else{imgBox.style.display='none';}
+      if(p.imageUrl){imgBoxWrap.style.display='block';showPic(fixDriveImageUrl(p.imageUrl));}else{imgBoxWrap.style.display='none';}
       taSlot.innerHTML='';
       const ta=tas[writeIdx];
       ta.placeholder='Write 1-2 sentences about this picture in English.';
