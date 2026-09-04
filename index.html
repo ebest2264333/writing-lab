@@ -1732,6 +1732,83 @@ function renderDrillWrongReport(wrongArr){
   }).join('');
   return '<div style="margin-top:8px"><div class="fl" style="margin-bottom:4px">틀린 문항 '+wrongArr.length+'개</div>'+rows+'</div>';
 }
+/** 제출 화면(Re-Writing·수행평가는 제외)에 붙는 "소리 내어 읽고 녹음하기" 위젯을 만들어요.
+ *  마이크로 녹음 → 바로 들어보기 → (원하면) 다시 녹음할 수 있고, 녹음하지 않아도 제출은 그대로 돼요.
+ *  녹음 화면을 여러 번 재진입(예: 이전/다음으로 왔다갔다)해도 녹음해둔 내용이 사라지지 않도록,
+ *  이 위젯은 화면을 만들 때 딱 한 번만 만들어서 재사용해야 해요(각 제출 화면 코드에서 그렇게 쓰고 있어요).
+ *  getAudio()는 제출 시 호출해서 {base64, mime}(녹음 없으면 null)을 꺼내 써요. */
+function createRecorderWidget(){
+  const wrap=el('div');wrap.style.cssText='margin:14px 0;padding:14px;background:#f6f7fb;border-radius:12px';
+  wrap.appendChild(el('div','fl','🎤 소리 내어 읽고 녹음하기 (선택)'));
+  const hint=el('div','hint','다 쓴 글을 소리 내어 읽고 녹음해서 함께 제출할 수 있어요. 녹음하지 않아도 제출은 가능해요.');
+  wrap.appendChild(hint);
+  const row=el('div');row.style.cssText='display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap';
+  const recBtn=el('button','btn ghost','🎙 녹음 시작');recBtn.type='button';recBtn.style.cssText='padding:8px 16px;font-size:13px';
+  const status=el('span');status.style.cssText='font-size:13px;color:#6b7684';
+  row.appendChild(recBtn);row.appendChild(status);
+  wrap.appendChild(row);
+  const player=document.createElement('audio');player.controls=true;player.style.cssText='display:none;margin-top:10px;width:100%;max-width:360px';
+  wrap.appendChild(player);
+  const rerecBtn=el('button','btn ghost','🔁 다시 녹음');rerecBtn.type='button';rerecBtn.style.cssText='padding:6px 12px;font-size:12px;display:none;margin-top:8px';
+  wrap.appendChild(rerecBtn);
+
+  const supported=!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder);
+  if(!supported){
+    status.textContent='이 브라우저에서는 녹음 기능을 쓸 수 없어요(제출은 그대로 가능해요).';
+    recBtn.disabled=true;
+    return {el:wrap,getAudio:async()=>null};
+  }
+
+  let mediaRecorder=null,chunks=[],blob=null,stream=null;
+
+  const startRec=async()=>{
+    try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+    catch(e){ status.textContent='마이크 권한을 허용해주셔야 녹음할 수 있어요.'; return; }
+    chunks=[];
+    try{ mediaRecorder=new MediaRecorder(stream); }
+    catch(e){ status.textContent='이 브라우저에서는 녹음을 시작할 수 없어요.'; stream.getTracks().forEach(t=>t.stop()); return; }
+    mediaRecorder.ondataavailable=ev=>{if(ev.data&&ev.data.size>0)chunks.push(ev.data);};
+    mediaRecorder.onstop=()=>{
+      blob=new Blob(chunks,{type:mediaRecorder.mimeType||'audio/webm'});
+      player.src=URL.createObjectURL(blob);player.style.display='block';
+      rerecBtn.style.display='inline-block';
+      status.textContent='녹음 완료! 아래에서 들어보고 제출하세요.';
+      if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+    };
+    mediaRecorder.start(250); // 250ms마다 데이터를 흘려보내게 해서, 아주 짧게 녹음해도 빈 파일이 되지 않게 해요.
+    recBtn.textContent='⏹ 녹음 멈추기';status.textContent='녹음 중…';
+    player.style.display='none';rerecBtn.style.display='none';blob=null;
+  };
+  recBtn.onclick=()=>{
+    if(mediaRecorder&&mediaRecorder.state==='recording'){mediaRecorder.stop();recBtn.textContent='🎙 녹음 시작';}
+    else startRec();
+  };
+  rerecBtn.onclick=()=>{blob=null;player.style.display='none';player.removeAttribute('src');rerecBtn.style.display='none';status.textContent='';};
+
+  const getAudio=()=>new Promise(resolve=>{
+    if(!blob){resolve(null);return;}
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const base64=String(reader.result).split(',')[1]||'';
+      resolve(base64?{base64,mime:blob.type||'audio/webm'}:null);
+    };
+    reader.onerror=()=>resolve(null);
+    reader.readAsDataURL(blob);
+  });
+
+  return {el:wrap,getAudio};
+}
+/** 제출물에 학생이 소리 내어 읽고 녹음한 파일(audioUrl)이 있으면, 바로 들어볼 수 있는 작은 재생 박스를
+ *  만들어 돌려줘요(없으면 null). 학생 본인의 "내 제출 내역"과 선생님의 제출물 상세 화면 양쪽에서 같이 써요. */
+function renderAudioPlayback(s){
+  if(!s.audioUrl)return null;
+  const wrap=el('div');wrap.style.cssText='margin-top:10px;padding:10px 12px;background:#f6f7fb;border-radius:10px';
+  wrap.appendChild(el('div','fl','🎤 소리 내어 읽은 녹음'));
+  const link=el('a');link.href=s.audioUrl;link.target='_blank';link.rel='noopener';link.textContent='🔊 녹음 파일 열기 (새 탭)';
+  link.style.cssText='display:inline-block;margin-top:4px;font-size:13px;color:var(--accent);font-weight:700;text-decoration:none';
+  wrap.appendChild(link);
+  return wrap;
+}
 /** 제출물 하나를 학부모님께 보내기 좋은 리포트 형태(새 탭 → 인쇄/PDF 저장)로 열어줘요.
  *  학생이 쓴 글 + 선생님 첨삭(있으면 AI 첨삭도 함께)을 깔끔하게 정리해서 보여주고,
  *  버튼을 누르면 브라우저 인쇄창이 뜨는데, 거기서 "PDF로 저장"을 고르면 파일로도 받을 수 있어요. */
@@ -1890,6 +1967,7 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
       const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
       printBtn.onclick=()=>printSubmissionReport(s,USER.name,USER.id,USER.academy);
       card.appendChild(printBtn);
+      const audioBox=renderAudioPlayback(s);if(audioBox)card.appendChild(audioBox);
       const fb=parseFeedback(s.feedback);
       const aifb=parseAiFeedback(s.aiFeedback);
       const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
@@ -3632,6 +3710,7 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
       const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기 (학부모님께 보내기 좋아요)');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
       printBtn.onclick=()=>printSubmissionReport(s,studentName,studentId,s.academy);
       card.appendChild(printBtn);
+      const audioBox=renderAudioPlayback(s);if(audioBox)card.appendChild(audioBox);
       if(s.wrongReport){
         const wrongWrap=el('div');wrongWrap.innerHTML=renderDrillWrongReport(parseWrongReport(s.wrongReport));
         card.appendChild(wrongWrap);
@@ -3966,6 +4045,7 @@ function buildReport(b,P,RES,onSubmitted){
   b.innerHTML='';b.appendChild(el('span','badge green','성적 레포트'));
   b.appendChild(el('h1','title','오늘의 학습 결과'));
   b._onShow=()=>{};
+  const rec=createRecorderWidget(); // 재진입해도 녹음 내용이 유지되도록 render() 밖(한 번만)에서 만들어요.
   const render=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());
     const wrapR=el('div','rep');
     const q=RES.quiz,ar=RES.arrange,co=RES.compose;const got=q.ok+ar.ok+co.ok,tot=q.tot+ar.tot+co.tot;
@@ -3978,6 +4058,7 @@ function buildReport(b,P,RES,onSubmitted){
     const rt=el('div','rrow');rt.innerHTML='<span class="rl">조건 영작</span><span class="rn">'+(RES.taskDone?'완료':'미완료')+'</span>';wrapR.appendChild(rt);
     const rw=el('div','rrow');rw.innerHTML='<span class="rl">오답 다시 풀기</span><span class="rn">'+RES.wrong.length+'문항</span>';wrapR.appendChild(rw);
     b.appendChild(wrapR);
+    b.appendChild(rec.el);
     // submit
     const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';
     const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','결과 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
@@ -3996,6 +4077,7 @@ function buildReport(b,P,RES,onSubmitted){
       return{payload,txt};};
     dl.onclick=()=>{const {txt}=build();const blob=new Blob(['\ufeff'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='결과_'+USER.name+'_'+P.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
     sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
+      const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
       if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;}catch(e){}}
       if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_'+USER.name+'_'+P.id+'.json';document.body.appendChild(a);a.click();a.remove();}
       saveDone(P.id,payload.progress);sub.disabled=false;sub.textContent=sent?'제출 완료!':'제출 완료 (파일 저장됨)';
@@ -4263,6 +4345,7 @@ function runParagraph(topic){setWide(true);deckInit();
   slides[slides.length-1]._collect=function(){this._box._save&&this._box._save();doAutosavePara();};
   // 8) 점수 + 제출
   slideAdd(b=>{b.appendChild(el('span','badge green','STEP 8 · Score & Submit'));b.appendChild(el('h1','title','자동 채점 결과'));
+    const rec=createRecorderWidget(); // 재진입해도 녹음 내용이 유지되도록 _paint() 밖(한 번만)에서 만들어요.
     b._paint=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());const text=ST.final||ST.draft||'';const g=gradeHb(text,topic);ST.score=g;
       const hero=el('div','rep scorehero');hero.innerHTML='<div class="big">'+g.total+'<small>/100</small></div><div class="grade '+g.grade+'">'+g.grade+' 등급</div><div class="hint">'+g.band+'</div>';b.appendChild(hero);
       const prepMs=(brainstormStart||writeEnd||Date.now())-paraStart;const writeMs=(writeEnd||Date.now())-(brainstormStart||writeEnd||Date.now());
@@ -4271,6 +4354,7 @@ function runParagraph(topic){setWide(true);deckInit();
       const rt2=el('div','rrow');rt2.innerHTML='<span class="rl">브레인스토밍~글쓰기 시간</span><span class="rn">'+fmtDur(writeMs)+'</span>';timeRows.appendChild(rt2);
       b.appendChild(timeRows);
       const rows=el('div','rep');Object.values(g.R).forEach(r=>{const rr=el('div','rrow');rr.innerHTML='<span class="rl">'+r.label+'</span><span class="rn">'+r.score+' / '+r.max+'</span>';const bar=el('div','bar');const sp=el('span');sp.style.width=(r.score/r.max*100)+'%';bar.appendChild(sp);rr.appendChild(bar);rr.appendChild(el('div','rfb',r.fb));rows.appendChild(rr);});b.appendChild(rows);
+      b.appendChild(rec.el);
       const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','글 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
       const msg=el('div','rep hint','제출하면 관리자(선생님)가 글과 점수를 확인할 수 있어요.');b.appendChild(msg);
       const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];
@@ -4279,7 +4363,9 @@ function runParagraph(topic){setWide(true);deckInit();
         const payload={book:lv.book,chapter:'Paragraph Writing',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:genSubId(),datetime:dt,quiz:'',arrange:'',compose:'',task:'Paragraph 제출',final:ST.final||ST.draft,total:g.total+'/100',score:g.total,grade:g.grade,rubric:breakdown,prepTime:prepStr,writeTime:writeStr,progress:'Paragraph '+topic.title+' 완료 · '+g.total+'점('+g.grade+') · 글감학습 '+prepStr+' · 글쓰기 '+writeStr};
         const txt=['English Writing Lab · Paragraph Writing (Hamburger)','주제: '+topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'글감 학습 시간: '+prepStr,'브레인스토밍~글쓰기 시간: '+writeStr,'','[완성본]',ST.final||ST.draft||'(작성 없음)','','── 자동 채점 ──','총점 '+g.total+'/100 ('+g.grade+')',breakdown].join('\n');return{payload,txt};};
       dl.onclick=()=>{const {txt}=build();const blob=new Blob(['\ufeff'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='글_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
-      sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;}catch(e){}}
+      sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
+        const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
+        if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;}catch(e){}}
         if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_글_'+USER.name+'_'+topic.id+'.json';document.body.appendChild(a);a.click();a.remove();}
         saveDone('PARA-'+topic.id,payload.progress);sub.disabled=false;sub.textContent=sent?'제출 완료!':'제출 완료 (파일 저장됨)';msg.innerHTML=sent?'관리자에게 전송되었어요.':'서버 주소가 없어 파일로 저장했어요. 선생님께 내면 됩니다.';
         const hb=el('button','btn blue','← 홈으로');hb.style.marginTop='10px';hb.onclick=()=>{nav.classList.remove('on');viewHome();};b.appendChild(hb);};};});
@@ -4383,6 +4469,7 @@ function runArticle(topic){setWide(true);deckInit();
   // 4) 점수 + 제출
   slideAdd(b=>{b.appendChild(el('span','badge green','Article · 채점 결과'));b.appendChild(el('h1','title','자동 채점 결과'));
     b._onShow=()=>{};
+    const rec=createRecorderWidget(); // 재진입해도 녹음 내용이 유지되도록 render() 밖(한 번만)에서 만들어요.
     const render=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());
       const totalConds=allConds.length,okConds=allConds.filter(c=>c.test(taskText)).length;
       const score=totalConds?Math.round(okConds/totalConds*100):0;const gr=score>=90?'A':score>=80?'B':score>=70?'C':'D';
@@ -4392,6 +4479,7 @@ function runArticle(topic){setWide(true);deckInit();
       const rtime=el('div','rrow');rtime.innerHTML='<span class="rl">학습 시간</span><span class="rn">'+fmtDur(studyMs)+'</span>';wrapR.appendChild(rtime);
       const rc=el('div','rrow');rc.innerHTML='<span class="rl">조건 충족</span><span class="rn">'+okConds+' / '+totalConds+'</span>';wrapR.appendChild(rc);
       b.appendChild(wrapR);
+      b.appendChild(rec.el);
       const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';
       const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','요약 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
       const msg=el('div','rep hint','제출하면 관리자(선생님)가 글을 읽고 첨삭을 남길 수 있어요.');b.appendChild(msg);
@@ -4406,6 +4494,7 @@ function runArticle(topic){setWide(true);deckInit();
         return{payload,txt};};
       dl.onclick=()=>{const {txt}=build();const blob=new Blob(['﻿'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='기사요약_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
       sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
+        const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
         if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;}catch(e){}}
         if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_기사요약_'+USER.name+'_'+topic.id+'.json';document.body.appendChild(a);a.click();a.remove();}
         saveDone('ART-'+topic.id,payload.progress);sub.disabled=false;sub.textContent=sent?'제출 완료!':'제출 완료 (파일 저장됨)';
@@ -4538,41 +4627,12 @@ function runStory(topic){setWide(true);deckInit();
   const pics=topic.pics&&topic.pics.length?topic.pics:[{imageUrl:'',crop:'center center',questions:[],words:[],starter:''}];
   const texts=pics.map(()=>'');
   const DRAFT_CHAPTER='Story Writing',DRAFT_POINT=topic.title||topic.id;
-  const ST={texts:texts.slice()};
-  // 1) 그림 보기 + 질문 (질문은 바로 보이지 않고 "💡 힌트 보기" 버튼을 눌러야 보여요)
-  slideAdd(b=>{b.appendChild(el('span','badge accent','Story · Look & Think'));
-    b.appendChild(el('h1','title',topic.title||topic.titleKo||''));
-    if(topic.intro)b.appendChild(el('div','lead',topic.intro));
-    const grid=el('div');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:14px';
-    pics.forEach((p,i)=>{
-      const card=el('div');card.style.cssText='background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06)';
-      if(p.imageUrl){
-        // 정사각형 박스로 보여줘요 — 선생님이 크롭 위치를 고를 때 쓰는 미리보기(buildCropPicker)도 정사각형이라,
-        // 학생 화면도 똑같이 정사각형이어야 선생님이 본 것과 같은 영역이 보여요. 예전엔 가로로 긴 고정 높이
-        // 박스(220px)를 썼는데, 그림판 배치에 따라 칸 너비가 서로 달라져서(그리드가 자동으로 줄바꿈되니까)
-        // "3~4등분" 조각처럼 여백(레터박스)이 있는 그림이 어떤 칸에서는 여백이 가려지고 어떤 칸에서는
-        // 그대로 드러나는 등 그림마다 다르게 잘려 보이는 문제가 있었어요.
-        const imgBox=el('div');imgBox.style.cssText='width:100%;aspect-ratio:1/1;overflow:hidden;background:#000;';
-        const img=document.createElement('img');img.src=fixDriveImageUrl(p.imageUrl);img.alt='picture '+(i+1);img.loading='lazy';
-        img.style.cssText='width:100%;height:100%;object-fit:cover;object-position:'+(p.crop||'center center')+';transform:scale('+zoomToScale(p.zoom)+');transform-origin:'+(p.crop||'center center')+';display:block';
-        imgBox.appendChild(img);
-        card.appendChild(imgBox);
-      }
-      const body=el('div');body.style.cssText='padding:10px 12px';
-      body.appendChild(el('div','fl','Picture '+(i+1)));
-      if(p.questions&&p.questions.length){
-        const hintBtn=el('button','btn ghost','💡 힌트 보기');hintBtn.type='button';hintBtn.style.cssText='padding:5px 10px;font-size:12px;margin-top:6px';
-        const ul=el('ul');ul.style.cssText='display:none;margin:6px 0 0;padding-left:18px;font-size:13.5px;color:#4a5160;line-height:1.6';
-        p.questions.forEach(q=>{const li=document.createElement('li');li.textContent=q;ul.appendChild(li);});
-        let shown=false;
-        hintBtn.onclick=()=>{shown=!shown;ul.style.display=shown?'block':'none';hintBtn.textContent=shown?'🙈 힌트 숨기기':'💡 힌트 보기';};
-        body.appendChild(hintBtn);
-        body.appendChild(ul);}
-      card.appendChild(body);grid.appendChild(card);
-    });
-    b.appendChild(grid);
-  },{wide:true,wideMax:'1400px'});
-  // 2) 단어 학습 — 4단계로 나눠서 진행해요: ① 단어-뜻 미리 보기(전체 단어) → ② 카드 뒤집기 게임 → ③ 짝 연결하기 → ④ 그림 보고 맞추기.
+  // memos: 그림별로 "질문(힌트)을 보고 떠오른 생각"을 자유롭게 적어두는 메모장이에요.
+  // 나중에 "그림별 글쓰기" 화면에서 이 메모를 옆에 보여줘서, 미리 적어둔 생각을 참고해서 영작할 수 있게 해요.
+  const ST={texts:texts.slice(),memos:pics.map(()=>'')};
+  const saveMemo=debounce(()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);},2000);
+  let memoTas=[]; // Look & Think 화면에서 그림별로 만들어지는 메모 textarea들 (글쓰기 화면에서도 참고용으로 값을 읽어요)
+  // 1) 단어 학습 — 4단계로 나눠서 진행해요: ① 단어-뜻 미리 보기(전체 단어) → ② 카드 뒤집기 게임 → ③ 짝 연결하기 → ④ 그림 보고 맞추기.
   //    ①에서는 전체 단어를 다 보여주지만, ②·③·④ 게임 단계는 같은 단어를 반복하지 않도록 전체 단어를 3등분해서
   //    서로 다른 단어 묶음을 나눠 맡게 해요 — 그래야 한 번에 너무 많지도 않고, 세 단계를 다 거치면 전체 단어를 골고루 익혀요.
   const seenW=new Set();const wordsByPic=[];
@@ -4781,9 +4841,55 @@ function runStory(topic){setWide(true);deckInit();
       b.appendChild(grid);
     },{wide:true,wideMax:'900px'});
   }
+  // 2) 그림 보기 + 질문(힌트) + 메모 (질문은 바로 보이지 않고 "💡 힌트 보기" 버튼을 눌러야 보여요)
+  //    단어를 먼저 익히고 온 다음이라, 이제 그림과 질문을 보면서 떠오르는 생각을 아래 메모장에
+  //    자유롭게 적어둘 수 있어요 — 이 메모는 "그림별 글쓰기" 화면에서 그대로 옆에 다시 보여줘서
+  //    미리 적어둔 생각(간단한 마인드맵처럼)을 참고해서 영작하도록 도와줘요.
+  slideAdd(b=>{b.appendChild(el('span','badge accent','Story · Look & Think'));
+    b.appendChild(el('h1','title',topic.title||topic.titleKo||''));
+    if(topic.intro)b.appendChild(el('div','lead',topic.intro));
+    const grid=el('div');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:14px';
+    pics.forEach((p,i)=>{
+      const card=el('div');card.style.cssText='background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06)';
+      if(p.imageUrl){
+        // 정사각형 박스로 보여줘요 — 선생님이 크롭 위치를 고를 때 쓰는 미리보기(buildCropPicker)도 정사각형이라,
+        // 학생 화면도 똑같이 정사각형이어야 선생님이 본 것과 같은 영역이 보여요. 예전엔 가로로 긴 고정 높이
+        // 박스(220px)를 썼는데, 그림판 배치에 따라 칸 너비가 서로 달라져서(그리드가 자동으로 줄바꿈되니까)
+        // "3~4등분" 조각처럼 여백(레터박스)이 있는 그림이 어떤 칸에서는 여백이 가려지고 어떤 칸에서는
+        // 그대로 드러나는 등 그림마다 다르게 잘려 보이는 문제가 있었어요.
+        const imgBox=el('div');imgBox.style.cssText='width:100%;aspect-ratio:1/1;overflow:hidden;background:#000;';
+        const img=document.createElement('img');img.src=fixDriveImageUrl(p.imageUrl);img.alt='picture '+(i+1);img.loading='lazy';
+        img.style.cssText='width:100%;height:100%;object-fit:cover;object-position:'+(p.crop||'center center')+';transform:scale('+zoomToScale(p.zoom)+');transform-origin:'+(p.crop||'center center')+';display:block';
+        imgBox.appendChild(img);
+        card.appendChild(imgBox);
+      }
+      const body=el('div');body.style.cssText='padding:10px 12px';
+      body.appendChild(el('div','fl','Picture '+(i+1)));
+      if(p.questions&&p.questions.length){
+        const hintBtn=el('button','btn ghost','💡 힌트 보기');hintBtn.type='button';hintBtn.style.cssText='padding:5px 10px;font-size:12px;margin-top:6px';
+        const ul=el('ul');ul.style.cssText='display:none;margin:6px 0 0;padding-left:18px;font-size:13.5px;color:#4a5160;line-height:1.6';
+        p.questions.forEach(q=>{const li=document.createElement('li');li.textContent=q;ul.appendChild(li);});
+        let shown=false;
+        hintBtn.onclick=()=>{shown=!shown;ul.style.display=shown?'block':'none';hintBtn.textContent=shown?'🙈 힌트 숨기기':'💡 힌트 보기';};
+        body.appendChild(hintBtn);
+        body.appendChild(ul);}
+      const memoWrap=el('div');memoWrap.style.cssText='margin-top:8px';
+      memoWrap.appendChild(el('div','fl','📝 메모 (자유롭게 적어보세요)'));
+      const memoTa=el('textarea','in');memoTa.style.cssText='min-height:64px;font-size:13px';
+      memoTa.placeholder='이 그림을 보고 떠오르는 내용을 자유롭게 적어보세요.';
+      memoTa.value=ST.memos[i]||'';
+      memoTa.addEventListener('input',()=>{ST.memos[i]=memoTa.value;saveMemo();});
+      memoWrap.appendChild(memoTa);
+      body.appendChild(memoWrap);
+      memoTas[i]=memoTa;
+      card.appendChild(body);grid.appendChild(card);
+    });
+    b.appendChild(grid);
+  },{wide:true,wideMax:'1400px'});
   // 3) 그림별 글쓰기 + 실시간 이야기 합치기
   let bannerSlot;
   let allPicsWritten=()=>false; // 아래 slideAdd 안에서 실제 텍스트영역들을 알게 되면 다시 정의돼요.
+  let renderPicRef=()=>{}; // 마찬가지로 아래 slideAdd 안에서 실제 renderPic으로 다시 정의돼요.
   slideAdd(b=>{
     b.appendChild(el('span','badge accent','Story · Write'));
     b.appendChild(el('h1','title','Write Your Story'));
@@ -4821,19 +4927,23 @@ function runStory(topic){setWide(true);deckInit();
     // 그림 양옆에 남는 빈 공간을 채우는 큰 버튼으로 만들어서(flex:1로 남는 폭을 나눠 가져요) 누르기
     // 편하고, 옆에 노는 공간이 없게 했어요.
     // prevPicBtn/nextPicBtn은 picNavRow 안에 항상 떠 있고(그림이 없는 컷이어도 이전/다음은 계속 눌러야
-    // 하니까요), 그림 상자(imgBox)만 그림이 있을 때만 보였다 사라져요 — 그림이 없으면 두 버튼이 flex:1로
-    // 남는 폭을 나눠 가지면서 자리를 채워요.
-    const picNavRow=el('div');picNavRow.style.cssText='display:flex;align-items:stretch;justify-content:center;gap:10px;margin-bottom:10px';
-    // 화살표 버튼은 흰 바탕에 테두리만 있는 "ghost" 스타일 대신, 눈에 잘 띄도록 진한 배경색(주황)에
-    // 흰 글자로 바꿨어요. 마지막 그림(더 넘길 곳이 없을 때)은 "다음"이 아니라 회색 "마지막 그림"으로
-    // 표시해서, 여기서 더 누를 게 없다는 걸 색과 글자로 함께 알려줘요.
-    const NAV_BTN_STYLE='flex:1 1 0;min-width:56px;max-width:220px;border-radius:12px;font-size:24px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;padding:8px 6px;color:#fff;border:none;box-shadow:var(--shadow-sm)';
-    const prevPicBtn=el('button','','◀ <span class="prevlbl">이전</span>');prevPicBtn.type='button';prevPicBtn.style.cssText=NAV_BTN_STYLE+';background:linear-gradient(120deg,var(--accent),var(--accent-2))';
+    // 하니까요), 그림 상자(imgBox)만 그림이 있을 때만 보였다 사라져요.
+    // 화살표는 (예전에 크게 만들었다가) 다시 작은 동그란 버튼으로 줄였어요 — 대신 오른쪽에 남는 공간에는
+    // "그림별 글쓰기"에 도움 되도록, 그 그림에서 나온 단어와(있으면) Look & Think 화면에서 적어둔 메모를
+    // 보여주는 참고 카드를 넣었어요.
+    const picNavRow=el('div');picNavRow.style.cssText='display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:10px;flex-wrap:wrap';
+    const NAV_BTN_STYLE='width:40px;height:40px;min-width:40px;flex:0 0 auto;border-radius:50%;font-size:16px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0;color:#fff;border:none;box-shadow:var(--shadow-sm);cursor:pointer';
+    const prevPicBtn=el('button','','◀');prevPicBtn.type='button';prevPicBtn.title='이전 그림';prevPicBtn.style.cssText=NAV_BTN_STYLE+';background:linear-gradient(120deg,var(--accent),var(--accent-2))';
+    const leftCol=el('div');leftCol.style.cssText='display:flex;align-items:center;flex:0 0 auto';
+    leftCol.appendChild(prevPicBtn);
     const imgBox=el('div');imgBox.style.cssText='display:flex;flex:0 0 auto;overflow:hidden;background:#000;border-radius:12px;max-width:100%';
     const img=document.createElement('img');img.alt='';img.style.cssText='width:100%;height:100%;display:block;object-fit:contain';
     imgBox.appendChild(img);
-    const nextPicBtn=el('button','','<span class="nextlbl">다음</span> ▶');nextPicBtn.type='button';nextPicBtn.style.cssText=NAV_BTN_STYLE+';background:linear-gradient(120deg,var(--accent),var(--accent-2))';
-    picNavRow.appendChild(prevPicBtn);picNavRow.appendChild(imgBox);picNavRow.appendChild(nextPicBtn);
+    const nextPicBtn=el('button','','▶');nextPicBtn.type='button';nextPicBtn.title='다음 그림';nextPicBtn.style.cssText=NAV_BTN_STYLE+';background:linear-gradient(120deg,var(--accent),var(--accent-2))';
+    const refPanel=el('div');refPanel.style.cssText='width:200px;max-width:42vw;background:#f6f7fb;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.5;max-height:420px;overflow:auto;text-align:left';
+    const rightCol=el('div');rightCol.style.cssText='display:flex;flex-direction:column;align-items:center;gap:8px;flex:0 0 auto';
+    rightCol.appendChild(nextPicBtn);rightCol.appendChild(refPanel);
+    picNavRow.appendChild(leftCol);picNavRow.appendChild(imgBox);picNavRow.appendChild(rightCol);
     b.appendChild(picNavRow);
     let curBorders=null,curToken=0;
     // curBorders가 있으면(검정 여백을 찾았으면) 그 부분을 화면 밖으로 밀어내서(overflow:hidden으로 잘라서)
@@ -4841,9 +4951,10 @@ function runStory(topic){setWide(true);deckInit();
     const fitImgBox=()=>{
       const nw=img.naturalWidth,nh=img.naturalHeight;
       if(!nw||!nh)return;
-      // 양옆 이전/다음 버튼이 앉을 자리(버튼 하나당 최소 56px + 여백)를 먼저 빼두고, 남는 폭 안에서
-      // 그림을 최대한 크게 맞춰요 — 버튼이 0으로 눌려 사라지지 않게 하기 위해서예요.
-      const wrapW=Math.max(200,(picNavRow.clientWidth||900)-2*66-20);
+      // 양옆(작은 버튼 + 오른쪽 참고 카드)이 실제로 차지하는 폭을 빼고, 남는 폭 안에서 그림을 최대한
+      // 크게 맞춰요 — 참고 카드가 그림을 밀어내지 않게 하기 위해서예요.
+      const sideW=(leftCol.offsetWidth||40)+(rightCol.offsetWidth||200)+40;
+      const wrapW=Math.max(200,(picNavRow.clientWidth||900)-sideW);
       const targetH=Math.min(window.innerHeight*0.58,520);
       if(curBorders){
         const bd=curBorders;
@@ -4887,20 +4998,28 @@ function runStory(topic){setWide(true);deckInit();
       prevPicBtn.style.opacity=isFirst?'.35':'1';prevPicBtn.style.cursor=isFirst?'not-allowed':'pointer';
       nextPicBtn.disabled=isLast;
       if(isLast){
-        // 더 넘길 그림이 없는 마지막 그림에서는 "다음"이 아니라 초록색 "마지막 그림"으로 바꿔서
-        // 화살표 색만 봐도(주황=계속 진행, 초록=끝) 여기서 그림 넘기기는 끝났다는 걸 바로 알 수 있게 해요.
-        nextPicBtn.innerHTML='마지막 그림';
+        // 더 넘길 그림이 없는 마지막 그림에서는 "▶"가 아니라 초록색 "✓"로 바꿔서
+        // 색만 봐도(주황=계속 진행, 초록=끝) 여기서 그림 넘기기는 끝났다는 걸 바로 알 수 있게 해요.
+        nextPicBtn.innerHTML='✓';nextPicBtn.title='마지막 그림이에요';
         nextPicBtn.style.background='linear-gradient(120deg,var(--green),#1f8a5c)';nextPicBtn.style.opacity='1';nextPicBtn.style.cursor='not-allowed';
       }else{
-        nextPicBtn.innerHTML='<span class="nextlbl">다음</span> ▶';
+        nextPicBtn.innerHTML='▶';nextPicBtn.title='다음 그림';
         nextPicBtn.style.background='linear-gradient(120deg,var(--accent),var(--accent-2))';nextPicBtn.style.opacity='1';nextPicBtn.style.cursor='pointer';
       }
+      // 오른쪽 참고 카드: 이 그림을 볼 때 Look & Think에서 적어둔 메모 + 이 그림에서 나온 단어를 보여줘요.
+      const memoVal=(ST.memos&&ST.memos[writeIdx]||'').trim();
+      const words=(p.words||[]).filter(w=>w&&w.en);
+      let refHtml='';
+      if(memoVal)refHtml+='<div style="font-weight:800;margin-bottom:4px">📝 내 메모</div><div style="white-space:pre-wrap;color:#4a5160;margin-bottom:10px">'+escH(memoVal)+'</div>';
+      if(words.length)refHtml+='<div style="font-weight:800;margin-bottom:4px">📚 이 그림 단어</div><ul style="margin:0;padding-left:16px;color:#4a5160">'+words.map(w=>'<li>'+escH(w.en)+(w.ko?(' - '+escH(w.ko)):'')+'</li>').join('')+'</ul>';
+      refPanel.innerHTML=refHtml||'<div style="color:#9aa1ad">참고할 메모나 단어가 없어요.</div>';
       if(p.imageUrl){imgBox.style.display='flex';showPic(fixDriveImageUrl(p.imageUrl));}else{imgBox.style.display='none';}
       taSlot.innerHTML='';
       const ta=tas[writeIdx];
       ta.placeholder='Write 1-2 sentences about this picture in English.';
       taSlot.appendChild(ta);lastFocusedTa=ta;ta.focus();
     };
+    renderPicRef=renderPic;
     prevPicBtn.onclick=()=>{if(writeIdx>0){writeIdx--;renderPic();}};
     nextPicBtn.onclick=()=>{if(writeIdx<pics.length-1){writeIdx++;renderPic();}};
     renderPic();
@@ -4928,11 +5047,12 @@ function runStory(topic){setWide(true);deckInit();
       const found=await fetchDraft(DRAFT_CHAPTER,DRAFT_POINT);
       if(found&&found.obj&&found.obj.texts&&ST.texts.every(t=>!t.trim())){
         ST.texts=found.obj.texts;tas.forEach((ta,i)=>ta.value=ST.texts[i]||'');refresh();
+        if(found.obj.memos){ST.memos=found.obj.memos;memoTas.forEach((mt,i)=>{if(mt)mt.value=ST.memos[i]||'';});}
         bannerSlot.appendChild(draftBanner(found.savedAt));
       }
       refreshNextLock();
     })();
-  },{wide:true,wideMax:'1400px',lock:()=>!allPicsWritten()});
+  },{wide:true,wideMax:'1400px',lock:()=>!allPicsWritten(),onEnter(){renderPicRef();}});
   // (예시 이야기 슬라이드는 없앴어요 — 학생이 미리 정답 예시를 보고 베끼는 걸 막기 위해서예요.
   //  topic.sampleText 데이터 자체는 그대로 남아있으니 필요하면 나중에 다시 켤 수 있어요.)
   // 5) 체크리스트 + 점수 + 제출
@@ -4945,6 +5065,7 @@ function runStory(topic){setWide(true);deckInit();
     conds.push({label:'그림들을 합쳐서 총 '+topic.minWords+'단어 이상 쓰기',test:()=>countWords(ST.texts.filter(Boolean).join(' '))>=topic.minWords});
   }
   slideAdd(b=>{b.appendChild(el('span','badge green','Story · Result'));b.appendChild(el('h1','title','체크리스트 & 제출'));
+    const rec=createRecorderWidget(); // 재진입해도 녹음 내용이 유지되도록 render() 밖(한 번만)에서 만들어요.
     const render=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());
       const fullText=ST.texts.filter(Boolean).join(' ');
       const ul=el('ul','conds rep');conds.forEach(c=>{const ok=c.test();const li=el('li',ok?'pass':'fail','<span class="mk">'+(ok?'✓':'✕')+'</span>'+c.label);ul.appendChild(li);});b.appendChild(ul);
@@ -4953,6 +5074,7 @@ function runStory(topic){setWide(true);deckInit();
       const hero=el('div','scorehero rep');hero.innerHTML='<div class="big">'+score+'<small>/100</small></div><div class="grade '+gr+'">'+gr+' 등급</div>';b.appendChild(hero);
       const studyMs=Date.now()-storyStart;
       const rtime=el('div','rrow rep');rtime.innerHTML='<span class="rl">학습 시간</span><span class="rn">'+fmtDur(studyMs)+'</span>';b.appendChild(rtime);
+      b.appendChild(rec.el);
       const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';
       const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','글 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
       const msg=el('div','rep hint','제출하면 관리자(선생님)가 글을 읽고 첨삭을 남길 수 있어요.');b.appendChild(msg);
@@ -4966,6 +5088,7 @@ function runStory(topic){setWide(true);deckInit();
         return{payload,txt};};
       dl.onclick=()=>{const {txt}=build();const blob=new Blob(['﻿'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='PictureStory_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
       sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
+        const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
         if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;}catch(e){}}
         if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_PictureStory_'+USER.name+'_'+topic.id+'.json';document.body.appendChild(a);a.click();a.remove();}
         saveDone('ST-'+topic.id,payload.progress);sub.disabled=false;sub.textContent=sent?'제출 완료!':'제출 완료 (파일 저장됨)';
@@ -5034,5 +5157,7 @@ async function loadLiveContent(){
   }
 })();
 </script>
+</body>
+</html>
 </body>
 </html>
