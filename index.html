@@ -4811,25 +4811,35 @@ function runStory(topic){setWide(true);deckInit();
     // 그림을 한 장씩 크게 보여주고 화살표(◀ ▶)로 넘겨가며 쓰도록 바꿨어요 — 그림이 작게 여러 장
     // 나열돼 있으면 잘려 보이기도 하고 한 번에 집중하기 어려워서예요. 그림은 자르지 않고(object-fit:contain)
     // 원본 비율 그대로 다 보이게 했어요.
-    const nav2=el('div');nav2.style.cssText='display:flex;align-items:center;justify-content:space-between;margin-bottom:8px';
-    const prevPicBtn=el('button','btn ghost','◀');prevPicBtn.type='button';prevPicBtn.style.cssText='padding:8px 14px;font-size:16px';
+    const nav2=el('div');nav2.style.cssText='display:flex;align-items:center;justify-content:center;margin-bottom:8px';
     const picLabel=el('div','fl','Picture 1 / '+pics.length);picLabel.style.cssText='font-size:15px';
-    const nextPicBtn=el('button','btn ghost','▶');nextPicBtn.type='button';nextPicBtn.style.cssText='padding:8px 14px;font-size:16px';
-    nav2.appendChild(prevPicBtn);nav2.appendChild(picLabel);nav2.appendChild(nextPicBtn);
+    nav2.appendChild(picLabel);
     b.appendChild(nav2);
     // 그림 상자를 화면 높이에 맞춰 최대한 크게 보여주되, 그림의 실제 가로세로 비율 그대로
-    // 딱 맞는 크기로 만들어서(자르지 않고) 불필요한 검은 여백이 남지 않게 해요.
-    const imgBoxWrap=el('div');imgBoxWrap.style.cssText='text-align:center;margin-bottom:10px';
-    const imgBox=el('div');imgBox.style.cssText='display:inline-flex;overflow:hidden;background:#000;border-radius:12px;max-width:100%';
+    // 딱 맞는 크기로 만들어서(자르지 않고) 불필요한 검은 여백이 남지 않게 해요. 이전/다음 화살표는
+    // 그림 양옆에 남는 빈 공간을 채우는 큰 버튼으로 만들어서(flex:1로 남는 폭을 나눠 가져요) 누르기
+    // 편하고, 옆에 노는 공간이 없게 했어요.
+    // prevPicBtn/nextPicBtn은 picNavRow 안에 항상 떠 있고(그림이 없는 컷이어도 이전/다음은 계속 눌러야
+    // 하니까요), 그림 상자(imgBox)만 그림이 있을 때만 보였다 사라져요 — 그림이 없으면 두 버튼이 flex:1로
+    // 남는 폭을 나눠 가지면서 자리를 채워요.
+    const picNavRow=el('div');picNavRow.style.cssText='display:flex;align-items:stretch;justify-content:center;gap:10px;margin-bottom:10px';
+    const NAV_BTN_STYLE='flex:1 1 0;min-width:56px;max-width:220px;border-radius:12px;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap;padding:8px 6px';
+    const prevPicBtn=el('button','btn ghost','◀ <span class="prevlbl">이전</span>');prevPicBtn.type='button';prevPicBtn.style.cssText=NAV_BTN_STYLE;
+    const imgBox=el('div');imgBox.style.cssText='display:flex;flex:0 0 auto;overflow:hidden;background:#000;border-radius:12px;max-width:100%';
     const img=document.createElement('img');img.alt='';img.style.cssText='width:100%;height:100%;display:block;object-fit:contain';
-    imgBox.appendChild(img);imgBoxWrap.appendChild(imgBox);b.appendChild(imgBoxWrap);
+    imgBox.appendChild(img);
+    const nextPicBtn=el('button','btn ghost','<span class="nextlbl">다음</span> ▶');nextPicBtn.type='button';nextPicBtn.style.cssText=NAV_BTN_STYLE;
+    picNavRow.appendChild(prevPicBtn);picNavRow.appendChild(imgBox);picNavRow.appendChild(nextPicBtn);
+    b.appendChild(picNavRow);
     let curBorders=null,curToken=0;
     // curBorders가 있으면(검정 여백을 찾았으면) 그 부분을 화면 밖으로 밀어내서(overflow:hidden으로 잘라서)
     // 실제 그림 내용만 상자에 꽉 차게 보여주고, 없으면 예전처럼 원본 전체를 그대로(object-fit:contain) 보여줘요.
     const fitImgBox=()=>{
       const nw=img.naturalWidth,nh=img.naturalHeight;
       if(!nw||!nh)return;
-      const wrapW=imgBoxWrap.clientWidth||900;
+      // 양옆 이전/다음 버튼이 앉을 자리(버튼 하나당 최소 56px + 여백)를 먼저 빼두고, 남는 폭 안에서
+      // 그림을 최대한 크게 맞춰요 — 버튼이 0으로 눌려 사라지지 않게 하기 위해서예요.
+      const wrapW=Math.max(200,(picNavRow.clientWidth||900)-2*66-20);
       const targetH=Math.min(window.innerHeight*0.58,520);
       if(curBorders){
         const bd=curBorders;
@@ -4869,7 +4879,7 @@ function runStory(topic){setWide(true);deckInit();
       const p=pics[writeIdx];
       picLabel.textContent='Picture '+(writeIdx+1)+' / '+pics.length;
       prevPicBtn.disabled=writeIdx===0;nextPicBtn.disabled=writeIdx===pics.length-1;
-      if(p.imageUrl){imgBoxWrap.style.display='block';showPic(fixDriveImageUrl(p.imageUrl));}else{imgBoxWrap.style.display='none';}
+      if(p.imageUrl){imgBox.style.display='flex';showPic(fixDriveImageUrl(p.imageUrl));}else{imgBox.style.display='none';}
       taSlot.innerHTML='';
       const ta=tas[writeIdx];
       ta.placeholder='Write 1-2 sentences about this picture in English.';
