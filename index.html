@@ -4823,7 +4823,7 @@ function runStory(topic){setWide(true);deckInit();
     // 하니까요), 그림 상자(imgBox)만 그림이 있을 때만 보였다 사라져요 — 그림이 없으면 두 버튼이 flex:1로
     // 남는 폭을 나눠 가지면서 자리를 채워요.
     const picNavRow=el('div');picNavRow.style.cssText='display:flex;align-items:stretch;justify-content:center;gap:10px;margin-bottom:10px';
-    const NAV_BTN_STYLE='flex:1 1 0;min-width:56px;max-width:220px;border-radius:12px;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap;padding:8px 6px';
+    const NAV_BTN_STYLE='flex:1 1 0;min-width:56px;max-width:220px;border-radius:12px;font-size:24px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;padding:8px 6px';
     const prevPicBtn=el('button','btn ghost','◀ <span class="prevlbl">이전</span>');prevPicBtn.type='button';prevPicBtn.style.cssText=NAV_BTN_STYLE;
     const imgBox=el('div');imgBox.style.cssText='display:flex;flex:0 0 auto;overflow:hidden;background:#000;border-radius:12px;max-width:100%';
     const img=document.createElement('img');img.alt='';img.style.cssText='width:100%;height:100%;display:block;object-fit:contain';
