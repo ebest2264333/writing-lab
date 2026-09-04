@@ -1269,8 +1269,12 @@ function mountView(build){clearStage();nav.classList.remove('on');const v=el('di
 
 /* ================= LOGIN ================= */
 let ROSTER=null,TEACHERS=null,rosterLoading=null;
+/* 반(class) 이름 -> 레벨 id(L0/L1/L2/L3) 매핑. 선생님이 '반레벨' 탭에 등록해두면, 학생이 로그인하거나
+   새로고침해서 다시 들어올 때 그 학생 반에 맞는 레벨 홈 화면으로 자동으로 맞춰줘요(매번 직접 탭을
+   눌러 바꿀 필요 없이). 매핑이 없는 반은 지금처럼 기본값(L1)이 그대로 유지돼요. */
+let CLASS_LEVELS={};
 function loadRosterCache(){try{return JSON.parse(store.get('ewl2_roster')||'{}')}catch(e){return {}}}
-function saveRosterCache(students,teachers){try{store.set('ewl2_roster',JSON.stringify({students:students||[],teachers:teachers||[]}));}catch(e){}}
+function saveRosterCache(students,teachers,classLevels){try{store.set('ewl2_roster',JSON.stringify({students:students||[],teachers:teachers||[],classLevels:classLevels||{}}));}catch(e){}}
 function fetchRoster(){
   if(rosterLoading)return rosterLoading;
   rosterLoading=(async()=>{
@@ -1278,10 +1282,18 @@ function fetchRoster(){
     const res=await fetch(SUBMIT_URL,{method:'GET'});
     const data=await res.json();
     if(!data||!data.ok||!Array.isArray(data.students))throw new Error('BAD_DATA');
-    ROSTER=data.students;TEACHERS=Array.isArray(data.teachers)?data.teachers:[];saveRosterCache(ROSTER,TEACHERS);
+    ROSTER=data.students;TEACHERS=Array.isArray(data.teachers)?data.teachers:[];
+    CLASS_LEVELS=(data.classLevels&&typeof data.classLevels==='object')?data.classLevels:{};
+    saveRosterCache(ROSTER,TEACHERS,CLASS_LEVELS);
     return {students:ROSTER,teachers:TEACHERS};
   })().catch(err=>{rosterLoading=null;throw err;});
   return rosterLoading;
+}
+/** 학생의 반(cls)에 등록된 레벨이 있으면 curLevel을 그 레벨로 맞춰줘요. 매핑이 없거나 존재하지 않는
+ *  레벨 id면 아무것도 안 바꿔요(지금처럼 기본값 유지). */
+function applyClassLevel(cls){
+  const id=CLASS_LEVELS[String(cls||'').trim()];
+  if(id&&LEVELS.some(l=>l.id===id))curLevel=id;
 }
 function viewLogin(){setWide(false);mountView(w=>{
   const box=el('div','login-box');
@@ -1318,6 +1330,7 @@ function viewLogin(){setWide(false);mountView(w=>{
     if(String(match.pw||'')!==pwv){fx.className='fx no';fx.textContent='비밀번호가 올바르지 않아요.';pi.value='';pi.focus();return;}
     USER.id=match.id;USER.name=match.name||match.id;USER.role='student';
     USER.school=match.school||'';USER.schoolGrade=match.schoolGrade||'';USER.cls=match.cls||'';USER.academy=match.academy||'';
+    applyClassLevel(USER.cls);
     saveSession();applySessionUI();
     fx.className='';fx.textContent='';
     viewHome();
@@ -1710,27 +1723,30 @@ function parseAiFeedback(raw){
   }catch(e){}
   return{overall:'',sentences:{}};
 }
-/** Pattern Drill 제출물에 담긴 "오답노트"(개념퀴즈·단어배열·한글영작에서 틀린 문항들)를 파싱해요.
- *  형식: [{type:'퀴즈'|'배열'|'영작', ko: 문제(한글/질문), a: 정답, user: 학생이 고른/쓴 답}, ...] */
+/** Pattern Drill 제출물에 담긴 "문항별 결과"(개념퀴즈·단어배열·한글영작 — 맞은 것/틀린 것 전부)를 파싱해요.
+ *  형식: [{type:'퀴즈'|'배열'|'영작', ko: 문제(한글/질문), a: 정답, user: 학생이 고른/쓴 답, correct: true|false}, ...]
+ *  (예전 제출물은 correct 칸이 없을 수 있는데, 그건 옛날 버전이라 "틀린 문항"만 담겨있던 거라 correct는 항상 false로 봐요.) */
 function parseWrongReport(raw){
   if(!raw)return[];
   try{const arr=JSON.parse(raw);return Array.isArray(arr)?arr:[];}catch(e){return[];}
 }
-/** 문법 드릴에서 틀린 문항들을 학생·선생님 화면에 똑같이 보여주는 카드 — 문항 종류(퀴즈/배열/영작),
- *  문제, 학생이 쓴 답(빨간 취소선), 정답(초록)을 나란히 보여줘요. */
-function renderDrillWrongReport(wrongArr){
-  if(!wrongArr||!wrongArr.length)return '<div class="hint" style="margin-top:8px">🎉 틀린 문항이 없어요! 만점이에요.</div>';
-  const rows=wrongArr.map(w=>{
+/** 문법 드릴의 문항별 결과(맞은 것·틀린 것 전부)를 학생·선생님 화면에 똑같이 보여주는 카드 — 문항 종류(퀴즈/배열/영작),
+ *  문제, 학생이 쓴 답, 정답을 나란히 보여줘요. 틀린 문항은 학생 답에 빨간 취소선이 붙고, 맞은 문항은 ✅로 표시돼요. */
+function renderDrillWrongReport(itemArr){
+  if(!itemArr||!itemArr.length)return '';
+  const correctCount=itemArr.filter(w=>w.correct).length;
+  const rows=itemArr.map(w=>{
+    const isCorrect=!!w.correct;
     const qText=undl(String(w.ko||''));
     const userAns=String(w.user||'').trim();
-    return '<div style="border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb">'+
-      '<div style="font-size:12px;color:#6b7684;font-weight:700">'+escH(w.type||'')+'</div>'+
+    return '<div style="border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:'+(isCorrect?'#f4faf6':'#faf9fb')+'">'+
+      '<div style="font-size:12px;color:#6b7684;font-weight:700">'+(isCorrect?'✅ ':'❌ ')+escH(w.type||'')+'</div>'+
       '<div style="font-size:14px;margin-top:2px">'+qText+'</div>'+
-      (userAns?('<div style="font-size:13px;margin-top:4px"><s style="color:#dc2626">'+escH(userAns)+'</s></div>'):'')+
-      '<div style="font-size:13px;margin-top:2px;color:#059669">✔ '+escH(String(w.a||''))+'</div>'+
+      (userAns?('<div style="font-size:13px;margin-top:4px">'+(isCorrect?escH(userAns):('<s style="color:#dc2626">'+escH(userAns)+'</s>'))+'</div>'):'')+
+      (isCorrect?'':('<div style="font-size:13px;margin-top:2px;color:#059669">✔ '+escH(String(w.a||''))+'</div>'))+
       '</div>';
   }).join('');
-  return '<div style="margin-top:8px"><div class="fl" style="margin-bottom:4px">틀린 문항 '+wrongArr.length+'개</div>'+rows+'</div>';
+  return '<div style="margin-top:8px"><div class="fl" style="margin-bottom:4px">문항별 결과 (맞음 '+correctCount+' / 전체 '+itemArr.length+')</div>'+rows+'</div>';
 }
 /** 제출 화면(Re-Writing·수행평가는 제외)에 붙는 "소리 내어 읽고 녹음하기" 위젯을 만들어요.
  *  마이크로 녹음 → 바로 들어보기 → (원하면) 다시 녹음할 수 있고, 녹음하지 않아도 제출은 그대로 돼요.
@@ -1825,8 +1841,9 @@ function printSubmissionReport(s,studentName,studentId,academyName){
   const wrongArr=parseWrongReport(s.wrongReport);
   let wrongHtml='';
   if(s.wrongReport&&wrongArr.length){
-    wrongHtml='<h2>틀린 문항 다시 보기</h2><table class="wrong-table"><thead><tr><th>문제</th><th>학생 답</th><th>정답</th></tr></thead><tbody>'+
-      wrongArr.map(w=>'<tr><td>'+escH(undl(String(w.ko||'')))+'</td><td>'+escH(String(w.user||''))+'</td><td>'+escH(String(w.a||''))+'</td></tr>').join('')+
+    const correctCount=wrongArr.filter(w=>w.correct).length;
+    wrongHtml='<h2>문항별 결과 (맞음 '+correctCount+' / 전체 '+wrongArr.length+')</h2><table class="wrong-table"><thead><tr><th>정답 여부</th><th>문제</th><th>학생 답</th><th>정답</th></tr></thead><tbody>'+
+      wrongArr.map(w=>'<tr><td>'+(w.correct?'✅':'❌')+'</td><td>'+escH(undl(String(w.ko||'')))+'</td><td>'+escH(String(w.user||''))+'</td><td>'+(w.correct?'-':escH(String(w.a||'')))+'</td></tr>').join('')+
       '</tbody></table>';
   }
   const html='<!doctype html><html><head><meta charset="utf-8"><title>'+escH(studentName||'')+' - '+escH(s.point||s.chapter||'')+' 리포트</title>'+
@@ -3845,7 +3862,7 @@ logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREV
 /* ================= DRILL RUNNER ================= */
 function runDrill(P){setWide(false);deckInit();
   const drillStart=Date.now();setStudyTimer(drillStart,'⏱ 학습 시간');
-  const RES={quiz:{ok:0,tot:P.quiz.length},arrange:{ok:0,tot:P.arrange.length},compose:{ok:0,tot:P.compose.length},wrong:[],taskDone:false,taskText:'',startTime:drillStart,finishTime:null};
+  const RES={quiz:{ok:0,tot:P.quiz.length},arrange:{ok:0,tot:P.arrange.length},compose:{ok:0,tot:P.compose.length},wrong:[],all:[],taskDone:false,taskText:'',startTime:drillStart,finishTime:null};
   // "조건 영작(Task)" 글쓰기 칸도 다른 글쓰기 화면들처럼 임시저장이 되도록, 제출할 때 쓰는 chapter/point(P.id/P.title)와
   // 똑같은 값으로 임시저장을 걸어둬요 — 그래야 실제로 제출했을 때 서버가 이 임시저장 내용을 자동으로 지워줘요.
   const DRAFT_CHAPTER=P.id,DRAFT_POINT=P.title;
@@ -3880,6 +3897,7 @@ function runDrill(P){setWide(false);deckInit();
       btn.onclick=()=>{if(answered)return;
         if(oi===q.a){btn.classList.add('ok');answered=true;expl.classList.add('show');if(!firstWrong)RES.quiz.ok++;
           else RES.wrong.push({type:'퀴즈',ko:q.q,a:q.o[q.a],user:firstWrongUser});
+          RES.all.push({type:'퀴즈',ko:q.q,a:q.o[q.a],user:firstWrong?firstWrongUser:q.o[q.a],correct:!firstWrong});
           progress.quizCorrect.push(!firstWrong);saveProgressNow();
           opts.querySelectorAll('.opt').forEach(x=>x.disabled=true);nextB.disabled=(idx===slides.length-1);
           tip.textContent='설명을 확인하고 준비되면 다음 버튼(또는 Enter)을 눌러 다음 문제로 넘어가세요.';}
@@ -3914,7 +3932,7 @@ function runDrill(P){setWide(false);deckInit();
       correct=normStrict(inp.value)===normStrict(it.a);inp.classList.remove('ok','no');inp.classList.add(correct?'ok':'no');
       fx.className='fx '+(correct?'ok':'no');fx.textContent=correct?'정답이에요! (Enter=다음)':'다시 확인해요. 대소문자와 문장부호(마침표 등)까지 정확히 맞아야 해요. (Enter=다음, 오답노트에 담겨요)';checked=true;
       nextB.disabled=(idx===slides.length-1);
-      if(!it._graded){it._graded=true;if(correct)RES.arrange.ok++;else RES.wrong.push({type:'배열',ko:it.ko,a:it.a,user:inp.value});progress.arrangeCorrect.push(correct);saveProgressNow();}};
+      if(!it._graded){it._graded=true;if(correct)RES.arrange.ok++;else RES.wrong.push({type:'배열',ko:it.ko,a:it.a,user:inp.value});RES.all.push({type:'배열',ko:it.ko,a:it.a,user:inp.value,correct:correct});progress.arrangeCorrect.push(correct);saveProgressNow();}};
     inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!checked)check();else if(idx<slides.length-1)deckShow(idx+1);}});
     b._checkFocus=()=>inp;},{focus:'input',lock:()=>!checked});});
   // 한글→영작 (15)
@@ -3926,7 +3944,7 @@ function runDrill(P){setWide(false);deckInit();
     let checked=false,correct=false;const ansList=[it.a].concat(it.alt||[]).map(normStrict);
     const check=()=>{correct=ansList.includes(normStrict(inp.value));inp.classList.remove('ok','no');inp.classList.add(correct?'ok':'no');
       fx.className='fx '+(correct?'ok':'no');fx.innerHTML=correct?'정답이에요! (Enter=다음)':('아쉬워요(대소문자·문장부호도 정확해야 해요). 모범답안: <b>'+it.a+'</b> (오답노트에 담겨요)');checked=true;
-      if(!it._graded){it._graded=true;if(correct)RES.compose.ok++;else RES.wrong.push({type:'영작',ko:it.k,a:it.a,user:inp.value});progress.composeCorrect.push(correct);saveProgressNow();}};
+      if(!it._graded){it._graded=true;if(correct)RES.compose.ok++;else RES.wrong.push({type:'영작',ko:it.k,a:it.a,user:inp.value});RES.all.push({type:'영작',ko:it.k,a:it.a,user:inp.value,correct:correct});progress.composeCorrect.push(correct);saveProgressNow();}};
     inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!checked)check();else if(idx<slides.length-1)deckShow(idx+1);}});
   },{focus:'input'});});
   // 오답 재도전 안내 + 동적 생성
@@ -4070,7 +4088,7 @@ function buildReport(b,P,RES,onSubmitted){
       const payload={book:lv.book,chapter:P.id,point:P.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:genSubId(),datetime:dt,
         quiz:q.ok+'/'+q.tot,arrange:ar.ok+'/'+ar.tot,compose:co.ok+'/'+co.tot,task:RES.taskDone?'완료':'미완료',
         total:got+'/'+tot,score:score,grade:gr,progress:prog,taskText:RES.taskText||'',studyTime:studyTimeStr,
-        wrongReport:JSON.stringify(RES.wrong||[])};
+        wrongReport:JSON.stringify(RES.all||[])};
       const txt=['English Writing Lab · Pattern Drill',lv.book,'Point: '+P.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'학습 시간: '+studyTimeStr,'',
         '개념퀴즈 '+q.ok+'/'+q.tot,'단어배열 '+ar.ok+'/'+ar.tot,'한글영작 '+co.ok+'/'+co.tot,'조건영작 '+(RES.taskDone?'완료':'미완료'),
         '총점 '+score+'/100 ('+gr+')','','[조건영작]',RES.taskText||'(작성 없음)'].join('\n');
@@ -5149,6 +5167,12 @@ async function loadLiveContent(){
   const sess=loadSession();
   if(sess&&sess.id){
     USER=Object.assign({id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false},sess);
+    // 새로고침 등으로 로그인 상태가 복원될 때도, 캐시에 저장된 반→레벨 매핑으로 바로 그 학생의 레벨 홈으로 맞춰줘요.
+    if(USER.role==='student'){
+      const cached=loadRosterCache();
+      CLASS_LEVELS=(cached&&cached.classLevels&&typeof cached.classLevels==='object')?cached.classLevels:{};
+      applyClassLevel(USER.cls);
+    }
     applySessionUI();
     enterHome();
     fetchRoster().catch(()=>{});
