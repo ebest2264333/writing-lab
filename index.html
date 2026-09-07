@@ -186,15 +186,15 @@
      표현해요. Paragraph Writing이 이미 .mindmap/.mm-* 클래스를 다른 모양(햄버거 구조 마인드맵)으로 쓰고
      있어서, 이름이 겹치면 나중에 나오는 규칙이 덮어써서 레이아웃이 깨져요 — 그래서 exm- 접두사로 완전히
      구분되는 이름을 써요. */
-  .exmmap{display:flex;flex-direction:column;align-items:center;margin-top:18px}
+  .exmmap{display:flex;flex-direction:column;align-items:center;margin-top:18px;width:100%}
   .exmmap-center{background:linear-gradient(120deg,var(--accent),var(--accent-2));color:#fff;font-weight:800;padding:12px 26px;border-radius:999px;font-size:16px;text-align:center;box-shadow:var(--shadow-sm);max-width:90%}
   .exmmap-stem{width:2px;height:18px;background:var(--line-2)}
-  .exmmap-branches{display:flex;justify-content:center;gap:22px;flex-wrap:wrap;width:100%;max-width:960px;padding-top:18px;border-top:2px solid var(--line-2);margin-top:0}
-  .exmmap-branch{position:relative;flex:1 1 220px;max-width:280px;display:flex;flex-direction:column;align-items:stretch}
+  .exmmap-branches{display:flex;justify-content:center;gap:24px;flex-wrap:wrap;width:100%;padding-top:18px;border-top:2px solid var(--line-2);margin-top:0}
+  .exmmap-branch{position:relative;flex:1 1 280px;display:flex;flex-direction:column;align-items:stretch}
   .exmmap-branch::before{content:'';position:absolute;top:-18px;left:50%;width:2px;height:18px;background:var(--line-2)}
   .exmmap-branch-label{background:var(--accent-soft);color:var(--navy);font-weight:800;padding:8px 12px;border-radius:10px;font-size:14px;text-align:center;margin-bottom:6px}
   .exmmap-guide{font-size:12.5px;color:var(--muted);margin-bottom:6px;text-align:center}
-  .exmmap-branch textarea.in{min-height:70px;font-size:14px}
+  .exmmap-branch textarea.in{min-height:160px;font-size:14.5px;resize:vertical}
   /* 마인드맵에 적은 내용을 글쓰기 화면 오른쪽에서 참고할 수 있게 보여주는 카드(Paragraph Writing의
      wleft/wright 분할 글쓰기와 같은 방식이에요) */
   .exmnotes-card{border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#faf9fb}
@@ -4326,6 +4326,23 @@ function openExprModal(topic){
   overlay.appendChild(box);document.body.appendChild(overlay);
   document.addEventListener('keydown',exprModalEsc);
 }
+/* 표현 은행 모달과 같은 팝업 틀인데, 제목·내용을 자유롭게 넣을 수 있는 범용 버전이에요(예: 수행평가의
+   "글의 뼈대 잡기"를 글쓰기 화면에서도 버튼 눌러 다시 열어볼 수 있게 할 때 씀). */
+function closeGenericModal(){const m=document.getElementById('genModal');if(m)m.remove();document.removeEventListener('keydown',genericModalEsc);}
+function genericModalEsc(e){if(e.key==='Escape')closeGenericModal();}
+function openGenericModal(title,buildBody){
+  closeGenericModal();
+  const overlay=el('div','modal-overlay');overlay.id='genModal';
+  overlay.addEventListener('mousedown',e=>{if(e.target===overlay)closeGenericModal();});
+  const box=el('div','modal-box');
+  const head=el('div','modal-head');
+  head.appendChild(el('div','modal-title',title));
+  const xbtn=el('button','modal-x','✕');xbtn.type='button';xbtn.onclick=closeGenericModal;
+  head.appendChild(xbtn);box.appendChild(head);
+  const body=el('div','modal-body');buildBody(body);box.appendChild(body);
+  overlay.appendChild(box);document.body.appendChild(overlay);
+  document.addEventListener('keydown',genericModalEsc);
+}
 
 function runParagraph(topic){setWide(true);deckInit();
   const paraStart=Date.now();let brainstormStart=null,writeEnd=null;setStudyTimer(paraStart,'⏱ 글감 학습');
@@ -4635,7 +4652,7 @@ function runArticle(topic){setWide(true);deckInit();
 }
 
 /* ================= EXAM (수행평가 대비 연습) ================= */
-function runExam(topic){setWide(false);deckInit();
+function runExam(topic){deckInit();
   const examStart=Date.now();setStudyTimer(examStart,'⏱ 학습 시간');
   const ST={draft:''};
   // 1) 주제·조건 확인 후 글쓰기 (실시간 조건 확인)
@@ -4647,6 +4664,9 @@ function runExam(topic){setWide(false);deckInit();
   const mindmapItems=parseMindmapText(topic.mindmapText);
   const frameItems=parseFrameText(topic.frameText);
   const grammarItems=parseGrammarSwapText(topic.grammarSwapText);
+  // 마인드맵 가지가 여러 개일 때는 칸이 너무 좁아 보이지 않도록, 이 수행평가 화면 전체를 좀 더 넓게 써요
+  // (Paragraph Writing이 좌우 분할 화면에서 쓰는 것과 같은 넓은 화면 모드예요).
+  setWide(mindmapItems.length>0);
   // 마인드맵에 적은 내용은 이후 실제 글쓰기 화면 오른쪽 참고 패널에 그대로 보여줘요(Paragraph Writing의
   // 좌우 분할 글쓰기 방식과 같아요) — 그래서 각 가지의 값을 mmNotes에 실시간으로 저장해둬요.
   const mmNotes={};
@@ -4672,28 +4692,33 @@ function runExam(topic){setWide(false);deckInit();
       });
       map.appendChild(branches);
       b.appendChild(map);
-    });
+    },{wide:true,wideMax:'1200px'});
   }
+  // 프레임(글의 뼈대 잡기) 카드를 그리는 로직이에요 — 뼈대 잡기 슬라이드와, 글쓰기 화면에서 다시
+  // 팝업으로 열어볼 때(아래 "✏️ 글의 뼈대 잡기 보기" 버튼) 둘 다에서 똑같이 써요.
+  const buildFrameCardsInto=(container)=>{
+    frameItems.forEach(f=>{
+      const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-top:12px;background:#faf9fb';
+      card.appendChild(el('div','fl',f.name));
+      if(f.starters.length){
+        const starterBox=el('div');starterBox.style.cssText='margin-top:6px;font-size:14px;line-height:1.8';
+        starterBox.innerHTML=f.starters.map(s=>'• '+escH(s)).join('<br>');
+        card.appendChild(starterBox);
+      }
+      if(f.sample){
+        const sampleBox=el('div');sampleBox.style.cssText='margin-top:8px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;color:#374151';
+        sampleBox.innerHTML='<b>👩‍🏫 선생님 예시문</b><br>'+escH(f.sample);
+        card.appendChild(sampleBox);
+      }
+      container.appendChild(card);
+    });
+  };
   if(frameItems.length){
     slideAdd(b=>{
       b.appendChild(el('span','badge accent','수행평가 대비 · 글의 뼈대 잡기'));
       b.appendChild(el('h1','title','✏️ 글의 뼈대 잡기'));
-      b.appendChild(el('div','hint','문장 시작 단서(Sentence Starter)를 참고해서, 실제 글을 쓸 때 어떤 흐름으로 이어갈지 미리 생각해보세요. 예시 문장처럼 자연스럽게 이어 쓰면 훨씬 쉬워져요.'));
-      frameItems.forEach(f=>{
-        const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-top:12px;background:#faf9fb';
-        card.appendChild(el('div','fl',f.name));
-        if(f.starters.length){
-          const starterBox=el('div');starterBox.style.cssText='margin-top:6px;font-size:14px;line-height:1.8';
-          starterBox.innerHTML=f.starters.map(s=>'• '+escH(s)).join('<br>');
-          card.appendChild(starterBox);
-        }
-        if(f.sample){
-          const sampleBox=el('div');sampleBox.style.cssText='margin-top:8px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;color:#374151';
-          sampleBox.innerHTML='<b>👩‍🏫 선생님 예시문</b><br>'+escH(f.sample);
-          card.appendChild(sampleBox);
-        }
-        b.appendChild(card);
-      });
+      b.appendChild(el('div','hint','문장 시작 단서(Sentence Starter)를 참고해서, 실제 글을 쓸 때 어떤 흐름으로 이어갈지 미리 생각해보세요. 예시 문장처럼 자연스럽게 이어 쓰면 훨씬 쉬워져요. 이 내용은 실제 글쓰기 화면에서도 "✏️ 글의 뼈대 잡기 보기" 버튼을 눌러 다시 볼 수 있어요.'));
+      buildFrameCardsInto(b);
     });
   }
   if(grammarItems.length){
@@ -4729,7 +4754,14 @@ function runExam(topic){setWide(false);deckInit();
       evalBox.innerHTML='<b>📋 평가 영역</b>'+renderEvalAreas(topic.evalCriteria);
       left.appendChild(evalBox);
     }
-    left.appendChild(makeDictBtn());
+    const toolBtnRow=el('div');toolBtnRow.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
+    toolBtnRow.appendChild(makeDictBtn());
+    if(frameItems.length){
+      const frameBtn=el('button','btn ghost','✏️ 글의 뼈대 잡기 보기');frameBtn.type='button';
+      frameBtn.onclick=()=>openGenericModal('✏️ 글의 뼈대 잡기 — '+(topic.title||''),body=>buildFrameCardsInto(body));
+      toolBtnRow.appendChild(frameBtn);
+    }
+    left.appendChild(toolBtnRow);
     const bannerSlot=el('div');left.appendChild(bannerSlot);
     const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';left.appendChild(ta);
     const ul=el('ul','conds');topic.conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});left.appendChild(ul);
@@ -4777,7 +4809,7 @@ function runExam(topic){setWide(false);deckInit();
       wrap.appendChild(right);
       b.appendChild(wrap);
     }
-  },{focus:'textarea',onEnter:()=>{if(writingSlideRefresh)writingSlideRefresh();}});
+  },{focus:'textarea',onEnter:()=>{if(writingSlideRefresh)writingSlideRefresh();},wide:mindmapItems.length>0,wideMax:'1200px'});
   // 2) 점수 + 제출
   slideAdd(b=>{b.appendChild(el('span','badge green','수행평가 대비 · 채점 결과'));b.appendChild(el('h1','title','자동 채점 결과'));
     b._onShow=()=>{};
