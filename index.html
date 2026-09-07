@@ -1101,7 +1101,14 @@ function matchAudience(target,val){
   return list.includes(String(val||'').trim());
 }
 function visibleToUser(item){
-  return matchAudience(item.targetSchool,USER.school)&&matchAudience(item.targetSchoolGrade,USER.schoolGrade)&&matchAudience(item.targetClass,USER.cls);
+  // 선생님이 학생 화면을 미리보기(TEACHER_PREVIEW) 하는 중이면, 공개 대상 매칭은 지금 로그인한
+  // 선생님 계정(학교/학년/반이 보통 비어있음)이 아니라 "미리보는 그 학생" 기준으로 해야 해요.
+  // 안 그러면 특정 학교/학년/반으로 제한된 컨텐츠(예: 수행평가)가 선생님 화면에서는 아예 안 보여서,
+  // 학생은 실제로 제출했는데 선생님은 그 글을 찾아 들어갈 방법이 없어지는 문제가 생겨요.
+  const school=TEACHER_PREVIEW?TEACHER_PREVIEW.school:USER.school;
+  const grade=TEACHER_PREVIEW?TEACHER_PREVIEW.schoolGrade:USER.schoolGrade;
+  const cls=TEACHER_PREVIEW?TEACHER_PREVIEW.cls:USER.cls;
+  return matchAudience(item.targetSchool,school)&&matchAudience(item.targetSchoolGrade,grade)&&matchAudience(item.targetClass,cls);
 }
 function toArticlePoint(g){
   const conds=(g.conds||[]).map(c=>{let test;
@@ -3630,7 +3637,16 @@ function viewTeacherStudent(studentId,studentName){
       }
       if(data&&data.ok)subs=data.submissions||[];
     }catch(e){}
-    TEACHER_PREVIEW={studentId,studentName,subs,ctx};
+    // 수행평가/기사/이야기처럼 target_school·target_grade·target_class로 공개 대상이 제한된 컨텐츠는
+    // "지금 로그인한 사용자(선생님)"가 아니라 "미리보기 중인 그 학생" 기준으로 보여야 해요. 학생계정
+    // 목록(ROSTER)에서 이 학생의 학교/학년/반을 찾아두고(제출 기록이 하나도 없어도 확인 가능하도록),
+    // 혹시 못 찾으면 제출 기록의 값으로 대신해요. visibleToUser()가 이 값을 사용해요.
+    const acct=(ROSTER||[]).find(r=>String(r.id)===String(studentId));
+    const first=subs[0];
+    const pSchool=(acct&&acct.school)||(first&&first.school)||'';
+    const pGrade=(acct&&acct.schoolGrade)||(first&&first.schoolGrade)||'';
+    const pCls=(acct&&acct.cls)||(first&&first.cls)||'';
+    TEACHER_PREVIEW={studentId,studentName,subs,ctx,school:pSchool,schoolGrade:pGrade,cls:pCls};
     viewHome();
   })();
 }
