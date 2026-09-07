@@ -324,7 +324,7 @@ const SUBMIT_URL="https://script.google.com/macros/s/AKfycbwyL3hM4syjOmtxSQ2bxG-
    이 제한을 풀어줘요 — USER는 이 코드 아래에서 선언되지만, 실제로 이 이벤트가 발생하는 시점(로그인 이후)에는
    이미 선언이 끝나 있어서 문제없이 참조할 수 있어요. 로그아웃하면 USER.role이 다시 'student'로 돌아가면서
    자동으로 다시 막혀요. */
-['copy','cut','paste','contextmenu'].forEach(evt=>document.addEventListener(evt,e=>{ if(typeof USER==='undefined'||USER.role!=='teacher') e.preventDefault(); }));
+['copy','cut','paste','contextmenu'].forEach(evt=>document.addEventListener(evt,e=>{ if(typeof USER==='undefined'||(USER.role!=='teacher'&&!USER.isTestAccount)) e.preventDefault(); }));
 /* ================= util ================= */
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
 /* 지시문 자동 줄바꿈 — 선생님이 직접 줄바꿈을 넣었으면 그대로 존중하고,
@@ -1124,6 +1124,11 @@ function matchAudience(target,val){
   return list.includes(String(val||'').trim());
 }
 function visibleToUser(item){
+  // 학생계정 탭에서 "테스트계정" 칸을 표시해둔 계정은, 학교/학년/반으로 공개 대상이 좁혀진 컨텐츠(예:
+  // 특정 학교·학년 전용 수행평가)까지 전부 보여요 — 선생님이 지금 등록된 모든 컨텐츠를 학생 입장에서
+  // 한 번에 둘러보고 테스트하고 싶을 때 쓰라고 만든 계정이에요. (교사 미리보기 중에는 이 계정으로
+  // 로그인한 게 아니라 실제 그 학생 기준으로 봐야 하니 이 예외를 적용하지 않아요.)
+  if(USER.isTestAccount&&!TEACHER_PREVIEW)return true;
   // 선생님이 학생 화면을 미리보기(TEACHER_PREVIEW) 하는 중이면, 공개 대상 매칭은 지금 로그인한
   // 선생님 계정(학교/학년/반이 보통 비어있음)이 아니라 "미리보는 그 학생" 기준으로 해야 해요.
   // 안 그러면 특정 학교/학년/반으로 제한된 컨텐츠(예: 수행평가)가 선생님 화면에서는 아예 안 보여서,
@@ -1191,7 +1196,7 @@ function mergeStory(){
 }
 
 /* ================= app state ================= */
-let USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false},curLevel='L1';
+let USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false},curLevel='L1';
 /* 선생님이 학생 목록에서 학생을 고르면, 그 학생 이름으로 이 값이 채워져요. 이 값이 있는 동안은
    학생용 홈 화면(viewHome)·각 트랙 메뉴 화면이 "그 학생이 이미 낸 글이 있는지" 보여주는 미리보기
    모드로 동작해요 — 실제로 문제를 풀거나 글을 쓸 수는 없고, 커리큘럼을 죽 둘러보다가 항목을 누르면
@@ -1361,6 +1366,7 @@ function viewLogin(){setWide(false);mountView(w=>{
     if(String(match.pw||'')!==pwv){fx.className='fx no';fx.textContent='비밀번호가 올바르지 않아요.';pi.value='';pi.focus();return;}
     USER.id=match.id;USER.name=match.name||match.id;USER.role='student';
     USER.school=match.school||'';USER.schoolGrade=match.schoolGrade||'';USER.cls=match.cls||'';USER.academy=match.academy||'';
+    USER.isTestAccount=!!String(match.isTestAccount||'').trim();
     applyClassLevel(USER.cls);
     saveSession();applySessionUI();
     fx.className='';fx.textContent='';
@@ -4012,7 +4018,7 @@ document.addEventListener('keydown',e=>{if(document.getElementById('exprModal'))
   if(e.key==='Enter'){const s=slides[idx];if(s&&s._box&&s._box._enterKey){e.preventDefault();s._box._enterKey();}return;}
   if(e.key==='ArrowRight')deckShow(idx+1);else if(e.key==='ArrowLeft')deckShow(idx-1);});
 homeBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;if(USER.role==='teacher')viewTeacherHome();else viewHome();};
-logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false};clearSession();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';viewLogin();};
+logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false};clearSession();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';viewLogin();};
 
 /* ================= DRILL RUNNER ================= */
 function runDrill(P){setWide(false);deckInit();
@@ -5455,7 +5461,7 @@ async function loadLiveContent(){
   await loadLiveContent();
   const sess=loadSession();
   if(sess&&sess.id){
-    USER=Object.assign({id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false},sess);
+    USER=Object.assign({id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false},sess);
     // 새로고침 등으로 로그인 상태가 복원될 때도, 캐시에 저장된 반→레벨 매핑으로 바로 그 학생의 레벨 홈으로 맞춰줘요.
     if(USER.role==='student'){
       const cached=loadRosterCache();
