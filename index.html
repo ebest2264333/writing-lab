@@ -1135,7 +1135,8 @@ function toExamPoint(g){
     else test=()=>true;return {label:c.label,test};});
   return {id:g.id,level:g.level,title:g.title,prompt:g.prompt||'',conds,
     evalCriteria:g.evalCriteria||'',
-    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||'',targetClass:g.targetClass||'',images:g.images||''};
+    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||'',targetClass:g.targetClass||'',images:g.images||'',
+    frameText:g.frameText||'',grammarSwapText:g.grammarSwapText||''};
 }
 const EXAM={};
 function mergeExam(){
@@ -2359,10 +2360,12 @@ const CONTENT_FORMS={
     {key:'title',label:'제목',type:'text'},
     {key:'level',label:'레벨',type:'text'},
     {key:'prompt',label:'과제 프롬프트',type:'textarea',ph:'학생에게 보여줄 과제 설명'},
+    {key:'frameText',label:'✏️ 글의 뼈대 잡기 (선택 · 자서전 쓰기처럼 단계별로 뼈대를 잡게 하고 싶을 때만) — 한 줄에 하나씩: 구성 이름 | 문장 시작 단서(세미콜론 ; 으로 구분) | 선생님 예시 문장',type:'textarea',ph:'Introduction (과거) | When I was...; I was born in...; As a child, I used to... | When I was seven years old, I was a shy boy who was afraid of speaking in front of people.\nBody (현재) | However, ... made me realize that...; Since then, I have... | However, joining the debate club made me realize that I could enjoy speaking in public.\nConclusion (미래) | Based on this experience, I want to become someone who...; In the future, I hope to... | Based on this experience, I want to become someone who helps other shy students.'},
+    {key:'grammarSwapText',label:'🔧 오늘의 문법 연습 (선택 · 그날 발표되는 필수 문법을 연습시키고 싶을 때만) — 한 줄에 하나씩: 문법명 | 설명 | 예시 변형 문장 | 연습용 기본 문장',type:'textarea',ph:'현재완료 (have/has p.p.) | 과거에 시작된 일이 현재까지 영향을 주거나 계속될 때 사용해요 | I have overcome my fear, and I have become more confident since then. | I learn English every day. I try new things.\n관계대명사 (who/which/that) | 사람·사물 뒤에서 추가 설명을 붙일 때 사용해요 | The fear that I overcame made me a person who is more confident. | I met a teacher. The teacher changed my life.'},
     {key:'evalAreaText',label:'평가 영역 (선택 · 학생에게도 보여요) — 한 줄에 하나씩: 영역명 | 영역 만점 | 평가 요소1; 평가 요소2 ...',type:'textarea',ph:'내용 | 10 | 주제에 맞는 내용 전개; 구체적인 예시 포함\n어휘·문법 | 5 | 문법 오류 없이 쓰기; 다양한 어휘 사용'},
     {key:'rubricLevelsText',label:'수행 수준별 채점 기준 (선택 · 학생에게는 안 보이고 "AI 예상 채점" 때만 참고해요) — 한 줄에 하나씩: 영역명 | 상 설명 | 중 설명 | 하 설명',type:'textarea',ph:'내용 | 상(8~10점): 주제와 관련된 내용을 구체적 예시와 함께 전개함 | 중(5~7점): 내용은 있으나 예시가 부족함 | 하(0~4점): 주제에서 벗어남'},
     {key:'targetSchool',label:'대상 학교',type:'text'},
-    {key:'targetGrade',label:'대상 학년',type:'text'},
+    {key:'targetGrade',label:'대상 학년 (숫자만 — 예: 3)',type:'text',numeric:true},
     {key:'targetClass',label:'대상 반',type:'text'},
     {key:'condText',label:'조건 (한 줄에 하나씩)',type:'textarea',ph:'최소 4문장 이상 | 문장수:4\n비교급 사용 | regex:more\\s+\\w+\\s+than'}
   ]},
@@ -2450,6 +2453,28 @@ function renderEvalAreas(text){
     }
     return '<div>- '+escH(line)+'</div>';
   }).join('');
+}
+/* 수행평가의 "✏️ 글의 뼈대 잡기"(frameText)를 파싱해요. 형식(한 줄에 하나씩):
+   구성 이름 | 문장 시작 단서(세미콜론으로 구분) | 선생님 예시 문장 — 뒤 두 칸은 선택이에요. */
+function parseFrameText(text){
+  if(!text)return [];
+  return String(text).split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return {
+      name: parts[0]||'',
+      starters: (parts[1]||'').split(';').map(x=>x.trim()).filter(Boolean),
+      sample: parts[2]||''
+    };
+  }).filter(f=>f.name);
+}
+/* 수행평가의 "🔧 오늘의 문법 연습"(grammarSwapText)을 파싱해요. 형식(한 줄에 하나씩):
+   문법명 | 설명 | 예시 변형 문장 | 연습용 기본 문장 — 뒤 세 칸은 선택이에요. */
+function parseGrammarSwapText(text){
+  if(!text)return [];
+  return String(text).split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return { name: parts[0]||'', explain: parts[1]||'', example: parts[2]||'', base: parts[3]||'' };
+  }).filter(g=>g.name);
 }
 function viewContentAdd(){setWide(false);mountView(w=>{
   w.appendChild(el('h1','title','🧩 컨텐츠 추가'));
@@ -2716,6 +2741,9 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
     else{inp=el('input','in');inp.type='text';inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';}
     if(f.ph)inp.placeholder=f.ph;
     if(isEdit&&type==='pattern'&&f.key==='unitId'){inp.value=editId;inp.disabled=true;}
+    // 대상 학년처럼 "숫자만" 받아야 하는 칸은 입력하는 중에 숫자가 아닌 글자를 바로 걸러내요
+    // (학생 계정의 '학년' 칸과 정확히 문자열로 매칭되는 값이라, 숫자 형태를 지켜야 매칭이 잘 돼요).
+    if(f.numeric){inp.inputMode='numeric';inp.addEventListener('input',()=>{const v=inp.value.replace(/[^0-9]/g,'');if(v!==inp.value)inp.value=v;});}
     inp.oninput=()=>saveDraftLocal();
     wrap.appendChild(inp);
     refs[f.key]=inp;
@@ -4562,6 +4590,52 @@ function runExam(topic){setWide(false);deckInit();
   // 1) 주제·조건 확인 후 글쓰기 (실시간 조건 확인)
   let taskDone=false,taskText='';
   const DRAFT_CHAPTER='Performance Assessment',DRAFT_POINT=topic.title;
+  // 자서전 쓰기처럼 단계별 뼈대 잡기·문법 연습을 채워둔 수행평가라면, 실제 글쓰기 화면 전에
+  // 참고용 슬라이드를 먼저 보여줘요. 둘 다 비워둔(예전 방식) 수행평가는 이 슬라이드 자체가 안 생기고
+  // 예전처럼 바로 글쓰기 화면으로 시작해요.
+  const frameItems=parseFrameText(topic.frameText);
+  const grammarItems=parseGrammarSwapText(topic.grammarSwapText);
+  if(frameItems.length){
+    slideAdd(b=>{
+      b.appendChild(el('span','badge accent','수행평가 대비 · 글의 뼈대 잡기'));
+      b.appendChild(el('h1','title','✏️ 글의 뼈대 잡기'));
+      b.appendChild(el('div','hint','문장 시작 단서(Sentence Starter)를 참고해서, 실제 글을 쓸 때 어떤 흐름으로 이어갈지 미리 생각해보세요. 예시 문장처럼 자연스럽게 이어 쓰면 훨씬 쉬워져요.'));
+      frameItems.forEach(f=>{
+        const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-top:12px;background:#faf9fb';
+        card.appendChild(el('div','fl',f.name));
+        if(f.starters.length){
+          const starterBox=el('div');starterBox.style.cssText='margin-top:6px;font-size:14px;line-height:1.8';
+          starterBox.innerHTML=f.starters.map(s=>'• '+escH(s)).join('<br>');
+          card.appendChild(starterBox);
+        }
+        if(f.sample){
+          const sampleBox=el('div');sampleBox.style.cssText='margin-top:8px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;color:#374151';
+          sampleBox.innerHTML='<b>👩‍🏫 선생님 예시문</b><br>'+escH(f.sample);
+          card.appendChild(sampleBox);
+        }
+        b.appendChild(card);
+      });
+    });
+  }
+  if(grammarItems.length){
+    slideAdd(b=>{
+      b.appendChild(el('span','badge accent','수행평가 대비 · 오늘의 문법 연습'));
+      b.appendChild(el('h1','title','🔧 오늘의 문법 연습'));
+      b.appendChild(el('div','hint','오늘 필요한 문법을 미리 연습해보고, 실제 글을 쓸 때 자유롭게 적용해보세요. 아래 연습은 채점되지 않아요 — 자유롭게 써 보는 연습장이에요.'));
+      grammarItems.forEach((g,gi)=>{
+        const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-top:12px;background:#faf9fb';
+        card.appendChild(el('div','fl',g.name));
+        if(g.explain){const ex=el('div');ex.style.cssText='margin-top:4px;font-size:13px;color:#6b7684';ex.textContent=g.explain;card.appendChild(ex);}
+        if(g.example){const exm=el('div');exm.style.cssText='margin-top:6px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;color:#374151';exm.innerHTML='<b>예시 변형</b><br>'+escH(g.example);card.appendChild(exm);}
+        if(g.base){
+          card.appendChild(el('div','hint','기본 문장: '+g.base));
+          const practiceTa=el('textarea','in');practiceTa.placeholder='위 기본 문장을 이 문법으로 바꿔 써보세요 (연습용 · 저장되지 않아요)';practiceTa.style.cssText='min-height:50px;font-size:13px;margin-top:4px';
+          card.appendChild(practiceTa);
+        }
+        b.appendChild(card);
+      });
+    });
+  }
   slideAdd(b=>{b.appendChild(el('span','badge accent','수행평가 대비 · 글쓰기'));b.appendChild(el('h1','title',topic.title));
     const exImgs=renderImages(topic.images);if(exImgs)b.appendChild(exImgs);
     b.appendChild(el('div','lead',autoFormatPrompt(topic.prompt)));
