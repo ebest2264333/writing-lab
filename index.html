@@ -1892,6 +1892,20 @@ const REPORT_BASE_CSS=
   '.wrong-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;border-radius:10px;overflow:hidden}'+
   '.wrong-table th{background:#FFF6F0;color:#4A3F55;font-weight:800;padding:8px 10px;text-align:left}'+
   '.wrong-table td{padding:7px 10px;border-top:1px solid #F2EAF3}'+
+  // 문장별 "틀린 부분 → 고친 부분" 표시(원래 printStudentRewriteReport 전용이었는데, printSubmissionReport도
+  // 문장 단위로 첨삭을 보여주게 되면서 두 리포트가 함께 쓰는 공통 스타일로 옮겼어요.
+  '.osent-wrap,.rsent-wrap{font-size:13.5px}'+
+  'p.osent{margin:0 0 2px;background:#FFEEDA;border-radius:8px;padding:5px 10px;display:inline-block;font-weight:700}'+
+  '.rsent-wrap{background:#E2F8EF;border-radius:12px;padding:10px 14px}'+
+  '.rsent-wrap p{margin:0 0 4px}'+
+  '.err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}'+
+  '.err-list li{margin-bottom:3px}'+
+  '.wrong{color:#c0392b;text-decoration:line-through}'+
+  '.correct{color:#1e8a5c;font-weight:700}'+
+  '.note{color:#8D8298}'+
+  '.corrected-full{font-size:12.5px;color:#4A3F55;margin:2px 0 8px;background:#F0E7FF;border-radius:8px;padding:5px 10px}'+
+  '.cmt{font-size:12px;color:#b45309;margin:0 0 8px}'+
+  '.overall{background:linear-gradient(120deg,#E2F8EF,#DFF6F5);border-radius:12px;padding:11px 14px;font-size:13px;margin:10px 0;white-space:pre-line;border-left:4px solid #3FBE87}'+
   '.noprint{margin-top:26px;text-align:center;padding-bottom:6px}'+
   '.noprint button{padding:12px 26px;font-size:14.5px;font-weight:800;border-radius:999px;border:none;'+
   'background:linear-gradient(120deg,#FFAC42,#FF8F2E);color:#fff;cursor:pointer;box-shadow:0 6px 16px rgba(255,143,46,.35)}'+
@@ -1899,16 +1913,53 @@ const REPORT_BASE_CSS=
 /** 제출물 하나를 학부모님께 보내기 좋은 리포트 형태(새 탭 → 인쇄/PDF 저장)로 열어줘요.
  *  학생이 쓴 글 + 선생님 첨삭(있으면 AI 첨삭도 함께)을 깔끔하게 정리해서 보여주고,
  *  버튼을 누르면 브라우저 인쇄창이 뜨는데, 거기서 "PDF로 저장"을 고르면 파일로도 받을 수 있어요. */
-function printSubmissionReport(s,studentName,studentId,academyName){
+/** 제출물 하나(s)의 텍스트를 문장별로 나눠서, 그 문장에 달린 AI/선생님 첨삭(errors[]+corrected, 문장별
+ *  코멘트)이 있으면 "틀린 부분 → 고친 부분"까지 문장 바로 아래에 함께 그려요. 첨삭이 하나도 없는 문장은
+ *  그냥 문장만 보여요. printSubmissionReport에서 "애가 뭘 틀렸는지 안 보인다"는 문제를 고치기 위해,
+ *  기존엔 총평(overall)만 보여주던 걸 printStudentRewriteReport처럼 문장 단위로도 보여주게 했어요. */
+function annotatedSentencesHtml(s){
   const fb=parseFeedback(s.feedback);
   const aifb=parseAiFeedback(s.aiFeedback);
   const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
   const sents=s.text?splitSentences(s.text):[];
-  const bodyHtml=sents.length?sents.map(sent=>'<p>'+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
-  const feedbackBlocks=[];
-  if(aifb.overall)feedbackBlocks.push('<div class="fb-box fb-a"><b>선생님 첨삭</b><p>'+escH(aifb.overall).replace(/\n/g,'<br>')+'</p></div>');
-  if(aifbGpt.overall)feedbackBlocks.push('<div class="fb-box fb-b"><b>선생님 첨삭</b><p>'+escH(aifbGpt.overall).replace(/\n/g,'<br>')+'</p></div>');
-  if(fb.overall)feedbackBlocks.push('<div class="fb-box fb-c"><b>선생님 첨삭</b><p>'+escH(fb.overall).replace(/\n/g,'<br>')+'</p></div>');
+  if(!sents.length)return '<p style="color:#888">(작성한 글이 없어요)</p>';
+  return sents.map((sent,i)=>{
+    const c=fb.sentences[i]||fb.sentences[String(i)];
+    const ai=aifb.sentences[i]||aifb.sentences[String(i)];
+    const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
+    let html='<p class="osent">'+(i+1)+'. '+escH(sent)+'</p>';
+    html+=sentenceErrorListHtml(ai);
+    html+=sentenceErrorListHtml(aiGpt);
+    if(c&&typeof c==='string')html+='<div class="cmt">💬 '+escH(c)+'</div>';
+    return html;
+  }).join('');
+}
+function printSubmissionReport(s,studentName,studentId,academyName,siblings){
+  const fb=parseFeedback(s.feedback);
+  const aifb=parseAiFeedback(s.aiFeedback);
+  const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
+  const overallHtml=[aifb.overall,aifbGpt.overall,fb.overall].filter(Boolean).map(t=>'<div class="overall">👩‍🏫 '+escH(t).replace(/\n/g,'<br>')+'</div>').join('');
+  // Re-Writing 제출물이면, 이 글 자체엔 대개 첨삭(틀린 부분)이 안 남아있으니 — 같은 제목(point/chapter)의
+  // 가장 최근 원본 제출물을 siblings에서 찾아서 "처음 쓴 글과 지적된 부분"을 위에 함께 보여줘요.
+  let original=null;
+  if(s.type==='Re-Writing'&&siblings&&siblings.length){
+    const key=s.point||s.chapter||'';
+    const cands=siblings.filter(x=>x!==s&&x.type!=='Re-Writing'&&(x.point||x.chapter||'')===key);
+    cands.sort((a,b)=>String(a.datetime||'')<String(b.datetime||'')?1:-1);
+    original=cands[0]||null;
+  }
+  let essaySectionHtml;
+  if(original){
+    essaySectionHtml='<h2 class="sec">✏️ 처음 쓴 글과 지적된 부분</h2><div class="osent-wrap">'+annotatedSentencesHtml(original)+'</div>'+
+      (function(){const of=parseFeedback(original.feedback),oai=parseAiFeedback(original.aiFeedback),oaiGpt=parseAiFeedback(original.aiFeedbackGpt);
+        return [oai.overall,oaiGpt.overall,of.overall].filter(Boolean).map(t=>'<div class="overall">👩‍🏫 '+escH(t).replace(/\n/g,'<br>')+'</div>').join('');})()+
+      '<h2 class="sec">✅ 고쳐 쓴 최종 글 (Re-Writing)</h2><div class="rsent-wrap">'+
+      (s.text?splitSentences(s.text).map((sent,i)=>'<p>'+(i+1)+'. '+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+
+      '</div>'+(overallHtml?('<h2 class="sec">👩‍🏫 선생님 첨삭</h2>'+overallHtml):'');
+  } else {
+    essaySectionHtml='<h2 class="sec">✏️ 작성한 글</h2><div class="osent-wrap">'+annotatedSentencesHtml(s)+'</div>'+
+      (overallHtml?('<h2 class="sec">👩‍🏫 선생님 첨삭</h2>'+overallHtml):'');
+  }
   const wrongArr=parseWrongReport(s.wrongReport);
   let wrongHtml='';
   if(s.wrongReport&&wrongArr.length){
@@ -1933,8 +1984,7 @@ function printSubmissionReport(s,studentName,studentId,academyName){
       '<div class="meta-chip"><b>제출일시</b>'+escH(s.datetime||'')+'</div>'+
       '<div class="meta-chip score"><b>점수</b>'+escH(String(s.total||'-'))+(s.grade?(' · '+escH(s.grade)+'등급'):'')+'</div>'+
     '</div>'+
-    '<h2 class="sec">✏️ 작성한 글</h2><div class="essay">'+bodyHtml+'</div>'+
-    (feedbackBlocks.length?('<h2 class="sec">👩‍🏫 선생님 첨삭</h2>'+feedbackBlocks.join('')):'')+
+    essaySectionHtml+
     wrongHtml+
     '</div>'+
     '<div class="noprint"><button onclick="window.print()">🖨 인쇄하기 · PDF 만들기</button></div>'+
@@ -2014,19 +2064,8 @@ function printStudentRewriteReport(preview){
     'section.piece h2{font-size:15.5px;margin:0 0 4px;color:#4A3F55;font-weight:800}'+
     'section.piece h2 .tag{font-size:11px;font-weight:800;color:#fff;background:linear-gradient(120deg,#FF8FAA,#9678EE);border-radius:999px;padding:3px 11px;margin-left:8px;vertical-align:middle}'+
     '.dates{color:#8D8298;font-size:12px;margin:6px 0 14px}'+
-    'h3{font-size:13px;margin:16px 0 8px;color:#4A3F55;font-weight:800}'+
-    '.osent-wrap,.rsent-wrap{font-size:13.5px}'+
-    'p.osent{margin:0 0 2px;background:#FFEEDA;border-radius:8px;padding:5px 10px;display:inline-block;font-weight:700}'+
-    '.rsent-wrap{background:#E2F8EF;border-radius:12px;padding:10px 14px}'+
-    '.rsent-wrap p{margin:0 0 4px}'+
-    '.err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}'+
-    '.err-list li{margin-bottom:3px}'+
-    '.wrong{color:#c0392b;text-decoration:line-through}'+
-    '.correct{color:#1e8a5c;font-weight:700}'+
-    '.note{color:#8D8298}'+
-    '.corrected-full{font-size:12.5px;color:#4A3F55;margin:2px 0 8px;background:#F0E7FF;border-radius:8px;padding:5px 10px}'+
-    '.cmt{font-size:12px;color:#b45309;margin:0 0 8px}'+
-    '.overall{background:linear-gradient(120deg,#E2F8EF,#DFF6F5);border-radius:12px;padding:11px 14px;font-size:13px;margin:10px 0;white-space:pre-line;border-left:4px solid #3FBE87}';
+    'h3{font-size:13px;margin:16px 0 8px;color:#4A3F55;font-weight:800}';
+  // (문장별 틀린 부분/고친 부분/총평 스타일은 REPORT_BASE_CSS로 옮겨서 printSubmissionReport와 공용으로 써요.)
   const html='<!doctype html><html><head><meta charset="utf-8"><title>'+escH((preview&&preview.studentName)||'')+' - 첨삭·Re-Writing 종합 리포트</title>'+
     '<style>'+
     REPORT_BASE_CSS+extraCss+
@@ -2158,7 +2197,7 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
       card.innerHTML='<div style="font-weight:800">'+(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+(s.type||'')+' · '+(s.datetime||'')+')</span></div>'+
         '<div style="margin-top:6px;color:#6b7684;font-size:13px">점수: '+(s.total||'-')+(s.grade?(' · '+s.grade+'등급'):'')+'</div>';
       const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
-      printBtn.onclick=()=>printSubmissionReport(s,USER.name,USER.id,USER.academy);
+      printBtn.onclick=()=>printSubmissionReport(s,USER.name,USER.id,USER.academy,subs);
       card.appendChild(printBtn);
       const audioBox=renderAudioPlayback(s);if(audioBox)card.appendChild(audioBox);
       const fb=parseFeedback(s.feedback);
@@ -4011,7 +4050,7 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
         }
       }
       const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기 (학부모님께 보내기 좋아요)');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
-      printBtn.onclick=()=>printSubmissionReport(s,studentName,studentId,s.academy);
+      printBtn.onclick=()=>printSubmissionReport(s,studentName,studentId,s.academy,siblings);
       card.appendChild(printBtn);
       const audioBox=renderAudioPlayback(s);if(audioBox)card.appendChild(audioBox);
       if(s.wrongReport){
