@@ -3394,7 +3394,11 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
       let data=null;try{data=await res.json();}catch(e){}
       if(data&&data.ok===false)throw new Error(data.error||'저장 실패');
       clearDraftLocal();
-      msg.className='fx ok';msg.textContent='✅ '+(isEdit?'수정했어요!':'저장했어요!')+' 스프레드시트 담당 선생님이 "🔄 사이트에 반영하기"를 누르면 사이트에 보여요.';
+      // 저장/수정 직후 이 화면(같은 페이지)에서 바로 다른 화면으로 이동해도 방금 바뀐 내용이 보이도록,
+      // 페이지를 새로고침하지 않고도 서버 최신 컨텐츠를 다시 받아와서 메모리(GEN·GENEXAM 등)를 갱신해요.
+      // (이걸 안 해두면, 예전처럼 브라우저를 완전히 새로고침해야만 방금 저장한 내용이 화면에 반영됐어요.)
+      try{ await loadLiveContent(); }catch(e){}
+      msg.className='fx ok';msg.textContent='✅ '+(isEdit?'수정했어요!':'저장했어요!')+' 바로 반영됐어요 — 다른 화면으로 이동하면 최신 내용으로 보여요.';
       if(!isEdit)spec.fields.forEach(f=>{refs[f.key].value='';});
     }catch(e){
       msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요: '+String((e&&e.message)||e)+' (스프레드시트에 필요한 시트 탭이 없는 경우 이런 오류가 날 수 있어요. 안내서를 참고해 탭을 만들어주세요.)';
