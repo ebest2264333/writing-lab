@@ -182,6 +182,16 @@
   .conds li.pass{color:var(--green)}.conds li.pass .mk{background:var(--green);border-color:var(--green);color:#fff}
   .conds li.fail .mk{border-color:var(--red);color:var(--red)}
   .copybox{border:1.5px dashed var(--accent);border-radius:12px;padding:10px 14px;background:var(--accent-soft);font-size:17px;font-weight:700;color:var(--navy);margin:8px 0;font-family:var(--sans)}
+  /* 브레인스토밍 마인드맵 — 중앙 주제에서 가지가 뻗어나가는 모양을 순수 CSS 선(border)으로 표현해요. */
+  .mindmap{display:flex;flex-direction:column;align-items:center;margin-top:18px}
+  .mm-center{background:linear-gradient(120deg,var(--accent),var(--accent-2));color:#fff;font-weight:800;padding:12px 26px;border-radius:999px;font-size:16px;text-align:center;box-shadow:var(--shadow-sm);max-width:90%}
+  .mm-stem{width:2px;height:18px;background:var(--line-2)}
+  .mm-branches{display:flex;justify-content:center;gap:22px;flex-wrap:wrap;width:100%;max-width:960px;padding-top:18px;border-top:2px solid var(--line-2);margin-top:0}
+  .mm-branch{position:relative;flex:1 1 220px;max-width:280px;display:flex;flex-direction:column;align-items:stretch}
+  .mm-branch::before{content:'';position:absolute;top:-18px;left:50%;width:2px;height:18px;background:var(--line-2)}
+  .mm-branch-label{background:var(--accent-soft);color:var(--navy);font-weight:800;padding:8px 12px;border-radius:10px;font-size:14px;text-align:center;margin-bottom:6px}
+  .mm-guide{font-size:12.5px;color:var(--muted);margin-bottom:6px;text-align:center}
+  .mm-branch textarea.in{min-height:70px;font-size:14px}
   /* report */
   .rrow{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px dashed var(--line);padding:11px 2px}
   .rrow .rl{font-size:16.5px;font-weight:600;color:var(--navy)}.rrow .rn{font-size:15.5px;font-weight:800;color:var(--accent)}
@@ -300,8 +310,12 @@
 <script>
 const SUBMIT_URL="https://script.google.com/macros/s/AKfycbwyL3hM4syjOmtxSQ2bxG-XWXYyHhlfxvtAUhleP5hWf2pmcYP5nHxmHmLyz5R1KRgh/exec";
 /* 사이트 전체에서 복사·잘라내기·붙여넣기·우클릭 메뉴를 막아요 — 외부(번역기 등)에서 답을 복사해와서
-   붙여넣는 걸 막기 위한 용도예요. 타이핑, 커서 이동, 방향키/백스페이스 등 일반적인 입력은 전혀 지장 없어요. */
-['copy','cut','paste','contextmenu'].forEach(evt=>document.addEventListener(evt,e=>e.preventDefault()));
+   붙여넣는 걸 막기 위한 용도예요. 타이핑, 커서 이동, 방향키/백스페이스 등 일반적인 입력은 전혀 지장 없어요.
+   다만 선생님 계정으로 로그인했을 때는(컨텐츠 추가 화면에 텍스트를 붙여넣어야 하는 경우가 많아서)
+   이 제한을 풀어줘요 — USER는 이 코드 아래에서 선언되지만, 실제로 이 이벤트가 발생하는 시점(로그인 이후)에는
+   이미 선언이 끝나 있어서 문제없이 참조할 수 있어요. 로그아웃하면 USER.role이 다시 'student'로 돌아가면서
+   자동으로 다시 막혀요. */
+['copy','cut','paste','contextmenu'].forEach(evt=>document.addEventListener(evt,e=>{ if(typeof USER==='undefined'||USER.role!=='teacher') e.preventDefault(); }));
 /* ================= util ================= */
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
 /* 지시문 자동 줄바꿈 — 선생님이 직접 줄바꿈을 넣었으면 그대로 존중하고,
@@ -1136,7 +1150,7 @@ function toExamPoint(g){
   return {id:g.id,level:g.level,title:g.title,prompt:g.prompt||'',conds,
     evalCriteria:g.evalCriteria||'',
     targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||'',targetClass:g.targetClass||'',images:g.images||'',
-    frameText:g.frameText||'',grammarSwapText:g.grammarSwapText||''};
+    mindmapText:g.mindmapText||'',frameText:g.frameText||'',grammarSwapText:g.grammarSwapText||''};
 }
 const EXAM={};
 function mergeExam(){
@@ -2360,6 +2374,7 @@ const CONTENT_FORMS={
     {key:'title',label:'제목',type:'text'},
     {key:'level',label:'레벨',type:'text'},
     {key:'prompt',label:'과제 프롬프트',type:'textarea',ph:'학생에게 보여줄 과제 설명'},
+    {key:'mindmapText',label:'🧠 브레인스토밍 마인드맵 (선택 · 글쓰기 전에 생각을 정리하게 하고 싶을 때만) — 한 줄에 하나씩: 가지 이름 | 안내 문구(선택)',type:'textarea',ph:'High Point (가장 자랑스럽거나 기뻤던 일) | 몇 살 때 있었던 일인가요? 사건과 그때 느낀 감정을 적어보세요.\nLow Point (좌절·실패했거나 극복해야 했던 일) | 어떤 어려움이었고, 어떻게 극복했나요?\nTurning Point (배운 점과 가치관의 변화) | 이 경험으로 무엇을 배웠나요?'},
     {key:'frameText',label:'✏️ 글의 뼈대 잡기 (선택 · 자서전 쓰기처럼 단계별로 뼈대를 잡게 하고 싶을 때만) — 한 줄에 하나씩: 구성 이름 | 문장 시작 단서(세미콜론 ; 으로 구분) | 선생님 예시 문장',type:'textarea',ph:'Introduction (과거) | When I was...; I was born in...; As a child, I used to... | When I was seven years old, I was a shy boy who was afraid of speaking in front of people.\nBody (현재) | However, ... made me realize that...; Since then, I have... | However, joining the debate club made me realize that I could enjoy speaking in public.\nConclusion (미래) | Based on this experience, I want to become someone who...; In the future, I hope to... | Based on this experience, I want to become someone who helps other shy students.'},
     {key:'grammarSwapText',label:'🔧 오늘의 문법 연습 (선택 · 그날 발표되는 필수 문법을 연습시키고 싶을 때만) — 한 줄에 하나씩: 문법명 | 설명 | 예시 변형 문장 | 연습용 기본 문장',type:'textarea',ph:'현재완료 (have/has p.p.) | 과거에 시작된 일이 현재까지 영향을 주거나 계속될 때 사용해요 | I have overcome my fear, and I have become more confident since then. | I learn English every day. I try new things.\n관계대명사 (who/which/that) | 사람·사물 뒤에서 추가 설명을 붙일 때 사용해요 | The fear that I overcame made me a person who is more confident. | I met a teacher. The teacher changed my life.'},
     {key:'evalAreaText',label:'평가 영역 (선택 · 학생에게도 보여요) — 한 줄에 하나씩: 영역명 | 영역 만점 | 평가 요소1; 평가 요소2 ...',type:'textarea',ph:'내용 | 10 | 주제에 맞는 내용 전개; 구체적인 예시 포함\n어휘·문법 | 5 | 문법 오류 없이 쓰기; 다양한 어휘 사용'},
@@ -2453,6 +2468,15 @@ function renderEvalAreas(text){
     }
     return '<div>- '+escH(line)+'</div>';
   }).join('');
+}
+/* 수행평가의 "🧠 브레인스토밍 마인드맵"(mindmapText)을 파싱해요. 형식(한 줄에 하나씩):
+   가지 이름 | 안내 문구(선택) — 안내 문구는 없어도 돼요. */
+function parseMindmapText(text){
+  if(!text)return [];
+  return String(text).split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return { name: parts[0]||'', guide: parts[1]||'' };
+  }).filter(m=>m.name);
 }
 /* 수행평가의 "✏️ 글의 뼈대 잡기"(frameText)를 파싱해요. 형식(한 줄에 하나씩):
    구성 이름 | 문장 시작 단서(세미콜론으로 구분) | 선생님 예시 문장 — 뒤 두 칸은 선택이에요. */
@@ -3779,6 +3803,20 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
       card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-top:14px;background:#fff';
       card.innerHTML='<div style="color:#6b7684;font-size:13px">점수: '+(s.total||'-')+(s.grade?(' · '+s.grade+'등급'):'')+'</div>';
       w.appendChild(card);
+      // 원본 글(Re-Writing 자체가 아니고, 첨삭을 받아서 다시 쓸 수 있는 글)이면, 같은 컨텐츠의 다른
+      // 제출물(siblings — teacherPreviewSubsFor가 Re-Writing도 같은 제목으로 이미 함께 묶어줘요) 중에
+      // type이 'Re-Writing'인 게 있는지 확인해서, 그 학생이 이 글로 다시쓰기를 했는지 배지로 바로 보여줘요.
+      if(s.type!=='Re-Writing'){
+        const rewriteEligible=!!(s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
+        const rewriteDone=(siblings||[]).some(x=>x.type==='Re-Writing');
+        if(rewriteEligible||rewriteDone){
+          const rwBadge=el('div');
+          rwBadge.style.cssText='margin-top:8px;display:inline-block;padding:4px 12px;border-radius:999px;font-size:12.5px;font-weight:700;'+
+            (rewriteDone?'background:#e6f6ec;color:#059669':'background:#fdf1e7;color:#c2650a');
+          rwBadge.textContent=rewriteDone?'🔁 Re-Writing 완료함':'⏳ 아직 Re-Writing 안 함';
+          card.appendChild(rwBadge);
+        }
+      }
       const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기 (학부모님께 보내기 좋아요)');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
       printBtn.onclick=()=>printSubmissionReport(s,studentName,studentId,s.academy);
       card.appendChild(printBtn);
@@ -4590,11 +4628,33 @@ function runExam(topic){setWide(false);deckInit();
   // 1) 주제·조건 확인 후 글쓰기 (실시간 조건 확인)
   let taskDone=false,taskText='';
   const DRAFT_CHAPTER='Performance Assessment',DRAFT_POINT=topic.title;
-  // 자서전 쓰기처럼 단계별 뼈대 잡기·문법 연습을 채워둔 수행평가라면, 실제 글쓰기 화면 전에
-  // 참고용 슬라이드를 먼저 보여줘요. 둘 다 비워둔(예전 방식) 수행평가는 이 슬라이드 자체가 안 생기고
-  // 예전처럼 바로 글쓰기 화면으로 시작해요.
+  // 자서전 쓰기처럼 브레인스토밍·단계별 뼈대 잡기·문법 연습을 채워둔 수행평가라면, 실제 글쓰기 화면
+  // 전에 참고용 슬라이드를 순서대로(마인드맵 → 뼈대 잡기 → 문법 연습) 먼저 보여줘요. 셋 다 비워둔
+  // (예전 방식) 수행평가는 슬라이드 자체가 안 생기고 예전처럼 바로 글쓰기 화면으로 시작해요.
+  const mindmapItems=parseMindmapText(topic.mindmapText);
   const frameItems=parseFrameText(topic.frameText);
   const grammarItems=parseGrammarSwapText(topic.grammarSwapText);
+  if(mindmapItems.length){
+    slideAdd(b=>{
+      b.appendChild(el('span','badge accent','수행평가 대비 · 브레인스토밍'));
+      b.appendChild(el('h1','title','🧠 생각 정리하기 (마인드맵)'));
+      b.appendChild(el('div','hint','가운데 주제에서 뻗어나온 가지마다 떠오르는 생각을 자유롭게 적어보세요. 여기 적은 내용은 채점되지 않는 메모예요 — 글을 쓸 때 참고만 하면 돼요.'));
+      const map=el('div','mindmap');
+      map.appendChild(el('div','mm-center',escH(topic.title||'')));
+      map.appendChild(el('div','mm-stem'));
+      const branches=el('div','mm-branches');
+      mindmapItems.forEach(m=>{
+        const branch=el('div','mm-branch');
+        branch.appendChild(el('div','mm-branch-label',escH(m.name)));
+        if(m.guide)branch.appendChild(el('div','mm-guide',escH(m.guide)));
+        const ta=el('textarea','in');ta.placeholder='생각나는 것을 적어보세요 (연습용 · 저장되지 않아요)';
+        branch.appendChild(ta);
+        branches.appendChild(branch);
+      });
+      map.appendChild(branches);
+      b.appendChild(map);
+    });
+  }
   if(frameItems.length){
     slideAdd(b=>{
       b.appendChild(el('span','badge accent','수행평가 대비 · 글의 뼈대 잡기'));
