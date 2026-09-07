@@ -182,16 +182,25 @@
   .conds li.pass{color:var(--green)}.conds li.pass .mk{background:var(--green);border-color:var(--green);color:#fff}
   .conds li.fail .mk{border-color:var(--red);color:var(--red)}
   .copybox{border:1.5px dashed var(--accent);border-radius:12px;padding:10px 14px;background:var(--accent-soft);font-size:17px;font-weight:700;color:var(--navy);margin:8px 0;font-family:var(--sans)}
-  /* 브레인스토밍 마인드맵 — 중앙 주제에서 가지가 뻗어나가는 모양을 순수 CSS 선(border)으로 표현해요. */
-  .mindmap{display:flex;flex-direction:column;align-items:center;margin-top:18px}
-  .mm-center{background:linear-gradient(120deg,var(--accent),var(--accent-2));color:#fff;font-weight:800;padding:12px 26px;border-radius:999px;font-size:16px;text-align:center;box-shadow:var(--shadow-sm);max-width:90%}
-  .mm-stem{width:2px;height:18px;background:var(--line-2)}
-  .mm-branches{display:flex;justify-content:center;gap:22px;flex-wrap:wrap;width:100%;max-width:960px;padding-top:18px;border-top:2px solid var(--line-2);margin-top:0}
-  .mm-branch{position:relative;flex:1 1 220px;max-width:280px;display:flex;flex-direction:column;align-items:stretch}
-  .mm-branch::before{content:'';position:absolute;top:-18px;left:50%;width:2px;height:18px;background:var(--line-2)}
-  .mm-branch-label{background:var(--accent-soft);color:var(--navy);font-weight:800;padding:8px 12px;border-radius:10px;font-size:14px;text-align:center;margin-bottom:6px}
-  .mm-guide{font-size:12.5px;color:var(--muted);margin-bottom:6px;text-align:center}
-  .mm-branch textarea.in{min-height:70px;font-size:14px}
+  /* 수행평가 전용 브레인스토밍 마인드맵 — 중앙 주제에서 가지가 뻗어나가는 모양을 순수 CSS 선(border)으로
+     표현해요. Paragraph Writing이 이미 .mindmap/.mm-* 클래스를 다른 모양(햄버거 구조 마인드맵)으로 쓰고
+     있어서, 이름이 겹치면 나중에 나오는 규칙이 덮어써서 레이아웃이 깨져요 — 그래서 exm- 접두사로 완전히
+     구분되는 이름을 써요. */
+  .exmmap{display:flex;flex-direction:column;align-items:center;margin-top:18px}
+  .exmmap-center{background:linear-gradient(120deg,var(--accent),var(--accent-2));color:#fff;font-weight:800;padding:12px 26px;border-radius:999px;font-size:16px;text-align:center;box-shadow:var(--shadow-sm);max-width:90%}
+  .exmmap-stem{width:2px;height:18px;background:var(--line-2)}
+  .exmmap-branches{display:flex;justify-content:center;gap:22px;flex-wrap:wrap;width:100%;max-width:960px;padding-top:18px;border-top:2px solid var(--line-2);margin-top:0}
+  .exmmap-branch{position:relative;flex:1 1 220px;max-width:280px;display:flex;flex-direction:column;align-items:stretch}
+  .exmmap-branch::before{content:'';position:absolute;top:-18px;left:50%;width:2px;height:18px;background:var(--line-2)}
+  .exmmap-branch-label{background:var(--accent-soft);color:var(--navy);font-weight:800;padding:8px 12px;border-radius:10px;font-size:14px;text-align:center;margin-bottom:6px}
+  .exmmap-guide{font-size:12.5px;color:var(--muted);margin-bottom:6px;text-align:center}
+  .exmmap-branch textarea.in{min-height:70px;font-size:14px}
+  /* 마인드맵에 적은 내용을 글쓰기 화면 오른쪽에서 참고할 수 있게 보여주는 카드(Paragraph Writing의
+     wleft/wright 분할 글쓰기와 같은 방식이에요) */
+  .exmnotes-card{border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#faf9fb}
+  .exmnotes-card .lbl{font-weight:800;font-size:13px;color:var(--navy);margin-bottom:4px}
+  .exmnotes-card .txt{font-size:13.5px;color:#374151;white-space:pre-wrap;line-height:1.6}
+  .exmnotes-card .txt.empty{color:var(--muted);font-style:italic}
   /* report */
   .rrow{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px dashed var(--line);padding:11px 2px}
   .rrow .rl{font-size:16.5px;font-weight:600;color:var(--navy)}.rrow .rn{font-size:15.5px;font-weight:800;color:var(--accent)}
@@ -4634,20 +4643,26 @@ function runExam(topic){setWide(false);deckInit();
   const mindmapItems=parseMindmapText(topic.mindmapText);
   const frameItems=parseFrameText(topic.frameText);
   const grammarItems=parseGrammarSwapText(topic.grammarSwapText);
+  // 마인드맵에 적은 내용은 이후 실제 글쓰기 화면 오른쪽 참고 패널에 그대로 보여줘요(Paragraph Writing의
+  // 좌우 분할 글쓰기 방식과 같아요) — 그래서 각 가지의 값을 mmNotes에 실시간으로 저장해둬요.
+  const mmNotes={};
+  mindmapItems.forEach(m=>{mmNotes[m.name]='';});
   if(mindmapItems.length){
     slideAdd(b=>{
       b.appendChild(el('span','badge accent','수행평가 대비 · 브레인스토밍'));
       b.appendChild(el('h1','title','🧠 생각 정리하기 (마인드맵)'));
-      b.appendChild(el('div','hint','가운데 주제에서 뻗어나온 가지마다 떠오르는 생각을 자유롭게 적어보세요. 여기 적은 내용은 채점되지 않는 메모예요 — 글을 쓸 때 참고만 하면 돼요.'));
-      const map=el('div','mindmap');
-      map.appendChild(el('div','mm-center',escH(topic.title||'')));
-      map.appendChild(el('div','mm-stem'));
-      const branches=el('div','mm-branches');
+      b.appendChild(el('div','hint','가운데 주제에서 뻗어나온 가지마다 떠오르는 생각을 자유롭게 적어보세요. 여기 적은 내용은 채점되지 않지만, 다음 글쓰기 화면 오른쪽에서 계속 참고할 수 있어요.'));
+      const map=el('div','exmmap');
+      map.appendChild(el('div','exmmap-center',escH(topic.title||'')));
+      map.appendChild(el('div','exmmap-stem'));
+      const branches=el('div','exmmap-branches');
       mindmapItems.forEach(m=>{
-        const branch=el('div','mm-branch');
-        branch.appendChild(el('div','mm-branch-label',escH(m.name)));
-        if(m.guide)branch.appendChild(el('div','mm-guide',escH(m.guide)));
-        const ta=el('textarea','in');ta.placeholder='생각나는 것을 적어보세요 (연습용 · 저장되지 않아요)';
+        const branch=el('div','exmmap-branch');
+        branch.appendChild(el('div','exmmap-branch-label',escH(m.name)));
+        if(m.guide)branch.appendChild(el('div','exmmap-guide',escH(m.guide)));
+        const ta=el('textarea','in');ta.placeholder='생각나는 것을 적어보세요 (여기 적은 내용이 글쓰기 화면 오른쪽에 보여요)';
+        ta.value=mmNotes[m.name]||'';
+        ta.addEventListener('input',()=>{mmNotes[m.name]=ta.value;});
         branch.appendChild(ta);
         branches.appendChild(branch);
       });
@@ -4696,24 +4711,30 @@ function runExam(topic){setWide(false);deckInit();
       });
     });
   }
-  slideAdd(b=>{b.appendChild(el('span','badge accent','수행평가 대비 · 글쓰기'));b.appendChild(el('h1','title',topic.title));
-    const exImgs=renderImages(topic.images);if(exImgs)b.appendChild(exImgs);
-    b.appendChild(el('div','lead',autoFormatPrompt(topic.prompt)));
+  let writingSlideRefresh=null;
+  slideAdd(b=>{
+    const hasMap=mindmapItems.length>0;
+    const wrap=hasMap?el('div','writer'):b;
+    const left=hasMap?el('div','wleft'):b;
+    if(hasMap){wrap.appendChild(left);}
+    left.appendChild(el('span','badge accent','수행평가 대비 · 글쓰기'));left.appendChild(el('h1','title',topic.title));
+    const exImgs=renderImages(topic.images);if(exImgs)left.appendChild(exImgs);
+    left.appendChild(el('div','lead',autoFormatPrompt(topic.prompt)));
     if(topic.evalCriteria){
       const evalBox=el('div');evalBox.style.cssText='background:#f4f5ff;border-radius:12px;padding:12px 14px;margin-top:10px;font-size:14px;line-height:1.7';
       evalBox.innerHTML='<b>📋 평가 영역</b>'+renderEvalAreas(topic.evalCriteria);
-      b.appendChild(evalBox);
+      left.appendChild(evalBox);
     }
-    b.appendChild(makeDictBtn());
-    const bannerSlot=el('div');b.appendChild(bannerSlot);
-    const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';b.appendChild(ta);
-    const ul=el('ul','conds');topic.conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});b.appendChild(ul);
-    const fx=el('div','fx');b.appendChild(fx);
-    addAiCondCheckButton(b,ul,()=>ta.value);
+    left.appendChild(makeDictBtn());
+    const bannerSlot=el('div');left.appendChild(bannerSlot);
+    const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';left.appendChild(ta);
+    const ul=el('ul','conds');topic.conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});left.appendChild(ul);
+    const fx=el('div','fx');left.appendChild(fx);
+    addAiCondCheckButton(left,ul,()=>ta.value);
     const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
     const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
-    const saveMsg=el('span','fx');saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);b.appendChild(saveRow);
-    b.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 판단이 애매한 문법 조건은 "🤖 AI로 조건 확인하기"를 눌러 다시 확인할 수 있어요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요.'));
+    const saveMsg=el('span','fx');saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);left.appendChild(saveRow);
+    left.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 판단이 애매한 문법 조건은 "🤖 AI로 조건 확인하기"를 눌러 다시 확인할 수 있어요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요.'));
     const checkConds=()=>{let all=true;ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';if(!ok)all=false;});
       taskDone=all;taskText=ta.value;ST.draft=ta.value;
       if(!ta.value.trim()){fx.className='fx';fx.textContent='';}
@@ -4730,7 +4751,29 @@ function runExam(topic){setWide(false);deckInit();
         bannerSlot.appendChild(draftBanner(found.savedAt));
       }
     })();
-  },{focus:'textarea'});
+    let right=null,refreshNotes=null;
+    if(hasMap){
+      right=el('div','wright');
+      right.appendChild(el('div','fl','🧠 내가 적은 마인드맵'));
+      const notesHost=el('div');notesHost.style.cssText='margin-top:8px';
+      right.appendChild(notesHost);
+      refreshNotes=()=>{
+        notesHost.innerHTML='';
+        mindmapItems.forEach(m=>{
+          const card=el('div','exmnotes-card');
+          card.appendChild(el('div','lbl',escH(m.name)));
+          const val=(mmNotes[m.name]||'').trim();
+          const txt=el('div','txt'+(val?'':' empty'),escH(val||'(아직 안 적었어요)'));
+          card.appendChild(txt);
+          notesHost.appendChild(card);
+        });
+      };
+      refreshNotes();
+      writingSlideRefresh=refreshNotes;
+      wrap.appendChild(right);
+      b.appendChild(wrap);
+    }
+  },{focus:'textarea',onEnter:()=>{if(writingSlideRefresh)writingSlideRefresh();}});
   // 2) 점수 + 제출
   slideAdd(b=>{b.appendChild(el('span','badge green','수행평가 대비 · 채점 결과'));b.appendChild(el('h1','title','자동 채점 결과'));
     b._onShow=()=>{};
