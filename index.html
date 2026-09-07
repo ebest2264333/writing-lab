@@ -2035,52 +2035,98 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
         const wrongWrap=el('div');wrongWrap.innerHTML=renderDrillWrongReport(wrongArr);
         card.appendChild(wrongWrap);
       }
-      if(s.text||fb.overall||aifb.overall||aifbGpt.overall){
-        const wrap=el('div');wrap.style.marginTop='10px';
-        if(s.text){
-          const sents=splitSentences(s.text);
-          const list=el('div');list.style.cssText='margin-bottom:8px';
-          sents.forEach((sent,i)=>{
-            const c=fb.sentences[i]||fb.sentences[String(i)];
-            const ai=aifb.sentences[i]||aifb.sentences[String(i)];
-            const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
-            const aiHtml=renderAiSentenceBlock(ai,'선생님 첨삭','#4338ca');
-            const aiGptHtml=renderAiSentenceBlock(aiGpt,'선생님 첨삭','#0f766e');
-            const row=el('div');row.style.cssText='margin-bottom:6px;font-size:14px;line-height:1.6';
-            if(c||aiHtml||aiGptHtml){
-              let html='<span style="background:#fff3b0;border-radius:4px;padding:1px 3px">'+escH(sent)+'</span>';
-              if(aiHtml)html+=aiHtml;
-              if(aiGptHtml)html+=aiGptHtml;
-              if(c)html+='<div style="margin-top:2px;color:#b45309;font-size:13px">💬 '+escH(c)+'</div>';
-              row.innerHTML=html;
-            } else {
-              row.textContent=sent;
-            }
-            list.appendChild(row);
-          });
-          wrap.appendChild(list);
+      // 아직 선생님 첨삭도, (학생에게 보여지는) AI 첨삭도 하나도 없는 글쓰기·기사요약·수행평가 글은,
+      // 새 줄로 다시 내지 않고 이 자리에서 바로 고쳐 쓸 수 있게 해줘요(문법드릴·Re-Writing은 대상이
+      // 아니에요 — Re-Writing은 이미 첨삭받은 뒤에 고쳐 쓰는 전용 기능이라 여기서 또 다룰 필요가 없어요).
+      const EDITABLE_TYPES=['글쓰기','기사요약','수행평가'];
+      const noFeedbackYet=!(fb.overall)&&!(aifb.overall||Object.keys(aifb.sentences||{}).length)&&!(aifbGpt.overall||Object.keys(aifbGpt.sentences||{}).length);
+      const canEdit=!!(s.subId&&s.text&&EDITABLE_TYPES.indexOf(s.type)>-1&&noFeedbackYet);
+      const viewBox=el('div');
+      const renderReadOnly=()=>{
+        viewBox.innerHTML='';
+        if(canEdit){
+          const editBtn=el('button','btn ghost','✏️ 제출한 글 수정하기');editBtn.type='button';editBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
+          editBtn.onclick=renderEditForm;
+          viewBox.appendChild(editBtn);
         }
-        if(aifb.overall){
-          const aov=el('div');aov.style.cssText='background:#eef0ff;border-radius:10px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:8px';
-          aov.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifb.overall);
-          wrap.appendChild(aov);
-        }
-        if(aifbGpt.overall){
-          const aovG=el('div');aovG.style.cssText='background:#e6f6f3;border-radius:10px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:8px';
-          aovG.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifbGpt.overall);
-          wrap.appendChild(aovG);
-        }
-        if(fb.overall){
-          const ov=el('div');ov.style.cssText='background:var(--green-soft);border-radius:10px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-line';
-          ov.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(fb.overall);
-          wrap.appendChild(ov);
+        if(s.text||fb.overall||aifb.overall||aifbGpt.overall){
+          const wrap=el('div');wrap.style.marginTop='10px';
+          if(s.text){
+            const sents=splitSentences(s.text);
+            const list=el('div');list.style.cssText='margin-bottom:8px';
+            sents.forEach((sent,i)=>{
+              const c=fb.sentences[i]||fb.sentences[String(i)];
+              const ai=aifb.sentences[i]||aifb.sentences[String(i)];
+              const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
+              const aiHtml=renderAiSentenceBlock(ai,'선생님 첨삭','#4338ca');
+              const aiGptHtml=renderAiSentenceBlock(aiGpt,'선생님 첨삭','#0f766e');
+              const row=el('div');row.style.cssText='margin-bottom:6px;font-size:14px;line-height:1.6';
+              if(c||aiHtml||aiGptHtml){
+                let html='<span style="background:#fff3b0;border-radius:4px;padding:1px 3px">'+escH(sent)+'</span>';
+                if(aiHtml)html+=aiHtml;
+                if(aiGptHtml)html+=aiGptHtml;
+                if(c)html+='<div style="margin-top:2px;color:#b45309;font-size:13px">💬 '+escH(c)+'</div>';
+                row.innerHTML=html;
+              } else {
+                row.textContent=sent;
+              }
+              list.appendChild(row);
+            });
+            wrap.appendChild(list);
+          }
+          if(aifb.overall){
+            const aov=el('div');aov.style.cssText='background:#eef0ff;border-radius:10px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:8px';
+            aov.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifb.overall);
+            wrap.appendChild(aov);
+          }
+          if(aifbGpt.overall){
+            const aovG=el('div');aovG.style.cssText='background:#e6f6f3;border-radius:10px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:8px';
+            aovG.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifbGpt.overall);
+            wrap.appendChild(aovG);
+          }
+          if(fb.overall){
+            const ov=el('div');ov.style.cssText='background:var(--green-soft);border-radius:10px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-line';
+            ov.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(fb.overall);
+            wrap.appendChild(ov);
+          } else {
+            wrap.appendChild(el('div','hint','아직 선생님 첨삭이 없어요.'));
+          }
+          viewBox.appendChild(wrap);
         } else {
-          wrap.appendChild(el('div','hint','아직 선생님 첨삭이 없어요.'));
+          const fbEl=el('div','hint','아직 선생님 첨삭이 없어요.');fbEl.style.marginTop='10px';viewBox.appendChild(fbEl);
         }
-        card.appendChild(wrap);
-      } else {
-        const fbEl=el('div','hint','아직 선생님 첨삭이 없어요.');fbEl.style.marginTop='10px';card.appendChild(fbEl);
-      }
+      };
+      const renderEditForm=()=>{
+        viewBox.innerHTML='';
+        const editWrap=el('div');editWrap.style.marginTop='10px';
+        editWrap.appendChild(el('div','hint','아직 첨삭받기 전이라 내용을 고쳐 쓸 수 있어요. 저장하면 이 제출물이 새 내용으로 바뀌고, AI 첨삭도 새 글 기준으로 다시 만들어져요.'));
+        const ta=el('textarea','in');ta.value=s.text;ta.style.cssText='min-height:120px;margin-top:8px';
+        editWrap.appendChild(ta);
+        const btnRow=el('div');btnRow.style.cssText='display:flex;gap:8px;margin-top:8px;align-items:center';
+        const saveBtn=el('button','btn green','💾 수정 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 14px;font-size:13px';
+        const cancelBtn=el('button','btn ghost','취소');cancelBtn.type='button';cancelBtn.style.cssText='padding:6px 14px;font-size:13px';
+        const editMsg=el('span','fx');
+        cancelBtn.onclick=renderReadOnly;
+        saveBtn.onclick=async()=>{
+          if(!ta.value.trim()){editMsg.className='fx no';editMsg.textContent='내용을 입력해주세요.';return;}
+          saveBtn.disabled=true;cancelBtn.disabled=true;editMsg.className='fx';editMsg.textContent='저장 중…';
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'editSubmission',subId:s.subId,text:ta.value,academy:s.academy||''})});
+            let data=null;try{data=await res.json();}catch(e){}
+            if(!data||data.ok===false)throw new Error((data&&data.error)||'수정 실패');
+            s.text=ta.value;s.aiFeedback='';s.aiFeedbackGpt='';
+            viewMyFeedback();
+          }catch(e){
+            editMsg.className='fx no';editMsg.textContent=String((e&&e.message)||e);
+            saveBtn.disabled=false;cancelBtn.disabled=false;
+          }
+        };
+        btnRow.appendChild(saveBtn);btnRow.appendChild(cancelBtn);btnRow.appendChild(editMsg);
+        editWrap.appendChild(btnRow);
+        viewBox.appendChild(editWrap);
+      };
+      renderReadOnly();
+      card.appendChild(viewBox);
       box.appendChild(card);
     });
   })();
