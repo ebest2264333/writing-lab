@@ -2002,10 +2002,11 @@ function annotatedSentencesHtml(s){
     return html;
   }).join('');
 }
-/** 선생님이 "📊 성적표 그래프" 섹션에 값을 입력해둔 제출물이면(rb!=null), 예전에 쓰던 성적표 형태
- *  (Title/Class Level/Writing Level/이름 표 + 평가영역 막대그래프 + 수행 완성도 도넛그래프 + 총점 박스)를
- *  그대로 흉내내서 그려줘요. 입력이 없는 제출물은 이 섹션 자체가 안 나와요(기존 리포트 그대로).
- *  차트는 외부 라이브러리 없이 CSS 막대 + SVG 원(stroke-dasharray)만으로 그려서 인쇄/PDF에도 그대로 나와요. */
+/** 점수 정보가 있는 제출물이면(rb!=null — 선생님이 직접 입력했거나 autoComputeRubric으로 자동
+ *  계산됐거나), 예전에 쓰던 성적표 형태(Title/Class Level/Writing Level/이름 표 + 평가영역 막대그래프 +
+ *  수행 완성도 도넛그래프 + 총점 박스)를 그대로 흉내내서 그려줘요. 점수 자체가 없는 제출물만 이 섹션이
+ *  안 나와요(기존 리포트 그대로). 차트는 외부 라이브러리 없이 CSS 막대 + SVG 원(stroke-dasharray)만으로
+ *  그려서 인쇄/PDF에도 그대로 나와요. */
 function rubricSectionHtml(rb,title,studentName){
   if(!rb)return '';
   const taskPct=Math.round((rb.taskScore||0)/10*100);
@@ -2013,7 +2014,7 @@ function rubricSectionHtml(rb,title,studentName){
   const totalPct=rb.totalPercent!=null?rb.totalPercent:Math.round(((rb.taskScore||0)+(rb.formatScore||0))/20*100);
   const r=30,circ=2*Math.PI*r;
   const dashOffset=circ*(1-Math.max(0,Math.min(100,totalPct))/100);
-  return '<h2 class="sec">성적표 요약</h2>'+
+  return '<h2 class="sec">성적표 요약'+(rb.auto?' <span style="font-size:10.5px;font-weight:700;color:#8D8298;vertical-align:middle">(점수 기반 자동 계산)</span>':'')+'</h2>'+
     '<div class="rubric-sec">'+
       '<div>'+
         '<table class="rubric-table"><tbody>'+
@@ -2103,7 +2104,7 @@ function printSubmissionReport(s,studentName,studentId,academyName,siblings){
       '<div class="meta-chip"><b>제출일시</b>'+escH(s.datetime||'')+'</div>'+
       '<div class="meta-chip score"><b>점수</b>'+escH(String(s.total||'-'))+(s.grade?(' · '+escH(s.grade)+'등급'):'')+'</div>'+
     '</div>'+
-    rubricSectionHtml(parseRubricEval(s.rubric),s.point||s.chapter||'',studentName)+
+    rubricSectionHtml(parseRubricEval(s.rubric)||parseRubricEval((original||s).rubric)||autoComputeRubric(original||s),s.point||s.chapter||'',studentName)+
     essaySectionHtml+
     wrongHtml+
     '</div>'+
@@ -2184,6 +2185,60 @@ function rubricPercentToGrade(pct){
 function parseRubricEval(raw){
   if(!raw)return null;
   try{const o=JSON.parse(raw);return (o&&(o.taskGrade||o.formatGrade))?o:null;}catch(e){return null;}
+}
+/* 0~100점으로 이미 환산된 score를 우선 쓰고, 없으면 총점(total)이 0~100 범위일 때만 그걸 써요
+ * (printStudentRewriteReport의 scoreOf와 같은 기준 — "3/5" 같은 비율 형식이 섞여 들어오는 걸 막아요). */
+function normalizedScore(o){
+  const s=parseFloat(o&&o.score);
+  if(!isNaN(s)&&s>=0&&s<=100)return s;
+  const t=parseFloat(o&&o.total);
+  if(!isNaN(t)&&t>=0&&t<=100)return t;
+  return null;
+}
+/* 그 제출물(sub)의 반(cls)이 "반레벨" 탭에 등록돼 있으면 그 레벨 이름(초5/초6/중1/중2 등)을 돌려줘요. */
+function levelDisplayName(cls){
+  const id=CLASS_LEVELS[String(cls||'').trim()];
+  const lv=id&&LEVELS.find(l=>l.id===id);
+  return lv?lv.name:'';
+}
+/* 그 제출물의 문장별 AI 첨삭(claude+gpt)에 달린 "틀린 부분" 개수를 세요 — 형식(문법·철자) 등급을
+ * 자동으로 매길 때 "문장 수 대비 오류가 얼마나 적은지"를 재는 잣대로 써요. */
+function countAiErrors(sub){
+  const aifb=parseAiFeedback(sub&&sub.aiFeedback),aifbGpt=parseAiFeedback(sub&&sub.aiFeedbackGpt);
+  let n=0;
+  [aifb,aifbGpt].forEach(fb=>{
+    Object.keys(fb.sentences||{}).forEach(k=>{const e=fb.sentences[k];if(e&&typeof e==='object'&&Array.isArray(e.errors))n+=e.errors.length;});
+  });
+  return n;
+}
+/** 선생님이 "📊 성적표 그래프"를 따로 입력·저장하지 않은 제출물도, 이미 갖고 있는 점수·AI 첨삭 데이터만으로
+ *  성적표 섹션을 자동으로 채워서 보여줘요(수동 입력은 이제 "필수"가 아니라 "직접 조정하고 싶을 때"만 쓰는
+ *  선택 기능이 됐어요). 점수 정보가 아예 없는 제출물(자동 채점 전이거나 점수가 없는 컨텐츠)은 자동으로
+ *  매길 근거가 없으니 null을 돌려주고, 그 경우 예전처럼 이 섹션 자체가 안 보여요.
+ *  - Class Level: "반레벨" 탭에 등록해둔, 그 학생 반의 레벨 이름을 그대로 써요.
+ *  - Writing Level: 이 글의 점수를 기준으로 Level 1~5 중 하나로 매겨요(점수가 높을수록 높은 레벨).
+ *  - 과제완성: 점수를 90/80/70/60 구간으로 나눠 A~E 등급을 매겨요.
+ *  - 형식: 문장 수 대비 AI가 지적한 오류 개수 비율로 A~E 등급을 매겨요(오류가 적을수록 높은 등급). */
+function autoComputeRubric(sub){
+  if(!sub)return null;
+  const scoreVal=normalizedScore(sub);
+  if(scoreVal==null)return null;
+  const taskGrade=scoreVal>=90?'A':scoreVal>=80?'B':scoreVal>=70?'C':scoreVal>=60?'D':'E';
+  const sents=sub.text?splitSentences(sub.text):[];
+  const errCount=countAiErrors(sub);
+  const errRatio=sents.length?(errCount/sents.length):(errCount?1:0);
+  const formatGrade=errRatio<=0.1?'A':errRatio<=0.25?'B':errRatio<=0.45?'C':errRatio<=0.7?'D':'E';
+  const taskScore=rubricGradeToScore(taskGrade),formatScore=rubricGradeToScore(formatGrade);
+  const totalScore=taskScore+formatScore;
+  const totalPercent=Math.round(totalScore/20*100);
+  const writingLevelNum=scoreVal>=90?5:scoreVal>=80?4:scoreVal>=70?3:scoreVal>=60?2:1;
+  return {
+    classLevel:levelDisplayName(sub.cls)||String(sub.cls||''),
+    writingLevel:'Level '+writingLevelNum,
+    taskGrade:taskGrade,taskScore:taskScore,formatGrade:formatGrade,formatScore:formatScore,
+    totalScore:totalScore,totalPercent:totalPercent,totalGrade:rubricPercentToGrade(totalPercent),
+    auto:true
+  };
 }
 /* 첨삭받은 원본과, 그걸 반영해 다시 쓴 Re-Writing을 같은 제목(point)끼리 짝지어요 — 종합 리포트
  * (printStudentRewriteReport)와, 그 전에 뜨는 "어떤 과제를 리포트에 넣을지" 선택 화면(openRewriteReportPicker)
@@ -2276,7 +2331,7 @@ function printStudentRewriteReport(preview,selectedPoints){
     return '<section class="piece'+(pi>0?' pagebreak':'')+'">'+
       '<h2>'+(pi+1)+'. '+escH(p.point)+' <span class="tag">'+escH(o.type||'')+'</span></h2>'+
       '<div class="dates">원본 제출 '+escH(o.datetime||'')+' &nbsp;→&nbsp; Re-Writing 제출 '+escH(r.datetime||'')+(errCount?(' &nbsp;·&nbsp; 지적된 부분 '+errCount+'곳'):'')+scoreLabel+'</div>'+
-      rubricSectionHtml(parseRubricEval(o.rubric),p.point,(preview&&preview.studentName)||'')+
+      rubricSectionHtml(parseRubricEval(o.rubric)||autoComputeRubric(o),p.point,(preview&&preview.studentName)||'')+
       '<div class="compare">'+
         '<div class="win orig"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>처음 쓴 글 · 지적된 부분</div>'+
           '<div class="win-body osent-wrap">'+sentsHtml+overallHtml+'</div></div>'+
@@ -4535,15 +4590,18 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
         teditWrap.appendChild(teditBtn);teditWrap.appendChild(teditBody);
         card.appendChild(teditWrap);
       }
-      // 학교 성적표 스타일(Title/Class Level/Writing Level + 평가영역 그래프)의 리포트 섹션을 켜고
-      // 싶을 때만 선생님이 여기서 입력해요. 저장해두면 이 제출물의 인쇄 리포트에 표+그래프가 추가로
-      // 나오고(없으면 기존처럼 그 섹션만 안 보여요), 다른 제출물엔 영향이 없어요.
+      // 학교 성적표 스타일(Title/Class Level/Writing Level + 평가영역 그래프)의 리포트 섹션은 이제
+      // 점수만 있으면 자동으로 채워져서 나와요(선생님이 따로 입력 안 해도 돼요) — 여기 입력창은 자동으로
+      // 매겨진 값이 마음에 안 들 때 "직접 조정해서 고정해두고 싶을 때만" 쓰는 선택 기능이에요. 저장하면
+      // 그 뒤로는 자동 계산 대신 여기서 입력한 값이 리포트에 계속 쓰여요.
       (()=>{
-        const rb=parseRubricEval(s.rubric);
+        const savedRb=parseRubricEval(s.rubric);
+        const autoRb=autoComputeRubric(s);
+        const rb=savedRb||autoRb;
         const rubWrap=el('div');rubWrap.style.cssText='margin-top:14px;padding-top:14px;border-top:1px dashed rgba(0,0,0,.1)';
-        const rubBtn=el('button','btn ghost',(rb?'📊 성적표 그래프 수정':'📊 성적표 그래프 추가')+' (선생님 권한)');rubBtn.type='button';rubBtn.style.cssText='padding:5px 12px;font-size:12px';
-        const rubBody=el('div');rubBody.style.cssText='display:'+(rb?'block':'none')+';margin-top:10px;max-width:420px';
-        rubBody.appendChild(el('div','hint','리포트 인쇄 화면에 Title/Class Level/Writing Level 표와 평가영역 그래프, 총점 등급(A+~F)이 추가로 나와요. 비워두면 기존처럼 그래프 없이 나와요.'));
+        const rubBtn=el('button','btn ghost',(savedRb?'📊 성적표 그래프 수정':'📊 성적표 그래프 직접 조정')+' (선생님 권한)');rubBtn.type='button';rubBtn.style.cssText='padding:5px 12px;font-size:12px';
+        const rubBody=el('div');rubBody.style.cssText='display:'+(savedRb?'block':'none')+';margin-top:10px;max-width:420px';
+        rubBody.appendChild(el('div','hint',autoRb?'점수를 기준으로 이미 자동 계산돼서 리포트에 나오고 있어요(과제완성 '+autoRb.taskGrade+', 형식 '+autoRb.formatGrade+' · 총점 '+autoRb.totalScore+'/20 '+autoRb.totalGrade+'). 이대로가 아니라 직접 등급을 정하고 싶을 때만 아래를 고쳐서 저장하세요.':'이 제출물은 아직 점수가 없어서 자동 계산도 안 돼요. 아래에 직접 입력해서 저장하면 리포트에 표+그래프가 나와요.'));
         const mkField=(label,slug,val)=>{const w=el('div');w.style.marginTop='8px';w.appendChild(el('div','fl',label));const inp=el('input','in rubric-'+slug);inp.type='text';inp.value=val||'';inp.style.cssText='font-size:13px;padding:6px 8px';w.appendChild(inp);rubBody.appendChild(w);return inp;};
         const clInput=mkField('Class Level','class-level',rb&&rb.classLevel);
         const wlInput=mkField('Writing Level','writing-level',rb&&rb.writingLevel);
