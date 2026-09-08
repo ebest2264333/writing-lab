@@ -1973,7 +1973,7 @@ function annotatedSentencesHtml(s){
     const c=fb.sentences[i]||fb.sentences[String(i)];
     const ai=aifb.sentences[i]||aifb.sentences[String(i)];
     const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
-    let html='<p class="osent">'+(i+1)+'. '+escH(sent)+'</p>';
+    let html='<p class="osent">'+escH(sent)+'</p>';
     html+=sentenceErrorListHtml(ai);
     html+=sentenceErrorListHtml(aiGpt);
     if(c&&typeof c==='string')html+='<div class="cmt">'+escH(c)+'</div>';
@@ -2004,7 +2004,7 @@ function printSubmissionReport(s,studentName,studentId,academyName,siblings){
           '<div class="win-body osent-wrap">'+annotatedSentencesHtml(original)+oOverallHtml+'</div></div>'+
         '<div class="win fixed"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 최종 글</div>'+
           '<div class="win-body rsent-wrap">'+
-          (s.text?splitSentences(s.text).map((sent,i)=>'<p>'+(i+1)+'. '+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+
+          (s.text?splitSentences(s.text).map((sent)=>'<p>'+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+
           processSectionHtml(original)+
           '</div></div>'+
       '</div>'+
@@ -2179,7 +2179,7 @@ function printStudentRewriteReport(preview,selectedPoints){
       const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
       if(ai&&Array.isArray(ai.errors))errCount+=ai.errors.length;
       if(aiGpt&&Array.isArray(aiGpt.errors))errCount+=aiGpt.errors.length;
-      let html='<p class="osent">'+(i+1)+'. '+escH(sent)+'</p>';
+      let html='<p class="osent">'+escH(sent)+'</p>';
       html+=sentenceErrorListHtml(ai);
       html+=sentenceErrorListHtml(aiGpt);
       if(c)html+='<div class="cmt">'+escH(c)+'</div>';
@@ -2187,7 +2187,7 @@ function printStudentRewriteReport(preview,selectedPoints){
     }).join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
     const overallHtml=[aifb.overall,aifbGpt.overall,fb.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');
     const rewriteSents=r.text?splitSentences(r.text):[];
-    const rewriteHtml=rewriteSents.length?rewriteSents.map((s,i)=>'<p>'+(i+1)+'. '+escH(s)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
+    const rewriteHtml=rewriteSents.length?rewriteSents.map((s)=>'<p>'+escH(s)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
     const scoreLabel=(o.total!=null&&String(o.total).trim()!==''&&String(o.total)!=='-')?(' &nbsp;·&nbsp; 점수 '+escH(String(o.total))+(o.grade?(' ('+escH(o.grade)+'등급)'):'')):'';
     return '<section class="piece'+(pi>0?' pagebreak':'')+'">'+
       '<h2>'+(pi+1)+'. '+escH(p.point)+' <span class="tag">'+escH(o.type||'')+'</span></h2>'+
@@ -2216,9 +2216,9 @@ function printStudentRewriteReport(preview,selectedPoints){
   const scoredPairs=pairs.map(p=>scoreOf(p.original)).filter(n=>n!=null);
   const avgScore=scoredPairs.length?Math.round((scoredPairs.reduce((a,b)=>a+b,0)/scoredPairs.length)*10)/10:null;
   const avgGrade=avgScore!=null?scoreToGrade(avgScore):null;
-  const summaryHtml='<div class="summary">총 <b>'+pairs.length+'개</b> 과제에서 첨삭을 받고 Re-Writing까지 완료했어요'+
-    (avgGrade!=null?(' · 평균 등급 <b>'+avgGrade+'</b>('+scoredPairs.length+'개 과제 기준)'):'')+
-    '. 아래에 과제마다 처음 쓴 글에서 지적된 부분과, 그걸 반영해 고쳐 쓴 최종 글을 나란히 정리했어요.</div>';
+  // 예전엔 여기에 "총 N개 과제에서 첨삭을 받고 Re-Writing까지 완료했어요..." 같은 설명 문단(.summary)이
+  // 있었는데, 위 meta-chip(평균 등급 등)과 내용이 겹쳐서 불필요하다는 의견을 반영해 뺐어요.
+  const summaryHtml='';
   const extraCss=
     '.summary{background:#FAFAFC;border:1px solid #E2E2E8;border-left:4px solid #2B2733;border-radius:0;padding:12px 16px;font-size:13.5px;margin-bottom:24px}'+
     'section.piece{margin-bottom:28px;padding-bottom:24px;border-bottom:1px dashed #DEDCE4}'+
