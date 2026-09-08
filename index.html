@@ -1389,7 +1389,7 @@ function viewHome(){setWide(false);mountView(w=>{
     const bannerText=el('div');bannerText.innerHTML='👀 <b>'+escH(TEACHER_PREVIEW.studentName)+'</b> 학생의 학습 현황을 보고 있어요'+(TEACHER_PREVIEW.ctx?' ('+escH(TEACHER_PREVIEW.ctx)+')':'')+'. 커리큘럼을 둘러보다가 항목을 누르면 그 학생이 낸 글을 볼 수 있어요.';
     banner.appendChild(bannerText);
     const reportBtn=el('button','btn ghost','📊 첨삭·Re-Writing 종합 리포트');reportBtn.type='button';reportBtn.style.cssText='padding:6px 14px;font-size:12.5px;white-space:nowrap;background:#fff';
-    reportBtn.onclick=()=>printStudentRewriteReport(TEACHER_PREVIEW);
+    reportBtn.onclick=()=>openRewriteReportPicker(TEACHER_PREVIEW);
     banner.appendChild(reportBtn);
     w.appendChild(banner);
   }
@@ -2096,9 +2096,15 @@ function processSectionHtml(orig){
  *  (2) 그 아래에 고쳐 쓴 최종 글을 나란히 보여주는 방식으로 정리해요. 기존 printSubmissionReport(제출물
  *  하나만 인쇄)보다 훨씬 자세한, "이 학생이 그동안 어디서 틀렸고 어떻게 고쳐왔는지" 한눈에 보는 리포트예요.
  *  같은 제목(point)으로 여러 번 냈으면 원본은 가장 최근 것, Re-Writing도 가장 최근(최종) 것을 짝지어요. */
-function printStudentRewriteReport(preview){
-  const subs=(preview&&preview.subs)||[];
-  const academyName=(subs.find(x=>x&&x.academy)||{}).academy||'';
+/* 100점 만점 점수를 등급(A~D)으로 바꿔요 — 사이트 다른 곳(조건영작·기사·이야기 등 자동 채점)에서 쓰는
+ * 것과 똑같은 기준(90/80/70점 구간)이라, 개별 과제 등급과 평균 등급이 서로 다른 잣대로 안 보여요. */
+function scoreToGrade(score){
+  return score>=90?'A':score>=80?'B':score>=70?'C':'D';
+}
+/* 첨삭받은 원본과, 그걸 반영해 다시 쓴 Re-Writing을 같은 제목(point)끼리 짝지어요 — 종합 리포트
+ * (printStudentRewriteReport)와, 그 전에 뜨는 "어떤 과제를 리포트에 넣을지" 선택 화면(openRewriteReportPicker)
+ * 둘 다 이 짝을 그대로 써요. */
+function computeRewritePairs(subs){
   const latestByPoint=(list)=>{
     const m={};
     list.forEach(s=>{
@@ -2108,11 +2114,60 @@ function printStudentRewriteReport(preview){
     });
     return m;
   };
-  const originals=latestByPoint(subs.filter(s=>s.type!=='Re-Writing'));
-  const rewrites=latestByPoint(subs.filter(s=>s.type==='Re-Writing'));
+  const originals=latestByPoint((subs||[]).filter(s=>s.type!=='Re-Writing'));
+  const rewrites=latestByPoint((subs||[]).filter(s=>s.type==='Re-Writing'));
   const pairs=Object.keys(originals).filter(k=>rewrites[k]).map(k=>({point:k,original:originals[k],rewrite:rewrites[k]}));
-  if(!pairs.length){alert('아직 리라이팅까지 완료된 글이 없어요. 학생이 첨삭받은 글을 최소 하나는 "Re-Writing"으로 다시 써야 이 리포트에 나와요.');return;}
   pairs.sort((a,b)=>String(a.original.datetime||'')<String(b.original.datetime||'')?-1:1);
+  return pairs;
+}
+/* 종합 리포트 버튼을 누르면 바로 전부 뽑는 대신, 먼저 어떤 과제를 리포트에 넣을지 체크박스로
+ * 고를 수 있게 하는 선택 화면이에요. 기본은 전부 선택된 상태라, 예전처럼 그냥 "리포트 만들기"만
+ * 눌러도 전체 리포트가 그대로 나와요. */
+function openRewriteReportPicker(preview){
+  const subs=(preview&&preview.subs)||[];
+  const pairs=computeRewritePairs(subs);
+  if(!pairs.length){alert('아직 리라이팅까지 완료된 글이 없어요. 학생이 첨삭받은 글을 최소 하나는 "Re-Writing"으로 다시 써야 이 리포트에 나와요.');return;}
+  openGenericModal('리포트에 넣을 과제 고르기',(body)=>{
+    body.appendChild(el('div','hint','체크한 과제만 종합 리포트에 들어가요. 기본은 전부 선택돼 있어요.'));
+    const toggleRow=el('div');toggleRow.style.cssText='display:flex;gap:10px;margin:10px 0';
+    const allBtn=el('button','btn ghost','전체 선택');allBtn.type='button';allBtn.style.cssText='padding:4px 10px;font-size:12px';
+    const noneBtn=el('button','btn ghost','전체 해제');noneBtn.type='button';noneBtn.style.cssText='padding:4px 10px;font-size:12px';
+    toggleRow.appendChild(allBtn);toggleRow.appendChild(noneBtn);body.appendChild(toggleRow);
+    const listWrap=el('div');listWrap.style.cssText='display:flex;flex-direction:column;gap:8px;max-height:340px;overflow:auto';
+    const checks=pairs.map(p=>{
+      const row=el('label');row.style.cssText='display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid rgba(0,0,0,.08);border-radius:8px;cursor:pointer;font-size:13.5px';
+      const cb=el('input');cb.type='checkbox';cb.checked=true;cb.style.marginTop='3px';
+      const label=el('div');
+      label.innerHTML='<div style="font-weight:700">'+escH(p.point)+'</div>'+
+        '<div style="color:#6b7684;font-size:12px;margin-top:2px">원본 '+escH(p.original.datetime||'')+' → Re-Writing '+escH(p.rewrite.datetime||'')+'</div>';
+      row.appendChild(cb);row.appendChild(label);listWrap.appendChild(row);
+      return {cb,point:p.point};
+    });
+    body.appendChild(listWrap);
+    allBtn.onclick=()=>checks.forEach(c=>c.cb.checked=true);
+    noneBtn.onclick=()=>checks.forEach(c=>c.cb.checked=false);
+    const btnRow=el('div');btnRow.style.cssText='display:flex;gap:8px;margin-top:14px;align-items:center';
+    const goBtn=el('button','btn blue','리포트 만들기');goBtn.type='button';goBtn.style.cssText='padding:8px 16px;font-size:13.5px';
+    const msg=el('span','fx');
+    btnRow.appendChild(goBtn);btnRow.appendChild(msg);body.appendChild(btnRow);
+    goBtn.onclick=()=>{
+      const selected=checks.filter(c=>c.cb.checked).map(c=>c.point);
+      if(!selected.length){msg.className='fx no';msg.textContent='최소 한 과제는 선택해주세요.';return;}
+      closeGenericModal();
+      printStudentRewriteReport(preview,selected);
+    };
+  });
+}
+function printStudentRewriteReport(preview,selectedPoints){
+  const subs=(preview&&preview.subs)||[];
+  const academyName=(subs.find(x=>x&&x.academy)||{}).academy||'';
+  let pairs=computeRewritePairs(subs);
+  if(!pairs.length){alert('아직 리라이팅까지 완료된 글이 없어요. 학생이 첨삭받은 글을 최소 하나는 "Re-Writing"으로 다시 써야 이 리포트에 나와요.');return;}
+  if(selectedPoints&&selectedPoints.length){
+    const selSet=new Set(selectedPoints);
+    pairs=pairs.filter(p=>selSet.has(p.point));
+    if(!pairs.length){alert('선택한 과제가 없어요.');return;}
+  }
   const sectionHtml=pairs.map((p,pi)=>{
     const o=p.original,r=p.rewrite;
     const fb=parseFeedback(o.feedback),aifb=parseAiFeedback(o.aiFeedback),aifbGpt=parseAiFeedback(o.aiFeedbackGpt);
@@ -2145,12 +2200,24 @@ function printStudentRewriteReport(preview){
       '</div>'+
       '</section>';
   }).join('');
-  // 원본 제출물에 점수(total)가 남아있는 것들만 골라서 평균을 내요 — 채점이 안 된(점수 없는) 과제는
+  // 원본 제출물에 점수가 남아있는 것들만 골라서 평균을 내요 — 채점이 안 된(점수 없는) 과제는
   // 평균 계산에서 자연히 빠져요. 하나도 없으면 평균 칩 자체를 안 보여줘요.
-  const scoredPairs=pairs.map(p=>parseFloat(p.original.total)).filter(n=>!isNaN(n));
+  // ("총점" 칸은 컨텐츠 종류에 따라 "82/100"처럼 100점 만점이 아니라 "3/5"(조건 개수) 같은 형식일 때도
+  // 있어서, parseFloat만 하면 서로 다른 잣대가 섞이거나(예: "3/5" → 3점) 이상한 값이 껴들 수 있어요.
+  // 그래서 100점 만점으로 이미 환산돼 있는 "score" 값을 우선 쓰고, 그마저 없을 때만 총점을 보되
+  // 0~100 범위를 벗어나는 값(예: 날짜가 잘못 들어간 경우)은 점수로 보지 않고 걸러내요.)
+  const scoreOf=(o)=>{
+    const s=parseFloat(o.score);
+    if(!isNaN(s)&&s>=0&&s<=100)return s;
+    const t=parseFloat(o.total);
+    if(!isNaN(t)&&t>=0&&t<=100)return t;
+    return null;
+  };
+  const scoredPairs=pairs.map(p=>scoreOf(p.original)).filter(n=>n!=null);
   const avgScore=scoredPairs.length?Math.round((scoredPairs.reduce((a,b)=>a+b,0)/scoredPairs.length)*10)/10:null;
+  const avgGrade=avgScore!=null?scoreToGrade(avgScore):null;
   const summaryHtml='<div class="summary">총 <b>'+pairs.length+'개</b> 과제에서 첨삭을 받고 Re-Writing까지 완료했어요'+
-    (avgScore!=null?(' · 평균 점수 <b>'+avgScore+'점</b>('+scoredPairs.length+'개 과제 기준)'):'')+
+    (avgGrade!=null?(' · 평균 등급 <b>'+avgGrade+'</b>('+scoredPairs.length+'개 과제 기준)'):'')+
     '. 아래에 과제마다 처음 쓴 글에서 지적된 부분과, 그걸 반영해 고쳐 쓴 최종 글을 나란히 정리했어요.</div>';
   const extraCss=
     '.summary{background:#FAFAFC;border:1px solid #E2E2E8;border-left:4px solid #2B2733;border-radius:0;padding:12px 16px;font-size:13.5px;margin-bottom:24px}'+
@@ -2174,7 +2241,7 @@ function printStudentRewriteReport(preview){
       '<div class="meta-chip"><b>이름</b>'+escH((preview&&preview.studentName)||'')+'</div>'+
       '<div class="meta-chip"><b>아이디</b>'+escH((preview&&preview.studentId)||'')+'</div>'+
       (preview&&preview.ctx?('<div class="meta-chip"><b>학교/학년/반</b>'+escH(preview.ctx)+'</div>'):'')+
-      (avgScore!=null?('<div class="meta-chip score"><b>평균 점수</b>'+avgScore+'점</div>'):'')+
+      (avgGrade!=null?('<div class="meta-chip score"><b>평균 등급</b>'+avgGrade+'</div>'):'')+
     '</div>'+
     summaryHtml+
     sectionHtml+
@@ -2204,8 +2271,25 @@ function mountEditableAiSentenceBlock(row,aiEntry,provider,idx,fbObj,accent,s){
       const html=renderAiSentenceBlock(entry,'',accent);
       if(html){const box=el('div');box.innerHTML=html;wrap.appendChild(box);}
       const editBtn=el('button','btn ghost','✏️ 첨삭 수정');editBtn.type='button';editBtn.style.cssText='margin-top:2px;padding:2px 8px;font-size:11px';
-      wrap.appendChild(editBtn);
+      const delBtn=el('button','btn ghost','🗑 첨삭 지우기 (맞는 문장으로)');delBtn.type='button';delBtn.style.cssText='margin-top:2px;margin-left:4px;padding:2px 8px;font-size:11px;color:#b3261e';
+      wrap.appendChild(editBtn);wrap.appendChild(delBtn);
       editBtn.onclick=showEdit;
+      delBtn.onclick=async()=>{
+        if(!s.subId){alert('이 제출물은 지원하지 않는 예전 형식이에요.');return;}
+        if(!confirm('이 문장에 달린 AI 첨삭을 지우고 "틀린 곳 없음"으로 처리할까요?'))return;
+        delBtn.disabled=true;editBtn.disabled=true;
+        fbObj.sentences=fbObj.sentences||{};
+        delete fbObj.sentences[idx];delete fbObj.sentences[String(idx)];
+        const aiFeedbackStr=JSON.stringify({overall:fbObj.overall||'',sentences:fbObj.sentences});
+        try{
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'editAiFeedback',subId:s.subId,provider:provider,aiFeedback:aiFeedbackStr,academy:s.academy||''})});
+          let data=null;try{data=await res.json();}catch(e){}
+          if(!data||!data.ok)throw new Error((data&&data.error)||'저장하지 못했어요.');
+          entry=null;showView();
+        }catch(e){
+          alert(String(e.message||e));delBtn.disabled=false;editBtn.disabled=false;
+        }
+      };
     } else {
       const addBtn=el('button','btn ghost','✏️ 첨삭 추가 (틀린 부분 → 고친 부분)');addBtn.type='button';addBtn.style.cssText='margin-top:2px;padding:2px 8px;font-size:11px';
       wrap.appendChild(addBtn);
