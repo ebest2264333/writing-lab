@@ -1928,24 +1928,24 @@ const REPORT_BASE_CSS=
   'p.osent{margin:0 0 2px;background:#EEF0FA;border-radius:0;padding:5px 10px;display:inline-block;font-weight:700}'+
   '.rsent-wrap p{margin:0 0 4px}'+
   '.err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}'+
-  '.err-list li{margin-bottom:7px}'+
+  '.err-list li{margin-bottom:7px;break-inside:avoid;page-break-inside:avoid}'+
   '.err-pair{line-height:1.5}'+
   '.wrong{color:#B3261E;text-decoration:line-through}'+
   '.correct{color:#1C7A4D;font-weight:700}'+
   '.note{display:block;color:#8D8298;margin-top:2px;line-height:1.5}'+
   '.corrected-full{font-size:12.5px;color:#2B2733;margin:2px 0 8px;background:#F1FBFA;border-radius:0;padding:5px 10px}'+
   '.cmt{font-size:12px;color:#9A5B12;margin:0 0 8px}'+
-  '.overall{background:#F2FBF6;border-radius:0;padding:11px 14px;font-size:13px;margin:10px 0 0;white-space:pre-line;border:1px solid #DCF0E3;border-left:4px solid #3FBE87}'+
+  '.overall{background:#F2FBF6;border-radius:0;padding:11px 14px;font-size:13px;margin:10px 0 0;white-space:pre-line;border:1px solid #DCF0E3;border-left:4px solid #3FBE87;break-inside:avoid;page-break-inside:avoid}'+
   '.procblock{margin-top:14px}'+
   '.prochead{font-size:12px;font-weight:800;color:#8D8298;margin-bottom:6px}'+
-  '.proccard{background:#FAFAFC;border:1px solid #E2E2E8;border-radius:0;padding:8px 10px;margin-bottom:6px;font-size:12.5px}'+
+  '.proccard{background:#FAFAFC;border:1px solid #E2E2E8;border-radius:0;padding:8px 10px;margin-bottom:6px;font-size:12.5px;break-inside:avoid;page-break-inside:avoid}'+
   '.proccard .pk{font-weight:800;color:#2B2733;margin-bottom:2px}'+
   '.proccard .pv{color:#4A4552;white-space:pre-line}'+
   // "틀린 글 / 고친 글"을 창(window)처럼 나란히 보여주는 비교 레이아웃 — 브라우저 창/코드 에디터 같은
   // 느낌의 타이틀바(점 3개)를 얹어서, 리포트가 문서처럼 정돈돼 보이면서도 원본↔수정본 대비가 한눈에 들어와요.
   '.compare{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px}'+
   '@media (max-width:640px){.compare{grid-template-columns:1fr}}'+
-  '.win{border:1px solid #E2E2E8;border-radius:0;overflow:hidden;background:#fff;display:flex;flex-direction:column}'+
+  '.win{border:1px solid #E2E2E8;border-radius:0;overflow:hidden;background:#fff;display:flex;flex-direction:column;break-inside:avoid;page-break-inside:avoid}'+
   '.win-bar{display:flex;align-items:center;gap:8px;padding:9px 12px;background:#FAFAFC;border-bottom:1px solid #E2E2E8;font-weight:800;font-size:12.5px}'+
   '.win-dots{display:inline-flex;gap:4px;flex:0 0 auto}'+
   '.win-dots span{width:7px;height:7px;border-radius:50%;background:#DDDCE3;display:inline-block}'+
@@ -1964,23 +1964,34 @@ const REPORT_BASE_CSS=
   '.rubric-table th{background:#FAFAFC;color:#8D8298;font-weight:800;text-align:left;padding:9px 12px;width:34%;border-bottom:1px solid #E2E2E8;border-right:1px solid #E2E2E8}'+
   '.rubric-table td{padding:9px 12px;font-weight:700;color:#2B2733;border-bottom:1px solid #E2E2E8}'+
   '.rubric-table tr:last-child th,.rubric-table tr:last-child td{border-bottom:none}'+
-  '.rubric-score-box{margin-top:10px;background:#2B2733;color:#fff;padding:18px 16px;display:flex;align-items:center;justify-content:space-between;min-height:78px}'+
+  '.rubric-score-box{margin-top:10px;background:#2B2733;color:#fff;padding:18px 16px;display:flex;align-items:center;justify-content:space-between;min-height:78px;break-inside:avoid;page-break-inside:avoid}'+
   '.rubric-score-box .rsb-label{font-size:14.5px;color:rgba(255,255,255,.92);font-weight:800}'+
   '.rubric-score-box .rsb-val{font-size:38px;font-weight:900;line-height:1}'+
   '.rubric-score-box .rsb-val span{font-size:17px;font-weight:800;margin-left:6px;color:rgba(255,255,255,.85)}'+
-  '.rubric-bars{border:1px solid #E2E2E8;padding:14px 16px}'+
+  '.rubric-bars{border:1px solid #E2E2E8;padding:14px 16px;break-inside:avoid;page-break-inside:avoid}'+
   '.rubric-bars .rb-title{font-size:11.5px;font-weight:800;color:#8D8298;margin-bottom:10px}'+
   '.rb-row{margin-bottom:10px}'+
   '.rb-row:last-child{margin-bottom:0}'+
   '.rb-row .rb-head{display:flex;justify-content:space-between;font-size:12px;font-weight:700;color:#2B2733;margin-bottom:4px}'+
   '.rb-track{background:#EDEDF1;height:10px;position:relative}'+
   '.rb-fill{background:#46508C;height:10px}'+
-  '.rubric-donut-wrap{border:1px solid #E2E2E8;padding:14px 16px;margin-top:14px;display:flex;align-items:center;gap:16px}'+
+  '.rubric-donut-wrap{border:1px solid #E2E2E8;padding:14px 16px;margin-top:14px;display:flex;align-items:center;gap:16px;break-inside:avoid;page-break-inside:avoid}'+
   '.rubric-donut-wrap .rb-title{font-size:11.5px;font-weight:800;color:#8D8298;margin-bottom:2px}'+
   '.rubric-donut-wrap .rd-num{font-size:20px;font-weight:900;color:#2B2733}'+
   '.rb-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}'+
   '.rd-legend{margin-top:4px;display:flex;gap:10px;font-size:10.5px;color:#8D8298;font-weight:700}'+
-  '@media print{body{background:#fff;padding:0}.page{max-width:100%}.sheet{box-shadow:none;border-radius:0}.noprint{display:none}.compare{grid-template-columns:1fr 1fr}.rubric-sec{grid-template-columns:1fr 1fr}}';
+  // 인쇄/PDF에서는 "처음 쓴 글"·"고쳐 쓴 글" 두 창을 화면처럼 나란히(그리드 2열) 두면, 왼쪽/오른쪽
+  // 내용 길이가 서로 달라서 페이지가 넘어갈 때 그리드가 두 열의 높이를 억지로 맞추려다 상자 테두리가
+  // 중간에 잘리고 다음 페이지에 빈 여백이 남는 문제가 있었어요. 그래서 인쇄할 때만 한 줄씩(1열) 세로로
+  // 쌓이게 바꾸고, 각 상자(.win/.overall/성적표 박스들)에는 break-inside:avoid를 줘서 박스 하나가
+  // 페이지 중간에서 잘리지 않고 다음 페이지로 통째로 넘어가게 했어요.
+  '@media print{body{background:#fff;padding:0}.page{max-width:100%}.sheet{box-shadow:none;border-radius:0}.noprint{display:none}'+
+  '.compare{grid-template-columns:1fr;gap:12px}.compare .win{margin-bottom:2px}'+
+  '.rubric-sec{grid-template-columns:1fr;gap:12px}'+
+  // display:flex + overflow:hidden인 요소는 크로미움 인쇄 엔진이 break-inside:avoid를 잘 지키지 않는
+  // 경우가 있어서(알려진 버그), 인쇄할 때만 .win을 block/overflow:visible로 바꿔서 확실히 안 잘리게 했어요.
+  '.win{display:block;overflow:visible}'+
+  'h2.sec{break-after:avoid;page-break-after:avoid}}';
 /** 제출물 하나를 학부모님께 보내기 좋은 리포트 형태(새 탭 → 인쇄/PDF 저장)로 열어줘요.
  *  학생이 쓴 글 + 선생님 첨삭(있으면 AI 첨삭도 함께)을 깔끔하게 정리해서 보여주고,
  *  버튼을 누르면 브라우저 인쇄창이 뜨는데, 거기서 "PDF로 저장"을 고르면 파일로도 받을 수 있어요. */
@@ -3034,7 +3045,7 @@ const CONTENT_FORMS={
     {key:'prompt',label:'과제 프롬프트',type:'textarea',ph:'학생에게 보여줄 과제 설명'},
     {key:'mindmapText',label:'🧠 브레인스토밍 마인드맵 (선택 · 글쓰기 전에 생각을 정리하게 하고 싶을 때만) — 한 줄에 하나씩: 가지 이름 | 안내 문구(선택)',type:'textarea',ph:'High Point (가장 자랑스럽거나 기뻤던 일) | 몇 살 때 있었던 일인가요? 사건과 그때 느낀 감정을 적어보세요.\nLow Point (좌절·실패했거나 극복해야 했던 일) | 어떤 어려움이었고, 어떻게 극복했나요?\nTurning Point (배운 점과 가치관의 변화) | 이 경험으로 무엇을 배웠나요?'},
     {key:'frameText',label:'✏️ 글의 뼈대 잡기 (선택 · 자서전 쓰기처럼 단계별로 뼈대를 잡게 하고 싶을 때만) — 한 줄에 하나씩: 구성 이름 | 문장 시작 단서(세미콜론 ; 으로 구분) | 선생님 예시 문장',type:'textarea',ph:'Introduction (과거) | When I was...; I was born in...; As a child, I used to... | When I was seven years old, I was a shy boy who was afraid of speaking in front of people.\nBody (현재) | However, ... made me realize that...; Since then, I have... | However, joining the debate club made me realize that I could enjoy speaking in public.\nConclusion (미래) | Based on this experience, I want to become someone who...; In the future, I hope to... | Based on this experience, I want to become someone who helps other shy students.'},
-    {key:'grammarSwapText',label:'🔧 오늘의 문법 연습 (선택 · 그날 발표되는 필수 문법을 연습시키고 싶을 때만) — 한 줄에 하나씩: 문법명 | 설명 | 예시 변형 문장 | 연습용 기본 문장',type:'textarea',ph:'현재완료 (have/has p.p.) | 과거에 시작된 일이 현재까지 영향을 주거나 계속될 때 사용해요 | I have overcome my fear, and I have become more confident since then. | I learn English every day. I try new things.\n관계대명사 (who/which/that) | 사람·사물 뒤에서 추가 설명을 붙일 때 사용해요 | The fear that I overcame made me a person who is more confident. | I met a teacher. The teacher changed my life.'},
+    {key:'grammarSwapText',label:'🔧 오늘의 문법 연습 (선택 · 그날 발표되는 필수 문법을 연습시키고 싶을 때만) — 문법 항목마다 빈 줄로 구분해서: 1번째 줄 "문법명 | 설명", 그 아래 "- 영어 예문 | 한글 해석" 줄(여러 개 가능). 학생은 각 문법마다 "나의 문장" 칸에 그 문법을 활용한 문장을 자유롭게 적어요.',type:'textarea',ph:'현재완료 (have/has p.p.)|과거에 시작된 일이 현재까지 영향을 주거나 계속될 때 사용해요\n- I have overcome my fear.|나는 두려움을 극복해왔다.\n- I have learned many things from my family.|나는 가족으로부터 많은 것을 배워왔다.\n\n관계대명사 (who/which/that)|사람·사물 뒤에서 추가 설명을 붙일 때 사용해요\n- The fear that I overcame made me stronger.|내가 극복한 두려움은 나를 더 강하게 만들었다.\n- I met a teacher who believed in me.|나는 나를 믿어준 선생님을 만났다.'},
     {key:'evalAreaText',label:'평가 영역 (선택 · 학생에게도 보여요) — 한 줄에 하나씩: 영역명 | 영역 만점 | 평가 요소1; 평가 요소2 ...',type:'textarea',ph:'내용 | 10 | 주제에 맞는 내용 전개; 구체적인 예시 포함\n어휘·문법 | 5 | 문법 오류 없이 쓰기; 다양한 어휘 사용'},
     {key:'rubricLevelsText',label:'수행 수준별 채점 기준 (선택 · 학생에게는 안 보이고 "AI 예상 채점" 때만 참고해요) — 한 줄에 하나씩: 영역명 | 상 설명 | 중 설명 | 하 설명',type:'textarea',ph:'내용 | 상(8~10점): 주제와 관련된 내용을 구체적 예시와 함께 전개함 | 중(5~7점): 내용은 있으나 예시가 부족함 | 하(0~4점): 주제에서 벗어남'},
     {key:'targetSchool',label:'대상 학교',type:'text'},
@@ -3149,14 +3160,41 @@ function parseFrameText(text){
     };
   }).filter(f=>f.name);
 }
-/* 수행평가의 "🔧 오늘의 문법 연습"(grammarSwapText)을 파싱해요. 형식(한 줄에 하나씩):
-   문법명 | 설명 | 예시 변형 문장 | 연습용 기본 문장 — 뒤 세 칸은 선택이에요. */
+/* 수행평가의 "🔧 오늘의 문법 연습"(grammarSwapText)을 파싱해요.
+   [새 형식] 문법 항목마다 빈 줄로 구분하고, 각 항목은:
+     1번째 줄:  문법명 | 설명
+     이어지는 줄들: "- 영어 예문 | 한글 해석" (여러 개 가능)
+     마지막 줄(선택): "연습: 기본 문장" (학생이 이 문법으로 바꿔 써볼 문장)
+   [예전 형식과 호환] 빈 줄 없이 한 줄에 문법 하나씩(문법명 | 설명 | 예시 변형 문장 | 연습용 기본 문장)
+     넣어둔 예전 데이터도 그대로 계속 인식해요.
+   결과 객체: { name, explain, examples:[{en,kr}, ...], base } — 예전 형식은 examples가 항목 1개짜리 배열이 돼요. */
 function parseGrammarSwapText(text){
   if(!text)return [];
-  return String(text).split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
-    const parts=line.split('|').map(x=>x.trim());
-    return { name: parts[0]||'', explain: parts[1]||'', example: parts[2]||'', base: parts[3]||'' };
-  }).filter(g=>g.name);
+  const raw=String(text).replace(/\r\n/g,'\n');
+  const blocks=raw.split(/\n\s*\n/).map(b=>b.trim()).filter(Boolean);
+  const allLines=raw.split('\n').map(x=>x.trim()).filter(Boolean);
+  const isLegacy = blocks.length<=1 && allLines.length>0 && allLines.every(l=>l.split('|').length>=3);
+  if(isLegacy){
+    return allLines.map(line=>{
+      const parts=line.split('|').map(x=>x.trim());
+      return { name: parts[0]||'', explain: parts[1]||'', examples: parts[2]?[{en:parts[2],kr:''}]:[], base: parts[3]||'' };
+    }).filter(g=>g.name);
+  }
+  return blocks.map(block=>{
+    const lines=block.split('\n').map(x=>x.trim()).filter(Boolean);
+    if(!lines.length)return null;
+    const header=lines[0].split('|').map(x=>x.trim());
+    const name=header[0]||'', explain=header[1]||'';
+    const examples=[]; let base='';
+    for(let i=1;i<lines.length;i++){
+      let ln=lines[i];
+      if(/^연습\s*:/.test(ln)){ base=ln.replace(/^연습\s*:/,'').trim(); continue; }
+      if(ln.startsWith('-'))ln=ln.slice(1).trim();
+      const p=ln.split('|').map(x=>x.trim());
+      if(p[0])examples.push({en:p[0], kr:p[1]||''});
+    }
+    return { name, explain, examples, base };
+  }).filter(g=>g&&g.name);
 }
 function viewContentAdd(){setWide(false);mountView(w=>{
   w.appendChild(el('h1','title','🧩 컨텐츠 추가'));
@@ -5470,14 +5508,20 @@ function runExam(topic){deckInit();
         const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-top:12px;background:#faf9fb';
         card.appendChild(el('div','fl',g.name));
         if(g.explain){const ex=el('div');ex.style.cssText='margin-top:4px;font-size:13px;color:#6b7684';ex.textContent=g.explain;card.appendChild(ex);}
-        if(g.example){const exm=el('div');exm.style.cssText='margin-top:6px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;color:#374151';exm.innerHTML='<b>예시 변형</b><br>'+escH(g.example);card.appendChild(exm);}
-        if(g.base){
-          card.appendChild(el('div','hint','기본 문장: '+g.base));
-          const practiceTa=el('textarea','in');practiceTa.placeholder='위 기본 문장을 이 문법으로 바꿔 써보세요';practiceTa.style.cssText='min-height:50px;font-size:13px;margin-top:4px';
-          practiceTa.value=gpNotes[g.name]||'';
-          practiceTa.addEventListener('input',()=>{gpNotes[g.name]=practiceTa.value;});
-          card.appendChild(practiceTa);
+        if(g.examples&&g.examples.length){
+          const exm=el('div');exm.style.cssText='margin-top:6px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;color:#374151';
+          exm.innerHTML='<b>예시 문장</b>'+g.examples.map(ex=>'<div style="margin-top:6px">'+escH(ex.en)+(ex.kr?'<div style="margin-top:2px;color:#6b7684;font-size:12px">☞ '+escH(ex.kr)+'</div>':'')+'</div>').join('');
+          card.appendChild(exm);
         }
+        // "나의 문장" 적는 칸 — 기본 문장을 바꿔 쓰게 하는 게 아니라, 이 문법을 활용해서 학생이
+        // 자유롭게 자기만의 문장을 만들어보는 칸이에요(모든 문법 항목에 항상 나와요).
+        card.appendChild(el('div','fl','나의 문장'));
+        const practiceTa=el('textarea','in');
+        practiceTa.placeholder='이 문법을 활용해서 나만의 문장을 만들어보세요';
+        practiceTa.style.cssText='min-height:50px;font-size:13px;margin-top:4px';
+        practiceTa.value=gpNotes[g.name]||'';
+        practiceTa.addEventListener('input',()=>{gpNotes[g.name]=practiceTa.value;});
+        card.appendChild(practiceTa);
         b.appendChild(card);
       });
     });
