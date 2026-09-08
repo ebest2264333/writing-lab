@@ -2663,6 +2663,12 @@ function viewTeacherHome(){setWide(false);mountView(w=>{
   const editContentBtn=el('button','btn ghost','✏️ 컨텐츠 수정');editContentBtn.type='button';editContentBtn.style.cssText='padding:10px 18px;font-size:14px';
   editContentBtn.onclick=()=>viewContentEditPicker();
   titleRow.appendChild(editContentBtn);
+  // 학생 홈 화면(커리큘럼)을 거치지 않고, 곧바로 "학생 목록 → 그 학생이 쓴 글 목록 → 리포트 버튼"
+  // 순서로 바로 인쇄까지 갈 수 있는 지름길이에요. 매번 학생 화면을 눌러 들어가서 컨텐츠를 찾을
+  // 필요 없이, 리포트만 뽑고 싶을 때 여기서 바로 시작하면 돼요.
+  const reportListBtn=el('button','btn ghost','🖨 REPORT 인쇄');reportListBtn.type='button';reportListBtn.style.cssText='padding:10px 18px;font-size:14px';
+  reportListBtn.onclick=()=>viewReportStudentList();
+  titleRow.appendChild(reportListBtn);
   if(USER.isAdmin){
     const manageLevelsBtn=el('button','btn ghost','🏷️ 레벨 관리');manageLevelsBtn.type='button';manageLevelsBtn.style.cssText='padding:10px 18px;font-size:14px';
     manageLevelsBtn.onclick=()=>viewLevelManage();
@@ -2730,6 +2736,77 @@ function viewTeacherHome(){setWide(false);mountView(w=>{
     (fAcademy?[fAcademy.sel,fSchool.sel,fGrade.sel,fCls.sel,fType.sel]:[fSchool.sel,fGrade.sel,fCls.sel,fType.sel]).forEach(sel=>sel.addEventListener('change',render));
     render();
   })();
+});}
+
+/* "🖨 REPORT 인쇄"로 들어오면, 학생의 커리큘럼 홈 화면을 거치지 않고 곧바로 학생 목록만 보여줘요.
+ * 학생을 고르면 그 학생이 그동안 제출한 글이 최신순으로 쭉 나열되고, 각 줄 오른쪽의 "리포트" 버튼을
+ * 누르면 바로 그 제출물의 인쇄 화면(printSubmissionReport)이 새 탭으로 떠요. */
+function viewReportStudentList(){setWide(false);mountView(w=>{
+  const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','🖨 REPORT 인쇄 — 학생 목록'));
+  w.appendChild(el('div','hint','학생을 선택하면 그 학생이 작성한 글이 최신순으로 나오고, 옆의 "리포트" 버튼으로 바로 인쇄 화면을 열 수 있어요.'));
+  const box=el('div','chapter');box.appendChild(el('div','ch-h','학생 목록'));
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  (async()=>{
+    let all=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok)all=data.submissions||[];
+    }catch(e){}
+    if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+    loading.remove();
+    if(!all.length){box.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
+    const byStudent={};
+    all.forEach(s=>{
+      if(!s.id)return;
+      if(!byStudent[s.id])byStudent[s.id]={id:s.id,name:s.name,academy:s.academy,school:s.school,schoolGrade:s.schoolGrade,cls:s.cls,subs:[],lastAt:''};
+      byStudent[s.id].subs.push(s);
+      if(String(s.datetime||'')>byStudent[s.id].lastAt)byStudent[s.id].lastAt=String(s.datetime||'');
+    });
+    const studentsOut=Object.values(byStudent).sort((a,b)=>b.lastAt<a.lastAt?-1:1);
+    studentsOut.forEach(st=>{
+      const row=el('div','point');
+      row.appendChild(el('div','dot','●'));
+      const ctx=[USER.isAdmin?st.academy:'',st.school,st.schoolGrade&&(st.schoolGrade+'학년'),st.cls].filter(Boolean).join(' · ');
+      row.appendChild(el('div','pt',(st.name||st.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+st.id+(ctx?' · '+ctx:'')+')</span>'));
+      row.appendChild(el('div','meta',st.subs.length+'건 제출 · 최근 '+String(st.lastAt||'').slice(0,16)));
+      row.onclick=()=>viewReportStudentSubmissions(st.id,st.name||st.id,st.subs);
+      box.appendChild(row);
+    });
+  })();
+});}
+/* 학생 한 명이 제출한 글을 최신순으로 쭉 나열해요. 커리큘럼 화면(viewTeacherStudent/viewHome)과
+ * 다르게, 컨텐츠 목록을 훑을 필요 없이 실제로 "쓴 글" 하나하나가 바로 행으로 보이고, 행마다 오른쪽에
+ * 그 글의 인쇄 리포트를 바로 여는 버튼이 있어요. */
+function viewReportStudentSubmissions(studentId,studentName,subs,backFn){setWide(false);mountView(w=>{
+  const back=backFn||viewReportStudentList;
+  const bk=el('button','backbtn','◀ 학생 목록');bk.onclick=back;w.appendChild(bk);
+  w.appendChild(el('h1','title',studentName+' · 제출한 글'));
+  const sorted=(subs||[]).slice().sort((a,b)=>String(a.datetime||'')<String(b.datetime||'')?1:-1);
+  const summaryRow=el('div');summaryRow.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 14px';
+  summaryRow.appendChild(el('div','hint',sorted.length+'건 제출됨'));
+  const rewriteReportBtn=el('button','btn ghost','📊 첨삭·Re-Writing 종합 리포트');rewriteReportBtn.type='button';rewriteReportBtn.style.cssText='padding:6px 14px;font-size:12.5px';
+  const ctx=[sorted[0]&&sorted[0].school,sorted[0]&&sorted[0].schoolGrade&&(sorted[0].schoolGrade+'학년'),sorted[0]&&sorted[0].cls].filter(Boolean).join(' · ');
+  rewriteReportBtn.onclick=()=>openRewriteReportPicker({studentId,studentName,subs:sorted,ctx});
+  summaryRow.appendChild(rewriteReportBtn);
+  w.appendChild(summaryRow);
+  const box=el('div','chapter');box.appendChild(el('div','ch-h','제출한 글'));
+  if(!sorted.length)box.appendChild(el('div','hint','아직 제출한 글이 없어요.'));
+  sorted.forEach(s=>{
+    const row=el('div');
+    row.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(0,0,0,.06)';
+    const info=el('div');
+    info.innerHTML='<div style="font-weight:700">'+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:12.5px">('+escH(s.type||'')+')</span></div>'+
+      '<div style="color:#6b7684;font-size:12.5px;margin-top:2px">'+escH(s.datetime||'')+(s.total!=null&&String(s.total).trim()!==''&&String(s.total)!=='-'?(' · 점수 '+escH(String(s.total))+(s.grade?(' ('+escH(s.grade)+'등급)'):'')):'')+'</div>';
+    row.appendChild(info);
+    const rptBtn=el('button','btn blue','🖨 리포트');rptBtn.type='button';rptBtn.style.cssText='padding:6px 14px;font-size:12.5px;white-space:nowrap;flex:0 0 auto';
+    rptBtn.onclick=()=>printSubmissionReport(s,studentName,studentId,s.academy,sorted);
+    row.appendChild(rptBtn);
+    box.appendChild(row);
+  });
+  w.appendChild(box);
 });}
 
 /* ================= 선생님용 컨텐츠 추가 ================= */
