@@ -1964,9 +1964,9 @@ const REPORT_BASE_CSS=
   '.rubric-table td{padding:9px 12px;font-weight:700;color:#2B2733;border-bottom:1px solid #E2E2E8}'+
   '.rubric-table tr:last-child th,.rubric-table tr:last-child td{border-bottom:none}'+
   '.rubric-score-box{margin-top:10px;background:#2B2733;color:#fff;padding:14px 16px;display:flex;align-items:baseline;justify-content:space-between}'+
-  '.rubric-score-box .rsb-label{font-size:11.5px;color:rgba(255,255,255,.72);font-weight:700}'+
-  '.rubric-score-box .rsb-val{font-size:22px;font-weight:900}'+
-  '.rubric-score-box .rsb-val span{font-size:13px;font-weight:800;margin-left:6px;color:#9FE3C4}'+
+  '.rubric-score-box .rsb-label{font-size:14.5px;color:rgba(255,255,255,.92);font-weight:800}'+
+  '.rubric-score-box .rsb-val{font-size:30px;font-weight:900}'+
+  '.rubric-score-box .rsb-val span{font-size:15px;font-weight:800;margin-left:6px;color:rgba(255,255,255,.85)}'+
   '.rubric-bars{border:1px solid #E2E2E8;padding:14px 16px}'+
   '.rubric-bars .rb-title{font-size:11.5px;font-weight:800;color:#8D8298;margin-bottom:10px}'+
   '.rb-row{margin-bottom:10px}'+
@@ -2203,11 +2203,11 @@ function rubricPercentToGrade(pct){
 /* 총점 등급(A+~F)에 신호등 색 계열을 매겨서, 종합 점수 박스와 도넛 그래프 숫자에 색이 들어가게 해요. */
 function rubricTotalGradeColor(g){
   const up=String(g||'').trim().toUpperCase();
-  if(up.indexOf('A')===0)return '#2E9E5B';
-  if(up.indexOf('B')===0)return '#3B82C4';
-  if(up.indexOf('C')===0)return '#E0A82E';
-  if(up.indexOf('D')===0)return '#E2703A';
-  return '#D64545';
+  if(up.indexOf('A')===0)return '#3DC372';
+  if(up.indexOf('B')===0)return '#4E9EE8';
+  if(up.indexOf('C')===0)return '#F5B921';
+  if(up.indexOf('D')===0)return '#F28C42';
+  return '#F0555A';
 }
 /* s.rubric은 서버에 JSON 문자열로 저장돼요 — 없거나 깨진 값이면 null(=이 제출물엔 성적표 섹션 안 보임). */
 function parseRubricEval(raw){
