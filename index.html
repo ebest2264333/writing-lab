@@ -1928,10 +1928,11 @@ const REPORT_BASE_CSS=
   'p.osent{margin:0 0 2px;background:#EEF0FA;border-radius:0;padding:5px 10px;display:inline-block;font-weight:700}'+
   '.rsent-wrap p{margin:0 0 4px}'+
   '.err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}'+
-  '.err-list li{margin-bottom:3px}'+
+  '.err-list li{margin-bottom:7px}'+
+  '.err-pair{line-height:1.5}'+
   '.wrong{color:#B3261E;text-decoration:line-through}'+
   '.correct{color:#1C7A4D;font-weight:700}'+
-  '.note{color:#8D8298}'+
+  '.note{display:block;color:#8D8298;margin-top:2px;line-height:1.5}'+
   '.corrected-full{font-size:12.5px;color:#2B2733;margin:2px 0 8px;background:#F1FBFA;border-radius:0;padding:5px 10px}'+
   '.cmt{font-size:12px;color:#9A5B12;margin:0 0 8px}'+
   '.overall{background:#F2FBF6;border-radius:0;padding:11px 14px;font-size:13px;margin:10px 0 0;white-space:pre-line;border:1px solid #DCF0E3;border-left:4px solid #3FBE87}'+
@@ -1963,10 +1964,10 @@ const REPORT_BASE_CSS=
   '.rubric-table th{background:#FAFAFC;color:#8D8298;font-weight:800;text-align:left;padding:9px 12px;width:34%;border-bottom:1px solid #E2E2E8;border-right:1px solid #E2E2E8}'+
   '.rubric-table td{padding:9px 12px;font-weight:700;color:#2B2733;border-bottom:1px solid #E2E2E8}'+
   '.rubric-table tr:last-child th,.rubric-table tr:last-child td{border-bottom:none}'+
-  '.rubric-score-box{margin-top:10px;background:#2B2733;color:#fff;padding:14px 16px;display:flex;align-items:baseline;justify-content:space-between}'+
+  '.rubric-score-box{margin-top:10px;background:#2B2733;color:#fff;padding:18px 16px;display:flex;align-items:center;justify-content:space-between;min-height:78px}'+
   '.rubric-score-box .rsb-label{font-size:14.5px;color:rgba(255,255,255,.92);font-weight:800}'+
-  '.rubric-score-box .rsb-val{font-size:30px;font-weight:900}'+
-  '.rubric-score-box .rsb-val span{font-size:15px;font-weight:800;margin-left:6px;color:rgba(255,255,255,.85)}'+
+  '.rubric-score-box .rsb-val{font-size:38px;font-weight:900;line-height:1}'+
+  '.rubric-score-box .rsb-val span{font-size:17px;font-weight:800;margin-left:6px;color:rgba(255,255,255,.85)}'+
   '.rubric-bars{border:1px solid #E2E2E8;padding:14px 16px}'+
   '.rubric-bars .rb-title{font-size:11.5px;font-weight:800;color:#8D8298;margin-bottom:10px}'+
   '.rb-row{margin-bottom:10px}'+
@@ -2140,7 +2141,9 @@ function sentenceErrorListHtml(aiEntry){
   if(!aiEntry||typeof aiEntry!=='object')return '';
   const errors=Array.isArray(aiEntry.errors)?aiEntry.errors:[];
   if(!errors.length)return '';
-  return '<ul class="err-list">'+errors.map(e=>'<li><span class="wrong">'+escH(e.wrong||'')+'</span> → <span class="correct">'+escH(e.correct||'')+'</span>'+(e.note?(' <span class="note">('+escH(e.note)+')</span>'):'')+'</li>').join('')+'</ul>'+
+  // "틀린 부분 → 고친 부분"과 그 이유(note)를 한 줄에 이어 쓰면 이유가 길 때 줄바꿈이 뒤섞여 지저분해
+  // 보여서, 이유는 항상 그 아래 별도 줄로 떨어지게 나눴어요.
+  return '<ul class="err-list">'+errors.map(e=>'<li><div class="err-pair"><span class="wrong">'+escH(e.wrong||'')+'</span> → <span class="correct">'+escH(e.correct||'')+'</span></div>'+(e.note?('<div class="note">'+escH(e.note)+'</div>'):'')+'</li>').join('')+'</ul>'+
     (aiEntry.corrected?('<div class="corrected-full">'+escH(aiEntry.corrected)+'</div>'):'');
 }
 /** 수행평가에 마인드맵·문법 연습 단계가 있었으면(원본 제출물에 mindmapNotes/grammarPractice로 저장돼요),
