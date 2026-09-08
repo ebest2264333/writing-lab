@@ -1869,47 +1869,93 @@ function renderAudioPlayback(s){
 /** printSubmissionReport / printStudentRewriteReport 두 리포트가 함께 쓰는 기본 스타일이에요.
  *  사이트 본문에서 쓰는 색감(주황 accent, 보라 violet, 민트 blue, 초록 green)을 그대로 가져와서
  *  인쇄해도(PDF로 저장해도) 사이트와 같은 느낌이 나는 카드형 리포트로 보이게 해요. */
+// 리포트는 window.open으로 완전히 새 문서를 여는 거라, 사이트 본문 폰트를 그대로 이어받지 못하고
+// 브라우저 기본 글꼴로 떨어져 밋밋해 보였어요. Gmarket Sans(두껍고 장난스러움) → Pretendard(가로폭이
+// 너무 넓어 보임) 순으로 시도했다가, 지금은 실제 사무 문서·보고서에서 가장 흔히 쓰이는, 자간이
+// 좁고 단정한 맑은 고딕(Windows)/애플 산돌고딕(Mac) 계열을 우선 쓰도록 바꿨어요 — 별도로 내려받지
+// 않아도 대부분의 PC에 이미 깔려있어서 더 빠르고, 폭도 좁아서 보고서 느낌에 잘 어울려요. 혹시 그
+// 글꼴이 없는 기기(오래된 기기 등)를 위한 안전망으로만 구글 폰트 Noto Sans KR을 같이 불러와요.
+const REPORT_FONT_LINKS=
+  '<link rel="preconnect" href="https://fonts.googleapis.com">'+
+  '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'+
+  '<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800;900&display=swap" rel="stylesheet">';
+const REPORT_FONT_FAMILY="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',system-ui,sans-serif";
+// 학원별로 리포트 왼쪽 위에 로고를 넣고 싶으면, 아래에 '학원 이름': '로고 이미지 URL' 형태로 한 줄씩
+// 추가해주세요. 학원 이름은 학생 계정에 등록된 academy 값(교사 화면 상단에 보이는 이름)과 정확히
+// 똑같아야 하고, 이미지 URL은 인터넷 어디서든 접근 가능한 링크(예: 학원 홈페이지에 올린 로고 이미지
+// 주소)여야 해요. 등록 안 한 학원은 로고 없이 지금처럼 나와요.
+const ACADEMY_LOGOS={
+  // 예시: '이베스트 어학원': 'https://example.com/logo.png',
+};
+function academyLogoHtml(academyName){
+  const url=ACADEMY_LOGOS[String(academyName||'').trim()];
+  return url?('<div class="logo-box"><img src="'+escH(url)+'" alt="로고"></div>'):'';
+}
 const REPORT_BASE_CSS=
   "*{box-sizing:border-box}"+
-  "body{margin:0;font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#463C50;"+
-  "background:linear-gradient(150deg,#FFEDE0 0%,#FFE0EC 35%,#F3E4FF 68%,#DFF6F5 100%);padding:36px 18px;line-height:1.65;"+
+  "body{margin:0;font-family:"+REPORT_FONT_FAMILY+";color:#2B2733;"+
+  "background:#EDEDF1;padding:32px 18px;line-height:1.65;"+
   "-webkit-print-color-adjust:exact;print-color-adjust:exact}"+
-  '.page{max-width:820px;margin:0 auto}'+
-  '.sheet{background:#fff;border-radius:22px;overflow:hidden;box-shadow:0 20px 50px rgba(74,58,80,.18)}'+
-  '.hero{background:linear-gradient(120deg,#FF8FAA,#9678EE 75%);color:#fff;padding:28px 32px 24px}'+
-  '.hero h1{margin:0 0 6px;font-size:20px;font-weight:800;letter-spacing:.01em}'+
-  '.hero .sub{font-size:12.5px;opacity:.94}'+
-  '.body-pad{padding:26px 32px 30px}'+
-  '.meta-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}'+
-  '.meta-chip{background:#FFF6F0;border-radius:999px;padding:7px 14px;font-size:12.5px;font-weight:700;color:#4A3F55}'+
+  '.page{max-width:840px;margin:6px auto}'+
+  // 학습지/시험지에서 자주 보이는 "이중 테두리 카드 + 테두리 친 제목 박스" 느낌으로 꾸몄어요
+  // (바깥은 은은한 민트색 테두리, 안쪽은 진한 남색 테두리, 제목은 가운데 정렬된 테두리 박스 안에).
+  '.sheet{background:#fff;border-radius:22px;border:3px solid #46508C;box-shadow:0 0 0 5px #DCEFE9;overflow:hidden}'+
+  // 겉(카드 전체)만 둥글게 두고, 안쪽 요소들(배너·박스·표)은 전부 각지게(border-radius:0) 정리했어요 —
+  // 원 안에 번호가 들어간 뱃지만 예외로 동그란 채로 남겨뒀어요(교재의 ①②③ 번호 스타일이라서).
+  // 색도 그라데이션 없이 전부 단색으로 통일했어요.
+  '.hero{background:#46508C;padding:16px 22px;color:#fff;display:flex;align-items:center;gap:14px}'+
+  '.hero .logo-box{background:#fff;border-radius:0;padding:6px;flex:0 0 auto;width:54px;height:54px;display:flex;align-items:center;justify-content:center}'+
+  '.hero .logo-box img{max-width:100%;max-height:100%;object-fit:contain;display:block}'+
+  '.hero .unit-tag{background:rgba(255,255,255,.22);border:1.5px solid rgba(255,255,255,.8);border-radius:0;padding:8px 14px;font-size:11px;font-weight:800;letter-spacing:.04em;text-align:center;line-height:1.3;white-space:nowrap;flex:0 0 auto}'+
+  '.hero h1{margin:0;font-size:16.5px;font-weight:800}'+
+  '.hero .sub{font-size:11.5px;opacity:.94;margin-top:3px}'+
+  '.body-pad{counter-reset:secnum;padding:22px 30px 30px}'+
+  '.meta-grid{display:flex;flex-wrap:wrap;gap:8px 10px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px dashed #DEDCE4}'+
+  '.meta-chip{background:#FAFAFC;border:1px solid #E2E2E8;border-radius:0;padding:6px 12px;font-size:12.5px;font-weight:700;color:#2B2733}'+
   '.meta-chip b{color:#8D8298;font-weight:700;margin-right:5px}'+
-  '.meta-chip.score{background:linear-gradient(120deg,#FFAC42,#FF8F2E);color:#fff}.meta-chip.score b{color:rgba(255,255,255,.85)}'+
-  'h2.sec{font-size:14.5px;font-weight:800;color:#4A3F55;margin:22px 0 10px;display:flex;align-items:center;gap:7px}'+
-  "h2.sec::before{content:'';width:5px;height:15px;border-radius:3px;background:linear-gradient(180deg,#FFAC42,#FF8F2E);display:inline-block}"+
+  '.meta-chip.score{background:#2B2733;border-color:#2B2733;color:#fff}.meta-chip.score b{color:rgba(255,255,255,.75)}'+
+  'h2.sec{font-size:14px;font-weight:800;color:#2B2733;margin:24px 0 12px;display:flex;align-items:center;gap:9px}'+
+  "h2.sec::before{counter-increment:secnum;content:counter(secnum);width:23px;height:23px;min-width:23px;border-radius:50%;"+
+  "background:#46508C;color:#fff;font-size:12px;font-weight:800;display:inline-flex;align-items:center;justify-content:center}"+
   '.essay p{margin:0 0 8px;font-size:14px}'+
-  '.fb-box{border-radius:14px;padding:13px 16px;margin-bottom:10px;font-size:13.5px;border-left:4px solid}'+
-  '.fb-a{background:#EFE7FF;border-color:#9678EE}.fb-b{background:#DFF6F5;border-color:#1FA3AC}.fb-c{background:#E2F8EF;border-color:#3FBE87}'+
-  '.wrong-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;border-radius:10px;overflow:hidden}'+
-  '.wrong-table th{background:#FFF6F0;color:#4A3F55;font-weight:800;padding:8px 10px;text-align:left}'+
-  '.wrong-table td{padding:7px 10px;border-top:1px solid #F2EAF3}'+
-  // 문장별 "틀린 부분 → 고친 부분" 표시(원래 printStudentRewriteReport 전용이었는데, printSubmissionReport도
-  // 문장 단위로 첨삭을 보여주게 되면서 두 리포트가 함께 쓰는 공통 스타일로 옮겼어요.
+  '.fb-box{border-radius:0;padding:13px 16px;margin-bottom:10px;font-size:13.5px;border:1px solid #E2E2E8;border-left:4px solid}'+
+  '.fb-a{background:#F7F5FF;border-left-color:#9678EE}.fb-b{background:#F1FBFA;border-left-color:#1FA3AC}.fb-c{background:#F2FBF6;border-left-color:#3FBE87}'+
+  '.wrong-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;border:1px solid #E2E2E8}'+
+  '.wrong-table th{background:#FAFAFC;color:#2B2733;font-weight:800;padding:8px 10px;text-align:left;border-bottom:1px solid #E2E2E8}'+
+  '.wrong-table td{padding:7px 10px;border-top:1px solid #EFEFF3}'+
+  // 문장별 "틀린 부분 → 고친 부분" 표시
   '.osent-wrap,.rsent-wrap{font-size:13.5px}'+
-  'p.osent{margin:0 0 2px;background:#FFEEDA;border-radius:8px;padding:5px 10px;display:inline-block;font-weight:700}'+
-  '.rsent-wrap{background:#E2F8EF;border-radius:12px;padding:10px 14px}'+
+  'p.osent{margin:0 0 2px;background:#EEF0FA;border-radius:0;padding:5px 10px;display:inline-block;font-weight:700}'+
   '.rsent-wrap p{margin:0 0 4px}'+
   '.err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}'+
   '.err-list li{margin-bottom:3px}'+
-  '.wrong{color:#c0392b;text-decoration:line-through}'+
-  '.correct{color:#1e8a5c;font-weight:700}'+
+  '.wrong{color:#B3261E;text-decoration:line-through}'+
+  '.correct{color:#1C7A4D;font-weight:700}'+
   '.note{color:#8D8298}'+
-  '.corrected-full{font-size:12.5px;color:#4A3F55;margin:2px 0 8px;background:#F0E7FF;border-radius:8px;padding:5px 10px}'+
-  '.cmt{font-size:12px;color:#b45309;margin:0 0 8px}'+
-  '.overall{background:linear-gradient(120deg,#E2F8EF,#DFF6F5);border-radius:12px;padding:11px 14px;font-size:13px;margin:10px 0;white-space:pre-line;border-left:4px solid #3FBE87}'+
+  '.corrected-full{font-size:12.5px;color:#2B2733;margin:2px 0 8px;background:#F1FBFA;border-radius:0;padding:5px 10px}'+
+  '.cmt{font-size:12px;color:#9A5B12;margin:0 0 8px}'+
+  '.overall{background:#F2FBF6;border-radius:0;padding:11px 14px;font-size:13px;margin:10px 0 0;white-space:pre-line;border:1px solid #DCF0E3;border-left:4px solid #3FBE87}'+
+  '.procblock{margin-top:14px}'+
+  '.prochead{font-size:12px;font-weight:800;color:#8D8298;margin-bottom:6px}'+
+  '.proccard{background:#FAFAFC;border:1px solid #E2E2E8;border-radius:0;padding:8px 10px;margin-bottom:6px;font-size:12.5px}'+
+  '.proccard .pk{font-weight:800;color:#2B2733;margin-bottom:2px}'+
+  '.proccard .pv{color:#4A4552;white-space:pre-line}'+
+  // "틀린 글 / 고친 글"을 창(window)처럼 나란히 보여주는 비교 레이아웃 — 브라우저 창/코드 에디터 같은
+  // 느낌의 타이틀바(점 3개)를 얹어서, 리포트가 문서처럼 정돈돼 보이면서도 원본↔수정본 대비가 한눈에 들어와요.
+  '.compare{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px}'+
+  '@media (max-width:640px){.compare{grid-template-columns:1fr}}'+
+  '.win{border:1px solid #E2E2E8;border-radius:0;overflow:hidden;background:#fff;display:flex;flex-direction:column}'+
+  '.win-bar{display:flex;align-items:center;gap:8px;padding:9px 12px;background:#FAFAFC;border-bottom:1px solid #E2E2E8;font-weight:800;font-size:12.5px}'+
+  '.win-dots{display:inline-flex;gap:4px;flex:0 0 auto}'+
+  '.win-dots span{width:7px;height:7px;border-radius:50%;background:#DDDCE3;display:inline-block}'+
+  '.win.orig .win-bar{color:#B3261E;background:#FDEDEC}.win.orig .win-bar .win-dots span:nth-child(1){background:#E8ADA9}'+
+  '.win.fixed .win-bar{color:#1C7A4D;background:#EAF7EF}.win.fixed .win-bar .win-dots span:nth-child(1){background:#A9DABE}'+
+  '.win-body{padding:14px 16px;flex:1}'+
+  '.win.fixed .win-body{background:#FBFEFC}'+
   '.noprint{margin-top:26px;text-align:center;padding-bottom:6px}'+
-  '.noprint button{padding:12px 26px;font-size:14.5px;font-weight:800;border-radius:999px;border:none;'+
-  'background:linear-gradient(120deg,#FFAC42,#FF8F2E);color:#fff;cursor:pointer;box-shadow:0 6px 16px rgba(255,143,46,.35)}'+
-  '@media print{body{background:#fff;padding:0}.page{max-width:100%}.sheet{box-shadow:none;border-radius:0}.noprint{display:none}}';
+  '.noprint button{padding:11px 24px;font-size:14px;font-weight:800;border-radius:0;border:none;'+
+  'background:#2B2733;color:#fff;cursor:pointer}'+
+  '@media print{body{background:#fff;padding:0}.page{max-width:100%}.sheet{box-shadow:none;border-radius:0}.noprint{display:none}.compare{grid-template-columns:1fr 1fr}}';
 /** 제출물 하나를 학부모님께 보내기 좋은 리포트 형태(새 탭 → 인쇄/PDF 저장)로 열어줘요.
  *  학생이 쓴 글 + 선생님 첨삭(있으면 AI 첨삭도 함께)을 깔끔하게 정리해서 보여주고,
  *  버튼을 누르면 브라우저 인쇄창이 뜨는데, 거기서 "PDF로 저장"을 고르면 파일로도 받을 수 있어요. */
@@ -1930,7 +1976,7 @@ function annotatedSentencesHtml(s){
     let html='<p class="osent">'+(i+1)+'. '+escH(sent)+'</p>';
     html+=sentenceErrorListHtml(ai);
     html+=sentenceErrorListHtml(aiGpt);
-    if(c&&typeof c==='string')html+='<div class="cmt">💬 '+escH(c)+'</div>';
+    if(c&&typeof c==='string')html+='<div class="cmt">'+escH(c)+'</div>';
     return html;
   }).join('');
 }
@@ -1938,7 +1984,7 @@ function printSubmissionReport(s,studentName,studentId,academyName,siblings){
   const fb=parseFeedback(s.feedback);
   const aifb=parseAiFeedback(s.aiFeedback);
   const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
-  const overallHtml=[aifb.overall,aifbGpt.overall,fb.overall].filter(Boolean).map(t=>'<div class="overall">👩‍🏫 '+escH(t).replace(/\n/g,'<br>')+'</div>').join('');
+  const overallHtml=[aifb.overall,aifbGpt.overall,fb.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');
   // Re-Writing 제출물이면, 이 글 자체엔 대개 첨삭(틀린 부분)이 안 남아있으니 — 같은 제목(point/chapter)의
   // 가장 최근 원본 제출물을 siblings에서 찾아서 "처음 쓴 글과 지적된 부분"을 위에 함께 보여줘요.
   let original=null;
@@ -1950,30 +1996,39 @@ function printSubmissionReport(s,studentName,studentId,academyName,siblings){
   }
   let essaySectionHtml;
   if(original){
-    essaySectionHtml='<h2 class="sec">✏️ 처음 쓴 글과 지적된 부분</h2><div class="osent-wrap">'+annotatedSentencesHtml(original)+'</div>'+
-      (function(){const of=parseFeedback(original.feedback),oai=parseAiFeedback(original.aiFeedback),oaiGpt=parseAiFeedback(original.aiFeedbackGpt);
-        return [oai.overall,oaiGpt.overall,of.overall].filter(Boolean).map(t=>'<div class="overall">👩‍🏫 '+escH(t).replace(/\n/g,'<br>')+'</div>').join('');})()+
-      '<h2 class="sec">✅ 고쳐 쓴 최종 글 (Re-Writing)</h2><div class="rsent-wrap">'+
-      (s.text?splitSentences(s.text).map((sent,i)=>'<p>'+(i+1)+'. '+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+
-      '</div>'+(overallHtml?('<h2 class="sec">👩‍🏫 선생님 첨삭</h2>'+overallHtml):'');
+    const oOverallHtml=(function(){const of=parseFeedback(original.feedback),oai=parseAiFeedback(original.aiFeedback),oaiGpt=parseAiFeedback(original.aiFeedbackGpt);
+      return [oai.overall,oaiGpt.overall,of.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');})();
+    essaySectionHtml='<h2 class="sec">처음 쓴 글 → 고쳐 쓴 글 비교</h2>'+
+      '<div class="compare">'+
+        '<div class="win orig"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>처음 쓴 글 · 지적된 부분</div>'+
+          '<div class="win-body osent-wrap">'+annotatedSentencesHtml(original)+oOverallHtml+'</div></div>'+
+        '<div class="win fixed"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 최종 글</div>'+
+          '<div class="win-body rsent-wrap">'+
+          (s.text?splitSentences(s.text).map((sent,i)=>'<p>'+(i+1)+'. '+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+
+          processSectionHtml(original)+
+          '</div></div>'+
+      '</div>'+
+      (overallHtml?('<h2 class="sec">이 글에 대한 선생님 첨삭</h2>'+overallHtml):'');
   } else {
-    essaySectionHtml='<h2 class="sec">✏️ 작성한 글</h2><div class="osent-wrap">'+annotatedSentencesHtml(s)+'</div>'+
-      (overallHtml?('<h2 class="sec">👩‍🏫 선생님 첨삭</h2>'+overallHtml):'');
+    essaySectionHtml='<h2 class="sec">작성한 글</h2>'+
+      '<div class="win"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>제출한 글'+(overallHtml?'':' · 지적된 부분 없음')+'</div>'+
+        '<div class="win-body osent-wrap">'+annotatedSentencesHtml(s)+overallHtml+processSectionHtml(s)+'</div></div>';
   }
   const wrongArr=parseWrongReport(s.wrongReport);
   let wrongHtml='';
   if(s.wrongReport&&wrongArr.length){
     const correctCount=wrongArr.filter(w=>w.correct).length;
-    wrongHtml='<h2 class="sec">📋 문항별 결과 (맞음 '+correctCount+' / 전체 '+wrongArr.length+')</h2><table class="wrong-table"><thead><tr><th>정답 여부</th><th>문제</th><th>학생 답</th><th>정답</th></tr></thead><tbody>'+
+    wrongHtml='<h2 class="sec">문항별 결과 (맞음 '+correctCount+' / 전체 '+wrongArr.length+')</h2><table class="wrong-table"><thead><tr><th>정답 여부</th><th>문제</th><th>학생 답</th><th>정답</th></tr></thead><tbody>'+
       wrongArr.map(w=>'<tr><td>'+(w.correct?'✅':'❌')+'</td><td>'+escH(undl(String(w.ko||'')))+'</td><td>'+escH(String(w.user||''))+'</td><td>'+(w.correct?'-':escH(String(w.a||'')))+'</td></tr>').join('')+
       '</tbody></table>';
   }
   const html='<!doctype html><html><head><meta charset="utf-8"><title>'+escH(studentName||'')+' - '+escH(s.point||s.chapter||'')+' 리포트</title>'+
+    REPORT_FONT_LINKS+
     '<style>'+
     REPORT_BASE_CSS+
     '</style></head><body>'+
     '<div class="page"><div class="sheet">'+
-    '<div class="hero"><h1>📘 English Writing Lab</h1><div class="sub">학생이 제출한 영작 결과와 선생님 첨삭을 정리한 학습 리포트예요.</div></div>'+
+    '<div class="hero">'+academyLogoHtml(academyName)+'<div><h1>English Writing Lab · 학습 리포트</h1><div class="sub">학생이 제출한 영작 결과와 선생님 첨삭을 정리했어요.</div></div></div>'+
     '<div class="body-pad">'+
     '<div class="meta-grid">'+
       '<div class="meta-chip"><b>이름</b>'+escH(studentName||'')+'</div>'+
@@ -1987,7 +2042,7 @@ function printSubmissionReport(s,studentName,studentId,academyName,siblings){
     essaySectionHtml+
     wrongHtml+
     '</div>'+
-    '<div class="noprint"><button onclick="window.print()">🖨 인쇄하기 · PDF 만들기</button></div>'+
+    '<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div>'+
     '</div></div>'+
     '</body></html>';
   const win=window.open('','_blank');
@@ -2001,7 +2056,39 @@ function sentenceErrorListHtml(aiEntry){
   const errors=Array.isArray(aiEntry.errors)?aiEntry.errors:[];
   if(!errors.length)return '';
   return '<ul class="err-list">'+errors.map(e=>'<li><span class="wrong">'+escH(e.wrong||'')+'</span> → <span class="correct">'+escH(e.correct||'')+'</span>'+(e.note?(' <span class="note">('+escH(e.note)+')</span>'):'')+'</li>').join('')+'</ul>'+
-    (aiEntry.corrected?('<div class="corrected-full">✔ '+escH(aiEntry.corrected)+'</div>'):'');
+    (aiEntry.corrected?('<div class="corrected-full">'+escH(aiEntry.corrected)+'</div>'):'');
+}
+/** 수행평가에 마인드맵·문법 연습 단계가 있었으면(원본 제출물에 mindmapNotes/grammarPractice로 저장돼요),
+ *  "고쳐 쓴 최종 글" 옆에 그 과정도 함께 보여줘요 — 최종 글만 덜렁 있는 게 아니라, 학생이 글을 쓰기까지
+ *  중간에 어떤 생각을 정리했고 어떤 문법 문제를 연습해봤는지도 리포트 한 장에서 알 수 있게요.
+ *  둘 다 없으면(예전 방식 수행평가이거나, 다 비워둔 채로 제출했으면) 아무것도 안 보여요. */
+function processSectionHtml(orig){
+  if(!orig)return '';
+  let mmHtml='';
+  try{
+    const mm=orig.mindmapNotes?JSON.parse(orig.mindmapNotes):null;
+    if(mm&&typeof mm==='object'){
+      const entries=Object.keys(mm).filter(k=>String(mm[k]||'').trim());
+      if(entries.length){
+        mmHtml='<div class="procblock"><div class="prochead">마인드맵에 적은 내용</div>'+
+          entries.map(k=>'<div class="proccard"><div class="pk">'+escH(k)+'</div><div class="pv">'+escH(mm[k]).replace(/\n/g,'<br>')+'</div></div>').join('')+
+          '</div>';
+      }
+    }
+  }catch(e){}
+  let gpHtml='';
+  try{
+    const gp=orig.grammarPractice?JSON.parse(orig.grammarPractice):null;
+    if(gp&&typeof gp==='object'){
+      const entries=Object.keys(gp).filter(k=>String(gp[k]||'').trim());
+      if(entries.length){
+        gpHtml='<div class="procblock"><div class="prochead">문법 연습에서 써본 문장</div>'+
+          entries.map(k=>'<div class="proccard"><div class="pk">'+escH(k)+'</div><div class="pv">'+escH(gp[k]).replace(/\n/g,'<br>')+'</div></div>').join('')+
+          '</div>';
+      }
+    }
+  }catch(e){}
+  return mmHtml+gpHtml;
 }
 /** 선생님이 학생 한 명을 미리보기(TEACHER_PREVIEW) 하는 화면에서 누르는 종합 리포트예요. 그 학생이 지금까지
  *  제출한 모든 글 중에서 "첨삭을 받고, 그걸 반영해 Re-Writing까지 끝낸" 것만 골라서, 과제마다
@@ -2011,6 +2098,7 @@ function sentenceErrorListHtml(aiEntry){
  *  같은 제목(point)으로 여러 번 냈으면 원본은 가장 최근 것, Re-Writing도 가장 최근(최종) 것을 짝지어요. */
 function printStudentRewriteReport(preview){
   const subs=(preview&&preview.subs)||[];
+  const academyName=(subs.find(x=>x&&x.academy)||{}).academy||'';
   const latestByPoint=(list)=>{
     const m={};
     list.forEach(s=>{
@@ -2039,49 +2127,59 @@ function printStudentRewriteReport(preview){
       let html='<p class="osent">'+(i+1)+'. '+escH(sent)+'</p>';
       html+=sentenceErrorListHtml(ai);
       html+=sentenceErrorListHtml(aiGpt);
-      if(c)html+='<div class="cmt">💬 '+escH(c)+'</div>';
+      if(c)html+='<div class="cmt">'+escH(c)+'</div>';
       return html;
     }).join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
-    const overallHtml=[aifb.overall,aifbGpt.overall,fb.overall].filter(Boolean).map(t=>'<div class="overall">👩‍🏫 '+escH(t).replace(/\n/g,'<br>')+'</div>').join('');
+    const overallHtml=[aifb.overall,aifbGpt.overall,fb.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');
     const rewriteSents=r.text?splitSentences(r.text):[];
     const rewriteHtml=rewriteSents.length?rewriteSents.map((s,i)=>'<p>'+(i+1)+'. '+escH(s)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
+    const scoreLabel=(o.total!=null&&String(o.total).trim()!==''&&String(o.total)!=='-')?(' &nbsp;·&nbsp; 점수 '+escH(String(o.total))+(o.grade?(' ('+escH(o.grade)+'등급)'):'')):'';
     return '<section class="piece'+(pi>0?' pagebreak':'')+'">'+
       '<h2>'+(pi+1)+'. '+escH(p.point)+' <span class="tag">'+escH(o.type||'')+'</span></h2>'+
-      '<div class="dates">원본 제출 '+escH(o.datetime||'')+' &nbsp;→&nbsp; Re-Writing 제출 '+escH(r.datetime||'')+(errCount?(' &nbsp;·&nbsp; 지적된 부분 '+errCount+'곳'):'')+'</div>'+
-      '<h3>✏️ 처음 쓴 글과 지적된 부분</h3>'+
-      '<div class="osent-wrap">'+sentsHtml+'</div>'+
-      overallHtml+
-      '<h3>✅ 고쳐 쓴 최종 글 (Re-Writing)</h3>'+
-      '<div class="rsent-wrap">'+rewriteHtml+'</div>'+
+      '<div class="dates">원본 제출 '+escH(o.datetime||'')+' &nbsp;→&nbsp; Re-Writing 제출 '+escH(r.datetime||'')+(errCount?(' &nbsp;·&nbsp; 지적된 부분 '+errCount+'곳'):'')+scoreLabel+'</div>'+
+      '<div class="compare">'+
+        '<div class="win orig"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>처음 쓴 글 · 지적된 부분</div>'+
+          '<div class="win-body osent-wrap">'+sentsHtml+overallHtml+'</div></div>'+
+        '<div class="win fixed"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 최종 글</div>'+
+          '<div class="win-body rsent-wrap">'+rewriteHtml+processSectionHtml(o)+'</div></div>'+
+      '</div>'+
       '</section>';
   }).join('');
-  const summaryHtml='<div class="summary">🎉 총 <b>'+pairs.length+'개</b> 과제에서 첨삭을 받고 Re-Writing까지 완료했어요. 아래에 과제마다 처음 쓴 글에서 지적된 부분과, 그걸 반영해 고쳐 쓴 최종 글을 나란히 정리했어요.</div>';
+  // 원본 제출물에 점수(total)가 남아있는 것들만 골라서 평균을 내요 — 채점이 안 된(점수 없는) 과제는
+  // 평균 계산에서 자연히 빠져요. 하나도 없으면 평균 칩 자체를 안 보여줘요.
+  const scoredPairs=pairs.map(p=>parseFloat(p.original.total)).filter(n=>!isNaN(n));
+  const avgScore=scoredPairs.length?Math.round((scoredPairs.reduce((a,b)=>a+b,0)/scoredPairs.length)*10)/10:null;
+  const summaryHtml='<div class="summary">총 <b>'+pairs.length+'개</b> 과제에서 첨삭을 받고 Re-Writing까지 완료했어요'+
+    (avgScore!=null?(' · 평균 점수 <b>'+avgScore+'점</b>('+scoredPairs.length+'개 과제 기준)'):'')+
+    '. 아래에 과제마다 처음 쓴 글에서 지적된 부분과, 그걸 반영해 고쳐 쓴 최종 글을 나란히 정리했어요.</div>';
   const extraCss=
-    '.summary{background:linear-gradient(120deg,#EFE7FF,#DFF6F5);border-radius:14px;padding:13px 16px;font-size:13.5px;margin-bottom:26px}'+
-    'section.piece{margin-bottom:30px;padding-bottom:26px;border-bottom:1px dashed #E6DAE9}'+
+    '.summary{background:#FAFAFC;border:1px solid #E2E2E8;border-left:4px solid #2B2733;border-radius:0;padding:12px 16px;font-size:13.5px;margin-bottom:24px}'+
+    'section.piece{margin-bottom:28px;padding-bottom:24px;border-bottom:1px dashed #DEDCE4}'+
     'section.piece:last-of-type{border-bottom:none}'+
     'section.piece.pagebreak{page-break-before:always}'+
-    'section.piece h2{font-size:15.5px;margin:0 0 4px;color:#4A3F55;font-weight:800}'+
-    'section.piece h2 .tag{font-size:11px;font-weight:800;color:#fff;background:linear-gradient(120deg,#FF8FAA,#9678EE);border-radius:999px;padding:3px 11px;margin-left:8px;vertical-align:middle}'+
+    'section.piece h2{font-size:15px;margin:0 0 4px;color:#2B2733;font-weight:800}'+
+    'section.piece h2 .tag{font-size:11px;font-weight:800;color:#2B2733;background:#FAFAFC;border:1px solid #E2E2E8;border-radius:0;padding:3px 10px;margin-left:8px;vertical-align:middle}'+
     '.dates{color:#8D8298;font-size:12px;margin:6px 0 14px}'+
-    'h3{font-size:13px;margin:16px 0 8px;color:#4A3F55;font-weight:800}';
+    '.win h3{font-size:12.5px;margin:0 0 8px;color:inherit;font-weight:800}';
   // (문장별 틀린 부분/고친 부분/총평 스타일은 REPORT_BASE_CSS로 옮겨서 printSubmissionReport와 공용으로 써요.)
   const html='<!doctype html><html><head><meta charset="utf-8"><title>'+escH((preview&&preview.studentName)||'')+' - 첨삭·Re-Writing 종합 리포트</title>'+
+    REPORT_FONT_LINKS+
     '<style>'+
     REPORT_BASE_CSS+extraCss+
     '</style></head><body>'+
     '<div class="page"><div class="sheet">'+
-    '<div class="hero"><h1>📊 첨삭 → Re-Writing 종합 리포트</h1><div class="sub">첨삭받은 뒤 다시 써서(Re-Writing) 완료된 글들을 모아, 어디를 왜 틀렸고 어떻게 고쳤는지 한 번에 볼 수 있게 정리했어요.</div></div>'+
+    '<div class="hero">'+academyLogoHtml(academyName)+'<div><h1>첨삭 → Re-Writing 종합 리포트</h1><div class="sub">첨삭받은 뒤 다시 써서(Re-Writing) 완료된 글들을 모아, 어디를 왜 틀렸고 어떻게 고쳤는지 정리했어요.</div></div></div>'+
     '<div class="body-pad">'+
     '<div class="meta-grid">'+
       '<div class="meta-chip"><b>이름</b>'+escH((preview&&preview.studentName)||'')+'</div>'+
       '<div class="meta-chip"><b>아이디</b>'+escH((preview&&preview.studentId)||'')+'</div>'+
       (preview&&preview.ctx?('<div class="meta-chip"><b>학교/학년/반</b>'+escH(preview.ctx)+'</div>'):'')+
+      (avgScore!=null?('<div class="meta-chip score"><b>평균 점수</b>'+avgScore+'점</div>'):'')+
     '</div>'+
     summaryHtml+
     sectionHtml+
     '</div>'+
-    '<div class="noprint"><button onclick="window.print()">🖨 인쇄하기 · PDF 만들기</button></div>'+
+    '<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div>'+
     '</div></div>'+
     '</body></html>';
   const win=window.open('','_blank');
@@ -4021,7 +4119,7 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
     others.forEach(o=>{
       const row=el('button','btn ghost');row.type='button';
       row.style.cssText='display:block;width:100%;text-align:left;padding:10px 14px;margin-bottom:8px;border-radius:10px';
-      row.innerHTML='<div style="font-weight:700">'+escH(o.datetime||'')+'</div>'+
+      row.innerHTML='<div style="font-weight:700">'+escH(o.datetime||'')+(o.type?(' <span style="font-weight:800;color:'+(o.type==='Re-Writing'?'#059669':'#4338ca')+'">· '+escH(o.type)+'</span>'):'')+'</div>'+
         '<div style="margin-top:2px;color:#6b7684;font-size:13px">점수: '+escH(String(o.total||'-'))+(o.grade?(' · '+escH(o.grade)+'등급'):'')+(o.feedback?' · 첨삭 있음':'')+'</div>';
       row.onclick=()=>viewTeacherSubmissionDetail(o,studentId,studentName,siblings,backFn);
       listWrap.appendChild(row);
@@ -4157,6 +4255,40 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
         }catch(e){fx.className='fx no';fx.textContent='저장하지 못했어요. 인터넷 연결을 확인하세요.';}
         saveBtn.disabled=false;saveBtn.textContent=prev;
       };
+      // 학생이 첨삭을 이미 받았거나(Re-Writing 포함) 제출 형식이 예전 것이라 학생 스스로는 못 고치는
+      // 글도, 선생님 권한으로는 오타·내용을 직접 고쳐 쓸 수 있게 해요(첨삭·AI 첨삭은 그대로 남아있어요).
+      if(s.text){
+        const teditWrap=el('div');teditWrap.style.cssText='margin-top:18px;padding-top:14px;border-top:1px dashed rgba(0,0,0,.1)';
+        const teditBtn=el('button','btn ghost','✏️ 학생 글 수정 (선생님 권한)');teditBtn.type='button';teditBtn.style.cssText='padding:5px 12px;font-size:12px';
+        const teditBody=el('div');teditBody.style.cssText='display:none;margin-top:8px';
+        const teditTa=el('textarea','in tedit-ta');teditTa.value=s.text;teditTa.style.cssText='min-height:110px;font-size:13.5px';
+        const teditBtnRow=el('div');teditBtnRow.style.cssText='display:flex;gap:8px;margin-top:6px;align-items:center';
+        const teditSave=el('button','btn blue tedit-save','저장');teditSave.type='button';teditSave.style.cssText='padding:5px 12px;font-size:12.5px';
+        const teditCancel=el('button','btn ghost','취소');teditCancel.type='button';teditCancel.style.cssText='padding:5px 12px;font-size:12.5px';
+        const teditMsg=el('span','fx');
+        teditBtnRow.appendChild(teditSave);teditBtnRow.appendChild(teditCancel);teditBtnRow.appendChild(teditMsg);
+        teditBody.appendChild(el('div','hint','여기서 고치면 이 제출물의 "작성한 글"만 바뀌어요 — 이미 남아있는 첨삭·AI 첨삭 내용은 그대로 유지돼요.'));
+        teditBody.appendChild(teditTa);teditBody.appendChild(teditBtnRow);
+        teditBtn.onclick=()=>{const show=teditBody.style.display==='none';teditBody.style.display=show?'block':'none';if(show)setTimeout(()=>teditTa.focus(),30);};
+        teditCancel.onclick=()=>{teditTa.value=s.text;teditBody.style.display='none';};
+        teditSave.onclick=async()=>{
+          if(!s.subId){teditMsg.className='fx no';teditMsg.textContent='이 제출물은 지원하지 않는 예전 형식이에요.';return;}
+          if(!teditTa.value.trim()){teditMsg.className='fx no';teditMsg.textContent='내용을 입력해주세요.';return;}
+          teditSave.disabled=true;teditCancel.disabled=true;teditMsg.className='fx';teditMsg.textContent='저장 중…';
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'teacherEditSubmission',subId:s.subId,text:teditTa.value,academy:s.academy||''})});
+            let data=null;try{data=await res.json();}catch(e){}
+            if(!data||data.ok===false)throw new Error((data&&data.error)||'저장하지 못했어요.');
+            s.text=teditTa.value;
+            viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn);
+          }catch(e){
+            teditMsg.className='fx no';teditMsg.textContent=String((e&&e.message)||e);
+            teditSave.disabled=false;teditCancel.disabled=false;
+          }
+        };
+        teditWrap.appendChild(teditBtn);teditWrap.appendChild(teditBody);
+        card.appendChild(teditWrap);
+      }
   })();
 });}
 
@@ -4889,6 +5021,10 @@ function runExam(topic){deckInit();
   // 마인드맵에 적은 내용은 이후 실제 글쓰기 화면 오른쪽 참고 패널에 그대로 보여줘요(Paragraph Writing의
   // 좌우 분할 글쓰기 방식과 같아요) — 그래서 각 가지의 값을 mmNotes에 실시간으로 저장해둬요.
   const mmNotes={};
+  // 문법 연습 슬라이드에서 학생이 "기본 문장을 이 문법으로 바꿔 써본" 연습 답도, 나중에 선생님이 보는
+  // 리포트에서 "중간에 이런 문제를 풀었구나"를 알 수 있도록 함께 기록해둬요(문법명 → 연습 답).
+  const gpNotes={};
+  grammarItems.forEach(g=>{gpNotes[g.name]='';});
   mindmapItems.forEach(m=>{mmNotes[m.name]='';});
   if(mindmapItems.length){
     slideAdd(b=>{
@@ -4944,7 +5080,7 @@ function runExam(topic){deckInit();
     slideAdd(b=>{
       b.appendChild(el('span','badge accent','수행평가 대비 · 오늘의 문법 연습'));
       b.appendChild(el('h1','title','🔧 오늘의 문법 연습'));
-      b.appendChild(el('div','hint','오늘 필요한 문법을 미리 연습해보고, 실제 글을 쓸 때 자유롭게 적용해보세요. 아래 연습은 채점되지 않아요 — 자유롭게 써 보는 연습장이에요.'));
+      b.appendChild(el('div','hint','오늘 필요한 문법을 미리 연습해보고, 실제 글을 쓸 때 자유롭게 적용해보세요. 채점되지는 않지만, 여기 써본 내용은 나중에 선생님이 보는 리포트에 "중간에 연습한 문제"로 함께 남아요.'));
       grammarItems.forEach((g,gi)=>{
         const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-top:12px;background:#faf9fb';
         card.appendChild(el('div','fl',g.name));
@@ -4952,7 +5088,9 @@ function runExam(topic){deckInit();
         if(g.example){const exm=el('div');exm.style.cssText='margin-top:6px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;color:#374151';exm.innerHTML='<b>예시 변형</b><br>'+escH(g.example);card.appendChild(exm);}
         if(g.base){
           card.appendChild(el('div','hint','기본 문장: '+g.base));
-          const practiceTa=el('textarea','in');practiceTa.placeholder='위 기본 문장을 이 문법으로 바꿔 써보세요 (연습용 · 저장되지 않아요)';practiceTa.style.cssText='min-height:50px;font-size:13px;margin-top:4px';
+          const practiceTa=el('textarea','in');practiceTa.placeholder='위 기본 문장을 이 문법으로 바꿔 써보세요';practiceTa.style.cssText='min-height:50px;font-size:13px;margin-top:4px';
+          practiceTa.value=gpNotes[g.name]||'';
+          practiceTa.addEventListener('input',()=>{gpNotes[g.name]=practiceTa.value;});
           card.appendChild(practiceTa);
         }
         b.appendChild(card);
@@ -5077,8 +5215,13 @@ function runExam(topic){deckInit();
         const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];
         const studyTimeStr=fmtDur(studyMs);
         const prog=`수행평가 조건 ${okConds}/${totalConds} · 학습시간 ${studyTimeStr}`;
+        // 마인드맵·문법 연습 단계가 있었던 수행평가라면, 그 중간 과정도 함께 보내서 나중에 리포트에서
+        // "고쳐 쓴 최종 글"과 함께 볼 수 있게 해요. 빈 값만 있으면(가지를 하나도 안 채웠으면) 아예 안 보내요.
+        const mmFilled=Object.keys(mmNotes).some(k=>String(mmNotes[k]||'').trim());
+        const gpFilled=Object.keys(gpNotes).some(k=>String(gpNotes[k]||'').trim());
         const payload={book:lv.book,chapter:'Performance Assessment',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:genSubId(),datetime:dt,
-          quiz:'',arrange:'',compose:'',task:okConds+'/'+totalConds,final:taskText,total:okConds+'/'+totalConds,score:score,grade:gr,progress:prog,studyTime:studyTimeStr};
+          quiz:'',arrange:'',compose:'',task:okConds+'/'+totalConds,final:taskText,total:okConds+'/'+totalConds,score:score,grade:gr,progress:prog,studyTime:studyTimeStr,
+          mindmapNotes:mmFilled?JSON.stringify(mmNotes):'',grammarPractice:gpFilled?JSON.stringify(gpNotes):''};
         const txt=['English Writing Lab · 수행평가 대비',topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'학습 시간: '+studyTimeStr,'',
           '[작성한 글]',taskText||'(작성 없음)','','총점 '+score+'/100 ('+gr+') · 조건 '+okConds+'/'+totalConds].join('\n');
         return{payload,txt};};
