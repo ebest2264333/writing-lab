@@ -972,6 +972,10 @@ const LEVELS=[
    덮어쓰고, 새로 추가된 레벨은 Pattern Drill 챕터 없이(Paragraph Writing/Article/수행평가/Re-Writing은 바로
    가능) LEVELS 맨 뒤에 추가돼요. */
 let LEVELS_DATA=[];
+// 문법 드릴(Pattern Drill) "조건 영작"의 전체 분량 기준 — 코드에 고정된 숫자가 아니라, 스프레드시트
+// '설정' 탭(PATTERN_DRILL_MIN_WORDS·PATTERN_DRILL_MIN_SENTENCES)에서 매번 새로 받아와서 채워요.
+// 서버에서 못 받아오면(네트워크 오류 등) 이 기본값(100단어·8문장)으로 계속 동작해요.
+let DRILL_MIN_WORDS=100,DRILL_MIN_SENTENCES=8;
 function applyLevelsData(){
   if(!Array.isArray(LEVELS_DATA)||!LEVELS_DATA.length)return;
   const bySeq=LEVELS_DATA.slice().sort((a,b)=>(a.seq||0)-(b.seq||0));
@@ -2175,19 +2179,36 @@ function processSectionHtml(orig){
       }
     }
   }catch(e){}
-  let gpHtml='';
+  return mmHtml+grammarPracticeHtml(orig);
+}
+/** "오늘의 문법 연습"에서 학생이 적은 "나의 문장"들과, 선생님이 "🤖 문법 연습 AI 검토"를 눌러 만든
+ *  검토 결과(orig.grammarFeedback — 문법명별 grammarOk/sentenceOk/corrected/note)가 있으면 문장 바로
+ *  아래에 함께 보여줘요. 아직 검토를 안 했으면(orig.grammarFeedback 없음) 문장만 보여줘요.
+ *  개별/종합 인쇄 리포트(processSectionHtml)와 선생님 상세 화면의 검토 버튼 둘 다에서 재사용해요. */
+function grammarPracticeHtml(orig){
+  if(!orig)return '';
   try{
     const gp=orig.grammarPractice?JSON.parse(orig.grammarPractice):null;
-    if(gp&&typeof gp==='object'){
-      const entries=Object.keys(gp).filter(k=>String(gp[k]||'').trim());
-      if(entries.length){
-        gpHtml='<div class="procblock"><div class="prochead">문법 연습에서 써본 문장</div>'+
-          entries.map(k=>'<div class="proccard"><div class="pk">'+escH(k)+'</div><div class="pv">'+escH(gp[k]).replace(/\n/g,'<br>')+'</div></div>').join('')+
-          '</div>';
-      }
-    }
-  }catch(e){}
-  return mmHtml+gpHtml;
+    if(!gp||typeof gp!=='object')return '';
+    let gf=null;
+    try{ gf=orig.grammarFeedback?JSON.parse(orig.grammarFeedback):null; }catch(e){}
+    const entries=Object.keys(gp).filter(k=>String(gp[k]||'').trim());
+    if(!entries.length)return '';
+    return '<div class="procblock"><div class="prochead">문법 연습에서 써본 문장</div>'+
+      entries.map(k=>{
+        let fbHtml='';
+        const f=gf&&gf[k];
+        if(f&&typeof f==='object'){
+          const good=f.grammarOk!==false&&f.sentenceOk!==false;
+          fbHtml='<div style="margin-top:6px;padding:6px 8px;border-radius:6px;font-size:12.5px;'+
+            (good?'background:#e6f6ec;color:#059669':'background:#fdf1e7;color:#c2650a')+'">'+
+            (good?'✅ AI 검토: 문법을 잘 활용했어요.':'🤖 AI 검토: '+escH(f.note||'')+(f.corrected?'<br>→ '+escH(f.corrected):''))+
+            '</div>';
+        }
+        return '<div class="proccard"><div class="pk">'+escH(k)+'</div><div class="pv">'+escH(gp[k]).replace(/\n/g,'<br>')+'</div>'+fbHtml+'</div>';
+      }).join('')+
+      '</div>';
+  }catch(e){ return ''; }
 }
 /** 선생님이 학생 한 명을 미리보기(TEACHER_PREVIEW) 하는 화면에서 누르는 종합 리포트예요. 그 학생이 지금까지
  *  제출한 모든 글 중에서 "첨삭을 받고, 그걸 반영해 Re-Writing까지 끝낸" 것만 골라서, 과제마다
@@ -4525,6 +4546,46 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
         const wrongWrap=el('div');wrongWrap.innerHTML=renderDrillWrongReport(parseWrongReport(s.wrongReport));
         card.appendChild(wrongWrap);
       }
+      if(s.mindmapNotes){
+        const mmWrap=el('div');mmWrap.style.cssText='margin-top:10px';
+        mmWrap.innerHTML=processSectionHtml({mindmapNotes:s.mindmapNotes});
+        card.appendChild(mmWrap);
+      }
+      if(s.grammarPractice){
+        const gpWrap=el('div');gpWrap.style.cssText='margin-top:10px';
+        const gpResultBox=el('div');
+        gpResultBox.innerHTML=grammarPracticeHtml(s);
+        gpWrap.appendChild(gpResultBox);
+        // "🤖 문법 연습 AI 검토" 버튼은 선생님 전용이에요 — 이 상세 화면 자체가 선생님만 들어오는
+        // 화면이지만, 혹시 모를 상황(예: 테스트계정)까지 대비해 한 번 더 역할을 확인해서, 학생 계정
+        // 흐름에서는 이 화면에 들어오더라도 절대 이 버튼이 안 보이게 해요. 서버(generateGrammarFeedbackNow)
+        // 에서도 role이 teacher가 아니면 거부해서, 화면에 버튼이 없어도 요청 자체를 막아요.
+        if(USER.role==='teacher'){
+          const gpBtn=el('button','btn ghost',s.grammarFeedback?'🤖 문법 연습 AI 검토 다시하기':'🤖 문법 연습 AI 검토');
+          gpBtn.type='button';gpBtn.style.cssText='padding:6px 12px;font-size:13px;margin-top:8px';
+          const gpMsg=el('div','fx');
+          gpWrap.appendChild(gpBtn);gpWrap.appendChild(gpMsg);
+          gpBtn.onclick=async()=>{
+            gpBtn.disabled=true;const prevT=gpBtn.textContent;gpBtn.textContent='검토하는 중… (몇 초 걸릴 수 있어요)';
+            gpMsg.className='fx';gpMsg.textContent='';
+            try{
+              const payload={action:'generateGrammarFeedbackNow',academy:s.academy||'',role:USER.role};
+              if(s.subId){payload.subId=s.subId;}else{payload.studentId=studentId;payload.datetime=s.datetime||'';}
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+            let data=null;try{data=await res.json();}catch(e){}
+            if(!data||!data.ok)throw new Error((data&&data.error)||'문법 연습 AI 검토에 실패했어요.');
+            gpResultBox.innerHTML=grammarPracticeHtml(Object.assign({},s,{grammarFeedback:data.grammarFeedback}));
+            gpMsg.className='fx ok';gpMsg.textContent='✅ 방금 검토했어요. 인쇄 리포트에도 함께 나와요.';
+            gpBtn.textContent='🤖 문법 연습 AI 검토 다시하기';
+          }catch(e){
+            gpMsg.className='fx no';gpMsg.textContent=String(e.message||e);
+          }finally{
+            gpBtn.disabled=false;if(gpBtn.textContent.indexOf('검토하는 중')>-1)gpBtn.textContent=prevT;
+          }
+          };
+        }
+        card.appendChild(gpWrap);
+      }
       const fb=parseFeedback(s.feedback);
       const aifb=parseAiFeedback(s.aiFeedback);
       const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
@@ -4846,7 +4907,18 @@ function runDrill(P){setWide(false);deckInit();
     b.appendChild(el('div','lead',autoFormatPrompt(P.task.prompt)));
     b.appendChild(makeDictBtn());
     const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';b.appendChild(ta);
-    const ul=el('ul','conds');P.task.conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});b.appendChild(ul);
+    // "조건 영작"은 개별 문법 포인트마다 다른 조건(문법 사용 등) 말고도, Pattern Drill 전체에 공통으로
+    // 적용되는 최소 분량 조건(전체 단어 수·전체 문장 수)이 항상 함께 붙어요 — 선생님이 매번 "과제 조건"에
+    // 분량 조건을 직접 추가하지 않아도 자동으로 붙게요. 기준 숫자는 이 코드에 직접 넣지 않고, 스프레드시트
+    // '설정' 탭의 PATTERN_DRILL_MIN_WORDS·PATTERN_DRILL_MIN_SENTENCES 값을 그대로 읽어와요(DRILL_MIN_WORDS·
+    // DRILL_MIN_SENTENCES는 loadLiveContent()에서 채워져요) — 숫자를 바꾸고 싶으면 코드 수정 없이 그 탭의
+    // 값만 고치면 돼요. 다만 이 조건들도(다른 조건들과 마찬가지로) 화면에 충족 여부만 보여줄 뿐 제출
+    // 자체를 막지는 않아요 — 분량이 부족해도 학생은 언제든 제출할 수 있어요.
+    const drillConds=(P.task.conds||[]).concat([
+      {label:'전체 단어 수 '+DRILL_MIN_WORDS+'단어 이상',test:t=>countWords(t)>=DRILL_MIN_WORDS},
+      {label:'전체 문장 수 '+DRILL_MIN_SENTENCES+'개 이상',test:t=>sc(t)>=DRILL_MIN_SENTENCES}
+    ]);
+    const ul=el('ul','conds');drillConds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});b.appendChild(ul);
     const fx=el('div','fx');b.appendChild(fx);
     addAiCondCheckButton(b,ul,()=>ta.value);
     const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
@@ -6178,6 +6250,8 @@ async function loadLiveContent(){
       if(Array.isArray(data.genarticle))GENARTICLE=data.genarticle;
       if(Array.isArray(data.genexam))GENEXAM=data.genexam;
       if(Array.isArray(data.story))GENSTORY=data.story;
+      if(typeof data.drillMinWords==='number'&&data.drillMinWords>=0)DRILL_MIN_WORDS=data.drillMinWords;
+      if(typeof data.drillMinSentences==='number'&&data.drillMinSentences>=0)DRILL_MIN_SENTENCES=data.drillMinSentences;
     }
   }catch(e){
     console.warn('컨텐츠를 실시간으로 불러오지 못했어요(기본 커리큘럼만 사용해요):',e);
