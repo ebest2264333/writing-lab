@@ -2705,10 +2705,16 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
        어려워요 — 그래서 editSubmission 저장 뒤 지금까지 해온 것과 같은 방식으로, 최초 한 번을
        제외하고 데이터가 바뀔 때마다 이 화면 자체를 다시 불러요(viewMyFeedback). firebase 로그인이
        안 돼 있으면(fbSignedIn=false) 구독을 시작하지 않고 지금처럼 화면을 열 때 한 번만 받아와요. */
+    // 학생이 "제출한 글 수정하기" 칸을 열어둔 채로 있을 때 실시간 업데이트가 와서 화면이
+    // 통째로 다시 그려지면, 학생이 쓰던 수정 내용이 사라져버려요. 그래서 편집 중일 때는
+    // 화면을 즉시 다시 그리지 않고 "새 소식 있어요" 대기만 해뒀다가, 편집을 닫을 때(저장 or
+    // 취소) 그제서야 반영해요.
+    let editingOpen=false, pendingRefresh=false;
     if(fbSignedIn){
       let firstSnap=true;
       const unsub=fbDb.collection('ewl_submissions').where('id','==',USER.id).onSnapshot(()=>{
         if(firstSnap){firstSnap=false;return;}
+        if(editingOpen){pendingRefresh=true;return;}
         viewMyFeedback();
       },err=>console.warn('내 제출 내역 실시간 구독 오류:',err));
       trackViewUnsub(unsub);
@@ -2739,6 +2745,8 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
       const canEdit=!!(s.subId&&s.text&&EDITABLE_TYPES.indexOf(s.type)>-1&&noFeedbackYet);
       const viewBox=el('div');
       const renderReadOnly=()=>{
+        editingOpen=false;
+        if(pendingRefresh){pendingRefresh=false;viewMyFeedback();return;}
         viewBox.innerHTML='';
         if(canEdit){
           const editBtn=el('button','btn ghost','✏️ 제출한 글 수정하기');editBtn.type='button';editBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
@@ -2793,6 +2801,7 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
         }
       };
       const renderEditForm=()=>{
+        editingOpen=true;
         viewBox.innerHTML='';
         const editWrap=el('div');editWrap.style.marginTop='10px';
         editWrap.appendChild(el('div','hint','아직 첨삭받기 전이라 내용을 고쳐 쓸 수 있어요. 저장하면 이 제출물이 새 내용으로 바뀌고, AI 첨삭도 새 글 기준으로 다시 만들어져요.'));
