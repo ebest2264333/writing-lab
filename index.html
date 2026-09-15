@@ -1065,15 +1065,97 @@ function applyPatternStructureData(){
   });
 }
 
-/* ===== 워크플로우 생성 콘텐츠 (GEN) — id로 LEVELS의 '준비 중' 자리에 병합 ===== */
-let GEN=[];//GEN_INJECT
-function toPoint(g){
-  const conds=(g.task&&g.task.conds||[]).map(c=>{let test;
+/* ===== 파이어스토어(마이그레이션된) 콘텐츠는 "한 줄에 하나씩" 적는 평문 텍스트 필드
+   (quizText/arrangeText/composeText/explainPartsText/taskCondText/vocabText/condText 등)로
+   저장돼요 — 콘텐츠 작성 화면(CONTENT_FORMS)에서 선생님이 입력하는 형식 그대로예요.
+   예전 Apps Script 백엔드는 이 평문을 화면이 바로 쓸 수 있는 배열/객체(quiz:[...] 등)로
+   서버에서 미리 파싱해서 내려줬는데, 그 파싱 코드(Code_full_v2.gs)는 새 백엔드로 안 옮겨왔어요.
+   그래서 여기 클라이언트 쪽에 그 파싱 로직을 그대로 옮겨왔어요 — 이 함수들이 없으면 실시간으로
+   받아온 콘텐츠의 quiz/arrange/compose/task 등이 비어있는 텍스트 상태로 남아서 화면에서
+   "Cannot read properties of undefined" 같은 오류가 나요. */
+function parseCondText(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const bar=line.indexOf('|');
+    const label=(bar>-1?line.slice(0,bar):line).trim();
+    const rest=(bar>-1?line.slice(bar+1):'').trim();
+    const m=rest.match(/^(문장수|regex)\s*:\s*(.*)$/);
+    if(m)return m[1]==='문장수'?{label,minSentences:Number(m[2])}:{label,regex:m[2]};
+    return {label,regex:rest};
+  });
+}
+function condsToTests(conds){
+  return (conds||[]).map(c=>{let test;
     if(typeof c.minSentences==='number'){const m=c.minSentences;test=t=>sc(t)>=m;}
     else if(c.regex){try{const re=new RegExp(c.regex,'i');test=t=>re.test(t);}catch(e){test=()=>true;}}
     else test=()=>true;return {label:c.label,test};});
-  return {id:g.id,title:g.title,explain:{lead:g.explainParts||[],note:g.explainNote||''},
-    quiz:g.quiz,arrange:g.arrange,compose:g.compose,task:{prompt:g.task.prompt,sample:g.task.sample,conds},images:g.images||''};
+}
+function parseExplainPartsText(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    let m=line.match(/^텍스트\s*:\s*(.*)$/);
+    if(m)return {t:m[1]};
+    m=line.match(/^키워드\s*:\s*(.*)$/);
+    const rest=m?m[1]:line;
+    const parts=rest.split('|').map(x=>x.trim());
+    return {k:parts[0]||'',n:parts[1]||''};
+  });
+}
+function parseQuizText(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    const o=(parts[1]||'').split(';').map(x=>x.trim()).filter(Boolean);
+    const a=Math.max(0,(parseInt(parts[2],10)||1)-1);
+    return {q:parts[0]||'',o,a,e:parts[3]||''};
+  });
+}
+function parseArrangeText(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return {ko:parts[0]||'',a:parts[1]||''};
+  });
+}
+function parseComposeText(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    const alt=(parts[3]||'').split(';').map(x=>x.trim()).filter(Boolean);
+    return {k:parts[0]||'',a:parts[1]||'',h:parts[2]||'',alt};
+  });
+}
+function parseEnKoLines(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return {en:parts[0]||'',ko:parts[1]||''};
+  });
+}
+function parseSampleText_(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return {en:parts[0]||'',ko:parts[1]||'',role:parts[2]||'',layer:parts[3]||''};
+  });
+}
+function buildOrganizerFromFlat_(g){
+  if(g.orgTopic||g.orgS1||g.orgS2||g.orgS3||g.orgConcl)
+    return {topic:g.orgTopic||'',s1:g.orgS1||'',s2:g.orgS2||'',s3:g.orgS3||'',concl:g.orgConcl||''};
+  return g.organizer||null;
+}
+function buildFlowFromFlat_(g){
+  if(g.flowTopic||g.flowS1||g.flowS2||g.flowS3||g.flowConcl)
+    return {topic:g.flowTopic||'',s1:g.flowS1||'',s2:g.flowS2||'',s3:g.flowS3||'',concl:g.flowConcl||''};
+  return g.flow||null;
+}
+
+/* ===== 워크플로우 생성 콘텐츠 (GEN) — id로 LEVELS의 '준비 중' 자리에 병합 ===== */
+let GEN=[];//GEN_INJECT
+function toPoint(g){
+  const explainParts=(g.explainParts&&g.explainParts.length)?g.explainParts:parseExplainPartsText(g.explainPartsText);
+  const quiz=(g.quiz&&g.quiz.length)?g.quiz:parseQuizText(g.quizText);
+  const arrange=(g.arrange&&g.arrange.length)?g.arrange:parseArrangeText(g.arrangeText);
+  const compose=(g.compose&&g.compose.length)?g.compose:parseComposeText(g.composeText);
+  const rawConds=(g.task&&g.task.conds&&g.task.conds.length)?g.task.conds:parseCondText(g.taskCondText);
+  const conds=condsToTests(rawConds);
+  const prompt=(g.task&&g.task.prompt)||g.taskPrompt||'';
+  const sample=(g.task&&g.task.sample)||g.taskSample||'';
+  return {id:g.id,title:g.title,explain:{lead:explainParts,note:g.explainNote||''},
+    quiz,arrange,compose,task:{prompt,sample,conds},images:g.images||''};
 }
 function mergeGen(){const M={};GEN.forEach(g=>{if(g&&g.id)M[g.id]=g;});
   LEVELS.forEach(l=>l.chapters.forEach(c=>{c.points=c.points.map(p=>(p&&p.soon&&M[p.id])?toPoint(M[p.id]):p);}));}
@@ -1164,8 +1246,19 @@ const PARA={
 let GENPARA=[];//GENPARA_INJECT
 let GENARTICLE=[];
 function mergePara(){const CHMAP={'PW-can':4,'PW-perfect':2,'PW-if':10};
+  // remergeContent()가 실시간 구독 때문에 반복 호출될 수 있어서, 매번 다시 채우기 전에 지난 번에
+  // 넣어둔 라이브 콘텐츠(_live로 표시해둠)만 골라 비워요 — 안 그러면 새로고침 없이 계속 쌓여서
+  // 같은 문단쓰기 주제가 목록에 중복으로 여러 번 나타나요(코드에 내장된 기본 주제는 그대로 둬요).
+  Object.keys(PARA).forEach(k=>{ PARA[k]=PARA[k].filter(t=>!t._live); });
   Object.keys(PARA).forEach(k=>PARA[k].forEach(t=>{if(CHMAP[t.id]!=null)t.chap=CHMAP[t.id];}));
-  GENPARA.forEach(t=>{if(t&&t.level&&PARA[t.level]){t.ready=true;PARA[t.level].push(t);}});
+  GENPARA.forEach(t=>{if(t&&t.level&&PARA[t.level]){
+    t.ready=true;t._live=true;
+    if(!(t.sample&&t.sample.length))t.sample=parseSampleText_(t.sampleText);
+    if(!(t.expressions&&t.expressions.length))t.expressions=parseEnKoLines(t.exprText);
+    if(!t.organizer)t.organizer=buildOrganizerFromFlat_(t);
+    if(!t.flow)t.flow=buildFlowFromFlat_(t);
+    PARA[t.level].push(t);
+  }});
   Object.keys(PARA).forEach(k=>PARA[k].sort((a,b)=>((a.chap||99)-(b.chap||99))));}
 
 /* ================= ARTICLE (기사 요약) ================= */
@@ -1192,15 +1285,17 @@ function visibleToUser(item){
   return matchAudience(item.targetSchool,school)&&matchAudience(item.targetSchoolGrade,grade)&&matchAudience(item.targetClass,cls);
 }
 function toArticlePoint(g){
-  const conds=(g.conds||[]).map(c=>{let test;
-    if(typeof c.minSentences==='number'){const m=c.minSentences;test=t=>sc(t)>=m;}
-    else if(c.regex){try{const re=new RegExp(c.regex,'i');test=t=>re.test(t);}catch(e){test=()=>true;}}
-    else test=()=>true;return {label:c.label,test};});
-  return {id:g.id,level:g.level,title:g.title,source:g.source||'',body:g.body||'',vocab:g.vocab||[],prompt:g.prompt||'',conds,
-    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||'',targetClass:g.targetClass||'',images:g.images||''};
+  const rawConds=(g.conds&&g.conds.length)?g.conds:parseCondText(g.condText);
+  const conds=condsToTests(rawConds);
+  const vocab=(g.vocab&&g.vocab.length)?g.vocab:parseEnKoLines(g.vocabText);
+  return {id:g.id,level:g.level,title:g.title,source:g.source||'',body:g.body||'',vocab,prompt:g.prompt||'',conds,
+    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||g.targetGrade||'',targetClass:g.targetClass||'',images:g.images||''};
 }
 const ARTICLE={};
 function mergeArticle(){
+  // remergeContent()가 실시간 구독 때문에 반복 호출돼도 목록이 계속 쌓이지 않도록, 다시 채우기
+  // 전에 항상 한 번 비워요(mergeStory와 같은 방식).
+  Object.keys(ARTICLE).forEach(k=>{ delete ARTICLE[k]; });
   (typeof GENARTICLE!=='undefined'?GENARTICLE:[]).forEach(g=>{
     if(!g||!g.level)return;
     (ARTICLE[g.level]=ARTICLE[g.level]||[]).push(toArticlePoint(g));
@@ -1210,17 +1305,18 @@ function mergeArticle(){
 /* ================= EXAM (수행평가 대비) ================= */
 let GENEXAM=[];
 function toExamPoint(g){
-  const conds=(g.conds||[]).map(c=>{let test;
-    if(typeof c.minSentences==='number'){const m=c.minSentences;test=t=>sc(t)>=m;}
-    else if(c.regex){try{const re=new RegExp(c.regex,'i');test=t=>re.test(t);}catch(e){test=()=>true;}}
-    else test=()=>true;return {label:c.label,test};});
+  const rawConds=(g.conds&&g.conds.length)?g.conds:parseCondText(g.condText);
+  const conds=condsToTests(rawConds);
   return {id:g.id,level:g.level,title:g.title,prompt:g.prompt||'',conds,
-    evalCriteria:g.evalCriteria||'',
-    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||'',targetClass:g.targetClass||'',images:g.images||'',
+    evalCriteria:g.evalCriteria||g.evalAreaText||'',
+    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||g.targetGrade||'',targetClass:g.targetClass||'',images:g.images||'',
     mindmapText:g.mindmapText||'',frameText:g.frameText||'',grammarSwapText:g.grammarSwapText||''};
 }
 const EXAM={};
 function mergeExam(){
+  // remergeContent()가 실시간 구독 때문에 반복 호출돼도 목록이 계속 쌓이지 않도록, 다시 채우기
+  // 전에 항상 한 번 비워요(mergeStory와 같은 방식).
+  Object.keys(EXAM).forEach(k=>{ delete EXAM[k]; });
   (typeof GENEXAM!=='undefined'?GENEXAM:[]).forEach(g=>{
     if(!g||!g.level)return;
     (EXAM[g.level]=EXAM[g.level]||[]).push(toExamPoint(g));
