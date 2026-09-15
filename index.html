@@ -306,6 +306,11 @@
   .modal-x:hover{background:var(--line-2)}
   .modal-body{padding:18px 20px;overflow-y:auto}
 </style>
+<!-- Firebase(실시간 연동용) — 파이어베이스 콘솔에서 받은 공개 설정값과 함께 아래 본문 스크립트 맨 앞에서
+     초기화해요. compat 빌드라 firebase.xxx() 형태로 바로 쓸 수 있어요(별도 번들러 필요 없음). -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 </head>
 <body>
 <div id="page">
@@ -317,7 +322,40 @@
 </div>
 </div>
 <script>
-const SUBMIT_URL="https://script.google.com/macros/s/AKfycbwyL3hM4syjOmtxSQ2bxG-XWXYyHhlfxvtAUhleP5hWf2pmcYP5nHxmHmLyz5R1KRgh/exec";
+// const SUBMIT_URL="https://script.google.com/macros/s/AKfycbwyL3hM4syjOmtxSQ2bxG-XWXYyHhlfxvtAUhleP5hWf2pmcYP5nHxmHmLyz5R1KRgh/exec"; // 옛 백엔드(백업용, 롤백 시 이 줄 주석 해제)
+const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
+
+/* ================= Firebase (실시간 연동) =================
+   콘텐츠/제출물을 새로고침 없이 실시간으로 받아오기 위한 설정이에요. 이 값들은 "비밀"이 아니라
+   파이어베이스 콘솔이 공개적으로 내려주는 웹 앱 설정값이라 그대로 코드에 넣어도 안전해요.
+   실제 로그인/데이터 저장은 지금처럼 전부 SUBMIT_URL(Cloud Functions)을 거치고, 여기서는
+   "읽기 전용 실시간 구독"만 Firestore에 직접 연결해요(쓰기는 보안 규칙에서 전부 막혀있어요). */
+const firebaseConfig={
+  apiKey:"AIzaSyDbbyO8DCS6zRXsIpusN9UsWdtCtJ2yx7E",
+  authDomain:"writing-lab-5b8c0.firebaseapp.com",
+  projectId:"writing-lab-5b8c0",
+  storageBucket:"writing-lab-5b8c0.firebasestorage.app",
+  messagingSenderId:"146813935075",
+  appId:"1:146813935075:web:3a1f5e0b4d4ae8acdbd4d6",
+  measurementId:"G-95C5E1KKFC"
+};
+firebase.initializeApp(firebaseConfig);
+const fbAuth=firebase.auth(),fbDb=firebase.firestore();
+/* 로그인에 성공한 "직후"에 서버(mintToken)에서 받아온 커스텀 토큰으로 이 값이 true가 돼요.
+   실시간 구독(onSnapshot)은 로그인한 사용자만 읽을 수 있게 보안 규칙이 걸려있어서, 이 값이
+   true일 때만 시작해요 — false면(네트워크 문제 등으로 토큰 발급에 실패했으면) 지금까지 해오던
+   대로 그냥 한 번씩 새로 받아오는 방식(fetch)만으로 조용히 계속 동작해요. */
+let fbSignedIn=false;
+/* 화면(mountView)이 하나 뜰 때마다 그 화면 전용으로 시작한 실시간 구독들 — 다른 화면으로 넘어가면
+   자동으로 정리돼서, 안 보이는 화면이 계속 데이터를 받아오는 "구독 누수"를 막아줘요. */
+let _viewUnsubs=[];
+function trackViewUnsub(unsub){ if(typeof unsub==='function') _viewUnsubs.push(unsub); }
+function clearViewUnsubs(){ _viewUnsubs.forEach(fn=>{try{fn();}catch(e){}}); _viewUnsubs=[]; }
+fbAuth.onAuthStateChanged(user=>{
+  fbSignedIn=!!user;
+  if(user){ startRealtimeContent(); }
+  else { stopRealtimeContent(); }
+});
 /* 사이트 전체에서 복사·잘라내기·붙여넣기·우클릭 메뉴를 막아요 — 외부(번역기 등)에서 답을 복사해와서
    붙여넣는 걸 막기 위한 용도예요. 타이핑, 커서 이동, 방향키/백스페이스 등 일반적인 입력은 전혀 지장 없어요.
    다만 선생님 계정으로 로그인했을 때는(컨텐츠 추가 화면에 텍스트를 붙여넣어야 하는 경우가 많아서)
@@ -343,6 +381,17 @@ const norm=s=>(s||'').toLowerCase().replace(/[’']/g,"'").replace(/[.,!?;:"]/g,
    통일하고 공백만 정리할 뿐, 대문자/소문자나 마침표·물음표 등은 그대로 비교해요. */
 const normStrict=s=>(s||'').replace(/[’']/g,"'").replace(/\s+/g,' ').trim();
 const normKo=s=>(s||'').replace(/\s+/g,'').trim();
+/* norm()으로 다듬은 두 문자열을 그냥 .includes()로 비교하면, 짧은 표현(예: "is","a","go")이 전혀
+   상관없는 다른 단어 속(예: "this","away","going")에 우연히 들어있다는 이유만으로 "포함된다"고 잘못
+   판단할 수 있어요 — Re-Writing에서 "분명 맞게 고쳤는데 완전 다른 단어·문장 때문에 X가 뜬다"는 문제가
+   바로 이거였어요. 그래서 단순 부분 문자열이 아니라, 앞뒤가 글자·숫자로 안 이어지는(=온전한 단어/구
+   경계인) 자리에서만 진짜로 "포함된다"고 인정하도록 이 함수를 써요. */
+const normIncludesPhrase=(hay,phrase)=>{
+  if(!phrase)return false;
+  const esc=phrase.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  try{ return new RegExp('(^|[^a-z0-9])'+esc+'([^a-z0-9]|$)').test(hay); }
+  catch(e){ return hay.includes(phrase); }
+};
 /* Story Writing 단어 칸(en|ko 또는 en|ko|img)을 한 줄씩 나눠 담는 곳이에요. 원래는 "|" 구분자만 인정했는데,
    AI가 가끔 "|" 대신 "/"나 ":", 심지어 " - " 로 답할 때가 있어서(특히 그림에서 단어를 직접 뽑아낼 때) 그런
    경우 구분이 아예 안 되고 "브러시 / fur"처럼 한글·영어가 뒤섞인 채로 한 칸에 통째로 들어가 버렸어요.
@@ -1193,6 +1242,13 @@ function toStoryTopic(g){
 }
 const STORY={};
 function mergeStory(){
+  // loadLiveContent()는 첫 접속 때뿐 아니라 선생님이 레벨/컨텐츠를 저장한 뒤에도(사이트를 새로고침
+  // 안 해도 바로 보이게 하려고) 다시 호출돼요. 그런데 STORY[레벨]에 그냥 push만 하면, 다시 불릴 때마다
+  // "이미 들어있던 것 + 새로 받아온 것"이 계속 쌓여서 같은 이야기가 화면에 여러 번 중복으로 보이는
+  // 문제가 있었어요(문법 드릴·문단 쓰기 등은 아이디를 key로 쓰는 객체라 다시 불러도 덮어써질 뿐
+  // 안 늘어나는데, Story Writing만 배열에 push하는 방식이라 이 문제가 있었어요). 그래서 매번 다시
+  // 채우기 전에 지금까지 쌓인 내용을 한 번 비우고 시작해요.
+  Object.keys(STORY).forEach(k=>{ delete STORY[k]; });
   (typeof GENSTORY!=='undefined'?GENSTORY:[]).forEach(g=>{
     if(!g||!g.level)return;
     (STORY[g.level]=STORY[g.level]||[]).push(toStoryTopic(g));
@@ -1305,7 +1361,7 @@ function draftBanner(savedAt){
 
 /* view helpers */
 function clearStage(){stage.innerHTML='';}
-function mountView(build){clearStage();nav.classList.remove('on');const v=el('div','view active');const w=el('div','wrap');v.appendChild(w);stage.appendChild(v);prog.style.width='0';build(w);}
+function mountView(build){clearStage();nav.classList.remove('on');clearViewUnsubs();const v=el('div','view active');const w=el('div','wrap');v.appendChild(w);stage.appendChild(v);prog.style.width='0';build(w);}
 
 /* ================= LOGIN ================= */
 let ROSTER=null,TEACHERS=null,rosterLoading=null;
@@ -1335,6 +1391,21 @@ function applyClassLevel(cls){
   const id=CLASS_LEVELS[String(cls||'').trim()];
   if(id&&LEVELS.some(l=>l.id===id))curLevel=id;
 }
+/* 로그인 자체(아이디/비밀번호 대조)는 지금처럼 로컬에서 명단(ROSTER)으로 처리하고, 그 직후에
+   "실시간 구독용" 파이어베이스 로그인을 한 번 더 시도해요. 서버(mintToken)가 아이디·비밀번호를
+   다시 한번 확인한 뒤 커스텀 토큰을 내려주면 그걸로 firebase에도 로그인돼요. 이 과정은 실패해도
+   (네트워크 문제 등) 이미 끝난 로컬 로그인에는 전혀 영향을 안 주고, 그냥 실시간 업데이트 없이
+   지금까지처럼(새로고침해야 최신 내용이 보이는 방식으로) 계속 쓸 수 있어요. */
+async function signInFirebaseRealtime(id,password){
+  try{
+    const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'mintToken',id,password})});
+    const data=await res.json();
+    if(!data||!data.ok||!data.customToken)throw new Error((data&&data.error)||'토큰을 받지 못했어요.');
+    await fbAuth.signInWithCustomToken(data.customToken);
+  }catch(e){
+    console.warn('실시간 연동용 로그인에 실패했어요 — 실시간 업데이트 없이 계속 진행해요:',e);
+  }
+}
 function viewLogin(){setWide(false);mountView(w=>{
   const box=el('div','login-box');
   box.appendChild(el('h1','title','로그인'));
@@ -1361,6 +1432,7 @@ function viewLogin(){setWide(false);mountView(w=>{
       USER.id=tmatch.id;USER.name=tmatch.name||tmatch.id;USER.role='teacher';
       USER.academy=tmatch.academy||'';USER.isAdmin=!!String(tmatch.isAdmin||'').trim();
       saveSession();applySessionUI();
+      signInFirebaseRealtime(idv,pwv);
       fx.className='';fx.textContent='';
       viewTeacherHome();
       return;
@@ -1373,6 +1445,7 @@ function viewLogin(){setWide(false);mountView(w=>{
     USER.isTestAccount=!!String(match.isTestAccount||'').trim();
     applyClassLevel(USER.cls);
     saveSession();applySessionUI();
+    signInFirebaseRealtime(idv,pwv);
     fx.className='';fx.textContent='';
     viewHome();
   };
@@ -1408,15 +1481,28 @@ function viewHome(){setWide(false);mountView(w=>{
   LEVELS.forEach(l=>{const t=el('div','lt'+(l.id===curLevel?' on':''),`<b>${l.name}</b><small>${l.book.replace('천일문 WRITING ','')}</small>`);t.onclick=()=>{curLevel=l.id;viewHome();};tabs.appendChild(t);});
   w.appendChild(tabs);
   const curLv=LEVELS.find(l=>l.id===curLevel);
-  const storyOnly=!!(curLv&&String(curLv.name||'').trim()==='초5');
-  if(!storyOnly&&!TEACHER_PREVIEW){
+  const curLvName=String(curLv&&curLv.name||'').trim();
+  const storyOnly=curLvName==='초5';
+  // 중3은 학교 수행평가 대비 위주로 준비하는 학년이라, 홈 화면에도 "수행평가 대비"와 "Article Reading"
+  // 두 트랙만 보이면 돼요(Pattern Drill·Paragraph Writing·Re-Writing·Story Writing은 숨겨요).
+  const examArticleOnly=curLvName==='중3';
+  if(!storyOnly&&!examArticleOnly&&!TEACHER_PREVIEW){
     const {done,tot}=countReady(curLevel);const pct=tot?Math.round(done/tot*100):0;
     const pr=el('div','prog');pr.appendChild(el('h3',null,'내 진도표 — '+curLv.name+' Pattern Drill'));
     const pb=el('div','pbar');const ps=el('span');ps.style.width=pct+'%';pb.appendChild(ps);pr.appendChild(pb);
     pr.appendChild(el('div','pn',`완료 ${done} / ${tot} Unit (${pct}%)`));w.appendChild(pr);
   }
   const tr=el('div','tracks');
-  if(!storyOnly){
+  if(examArticleOnly){
+    const ic3='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H17l3 3v11.5A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13Z"/><path d="M8 9h8M8 12.5h8M8 16h5"/></svg></div>';
+    const c3=el('button','track article',ic3+'<div class="tt">Article Reading</div><div class="td">영어 기사 읽고 요약하기 · 핵심 조건 자동 채점 · 선생님 첨삭</div><div class="tk">기사 골라 요약 쓰기</div>');
+    c3.onclick=()=>viewArticleMenu();
+    tr.appendChild(c3);
+    const ic4='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/></svg></div>';
+    const c4=el('button','track exam',ic4+'<div class="tt">수행평가 대비</div><div class="td">학교 수행평가 주제·조건에 맞춰 미리 써보기 · 자동 채점 · 선생님 첨삭</div><div class="tk">주제 골라 연습하기</div>');
+    c4.onclick=()=>viewExamMenu();
+    tr.appendChild(c4);
+  } else if(!storyOnly){
     const ic1='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5V4.5Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg></div>';
     const ic2='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20.5 5 15l10.5-10.5 3.5 3.5L8.5 18.5 3 20.5Z"/><path d="M13.5 6.5 17.5 10.5"/></svg></div>';
     const c1=el('button','track drill',ic1+'<div class="tt">Pattern Drill</div><div class="td">문법 설명 → 개념 퀴즈 → 단어배열·영작 15문장씩 → 조건 영작</div><div class="tk">챕터·Point 골라 학습하기</div>');
@@ -1442,10 +1528,14 @@ function viewHome(){setWide(false);mountView(w=>{
       tr.appendChild(c5);
     }
   }
-  const ic6='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5-4 4-3-3-6 6"/></svg></div>';
-  const c6=el('button','track story',ic6+'<div class="tt">Story Writing</div><div class="td">그림을 보고 영어로 이야기 만들기 · 단어 카드 게임 · 발음 듣기</div><div class="tk">그림 이야기 골라 써보기</div>');
-  c6.onclick=()=>viewStoryMenu();
-  tr.appendChild(c6);
+  // Story Writing은 초5 전용 컨텐츠라, 다른 학년 홈 화면에는 아예 안 보여야 해요(예전엔 여기 있는 카드가
+  // storyOnly 여부와 상관없이 항상 추가돼서 모든 학년에 다 보였던 버그가 있었어요).
+  if(storyOnly){
+    const ic6='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5-4 4-3-3-6 6"/></svg></div>';
+    const c6=el('button','track story',ic6+'<div class="tt">Story Writing</div><div class="td">그림을 보고 영어로 이야기 만들기 · 단어 카드 게임 · 발음 듣기</div><div class="tk">그림 이야기 골라 써보기</div>');
+    c6.onclick=()=>viewStoryMenu();
+    tr.appendChild(c6);
+  }
   w.appendChild(tr);
   if(!TEACHER_PREVIEW){
     const fbLink=el('button','btn ghost','📋 내 제출 내역 · 선생님 피드백 보기');fbLink.style.marginTop='18px';
@@ -2204,6 +2294,14 @@ function grammarPracticeHtml(orig){
             (good?'background:#e6f6ec;color:#059669':'background:#fdf1e7;color:#c2650a')+'">'+
             (good?'✅ AI 검토: 문법을 잘 활용했어요.':'🤖 AI 검토: '+escH(f.note||'')+(f.corrected?'<br>→ '+escH(f.corrected):''))+
             '</div>';
+          // 문법만 보는 게 아니라, 이 글 전체 내용·주제에 잘 어울리는 문장인지도 AI가 같이 봐준 결과예요.
+          // (문법 검토는 통과했어도 내용이 안 어울리면 이 박스는 따로 뜰 수 있어요.)
+          if(f.contentOk===false){
+            fbHtml+='<div style="margin-top:4px;padding:6px 8px;border-radius:6px;font-size:12.5px;background:#eef0ff;color:#4338ca">'+
+              '💡 이 글 내용과의 어울림: '+escH(f.contentNote||'이 글의 주제·흐름에는 살짝 안 어울려요.')+
+              (f.betterSentence?('<br>→ 이 글에 더 어울리는 표현 예시: '+escH(f.betterSentence)):'')+
+              '</div>';
+          }
         }
         return '<div class="proccard"><div class="pk">'+escH(k)+'</div><div class="pv">'+escH(gp[k]).replace(/\n/g,'<br>')+'</div>'+fbHtml+'</div>';
       }).join('')+
@@ -2229,10 +2327,13 @@ function rubricGradeToScore(g){
   return map[String(g||'').trim().toUpperCase()]||0;
 }
 function rubricPercentToGrade(pct){
-  if(pct>=95)return'A+';if(pct>=90)return'A';
-  if(pct>=85)return'B+';if(pct>=80)return'B';
-  if(pct>=75)return'C+';if(pct>=70)return'C';
-  if(pct>=65)return'D+';if(pct>=60)return'D';
+  // (완화) 예전 기준(95/90/85/80/75/70/65/60)이 너무 짜다는 의견을 반영해서 구간을 전체적으로 낮췄어요.
+  // 서버(Code_full_v2.gs)의 같은 함수도 반드시 같은 기준으로 함께 고쳐야 해요(안 그러면 선생님이 직접
+  // 등급을 골라 저장하는 경우와 자동 계산이 서로 다른 총점 등급을 보여주게 돼요).
+  if(pct>=90)return'A+';if(pct>=80)return'A';
+  if(pct>=70)return'B+';if(pct>=60)return'B';
+  if(pct>=50)return'C+';if(pct>=40)return'C';
+  if(pct>=30)return'D+';if(pct>=20)return'D';
   return'F';
 }
 /* 총점 등급(A+~F)에 신호등 색 계열을 매겨서, 종합 점수 박스와 도넛 그래프 숫자에 색이 들어가게 해요. */
@@ -2264,6 +2365,17 @@ function levelDisplayName(cls){
   const lv=id&&LEVELS.find(l=>l.id===id);
   return lv?lv.name:'';
 }
+/* Class Level 이름("초6","중2" 등) 또는 학교 이름("안화초등학교","한빛중" 등)에서 학교급(초/중/고)만
+   뽑아내요. 자동 채점 기준(taskGrade/formatGrade)을 학년대에 맞게 다르게 적용하려고 써요 — 반레벨
+   탭에 등록된 Class Level을 먼저 보고, 그게 없으면 학생의 학교 이름으로 한 번 더 시도해요. */
+function schoolStageFromText(s){
+  const t=String(s||'').trim();
+  if(!t)return'';
+  if(t.indexOf('초')===0||t.indexOf('초등학교')>-1)return'초';
+  if(t.indexOf('중')===0||t.indexOf('중학교')>-1)return'중';
+  if(t.indexOf('고')===0||t.indexOf('고등학교')>-1)return'고';
+  return'';
+}
 /* 그 제출물의 문장별 AI 첨삭(claude+gpt)에 달린 "틀린 부분" 개수를 세요 — 형식(문법·철자) 등급을
  * 자동으로 매길 때 "문장 수 대비 오류가 얼마나 적은지"를 재는 잣대로 써요. */
 function countAiErrors(sub){
@@ -2286,17 +2398,30 @@ function autoComputeRubric(sub){
   if(!sub)return null;
   const scoreVal=normalizedScore(sub);
   if(scoreVal==null)return null;
-  const taskGrade=scoreVal>=90?'A':scoreVal>=80?'B':scoreVal>=70?'C':scoreVal>=60?'D':'E';
+  // (개선) "초등학생 점수가 너무 짜게 나온다"는 의견을 반영해서 한 번은 기준을 전체적으로 낮췄었는데,
+  // 그러면 중·고등학생한테까지 너무 후해질 수 있어서 이번엔 "학년대별로 다르게" 적용해요.
+  // 반레벨 탭에 등록된 Class Level(예: 초6/중2)을 우선 보고, 그게 없으면 학생의 학교 이름으로 학교급을
+  // 가늠해요(둘 다 없으면 중·고등 기준을 기본값으로 써요 — 예전 기준과 크게 다르지 않게).
+  const classLevelName=levelDisplayName(sub.cls)||String(sub.cls||'');
+  const stage=schoolStageFromText(classLevelName)||schoolStageFromText(sub.school)||'';
+  const isElementary=stage==='초';
+  // 초등학생: 과제완성 80/65/50/35, 형식 오류비율 0.2/0.4/0.6/0.85 (관대한 기준)
+  // 중·고등학생(기본값 포함): 과제완성 90/80/70/60, 형식 오류비율 0.1/0.25/0.45/0.7 (예전 기준대로 엄격하게)
+  const taskGrade=isElementary
+    ? (scoreVal>=80?'A':scoreVal>=65?'B':scoreVal>=50?'C':scoreVal>=35?'D':'E')
+    : (scoreVal>=90?'A':scoreVal>=80?'B':scoreVal>=70?'C':scoreVal>=60?'D':'E');
   const sents=sub.text?splitSentences(sub.text):[];
   const errCount=countAiErrors(sub);
   const errRatio=sents.length?(errCount/sents.length):(errCount?1:0);
-  const formatGrade=errRatio<=0.1?'A':errRatio<=0.25?'B':errRatio<=0.45?'C':errRatio<=0.7?'D':'E';
+  const formatGrade=isElementary
+    ? (errRatio<=0.2?'A':errRatio<=0.4?'B':errRatio<=0.6?'C':errRatio<=0.85?'D':'E')
+    : (errRatio<=0.1?'A':errRatio<=0.25?'B':errRatio<=0.45?'C':errRatio<=0.7?'D':'E');
   const taskScore=rubricGradeToScore(taskGrade),formatScore=rubricGradeToScore(formatGrade);
   const totalScore=taskScore+formatScore;
   const totalPercent=Math.round(totalScore/20*100);
   const writingLevelNum=scoreVal>=90?5:scoreVal>=80?4:scoreVal>=70?3:scoreVal>=60?2:1;
   return {
-    classLevel:levelDisplayName(sub.cls)||String(sub.cls||''),
+    classLevel:classLevelName,
     writingLevel:'Level '+writingLevelNum,
     taskGrade:taskGrade,taskScore:taskScore,formatGrade:formatGrade,formatScore:formatScore,
     totalScore:totalScore,totalPercent:totalPercent,totalGrade:rubricPercentToGrade(totalPercent),
@@ -2575,6 +2700,19 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
       if(data&&data.ok)subs=data.submissions||[];
     }catch(e){}
     loading.remove();
+    /* 실시간 구독 — 선생님이 첨삭을 남기거나 내가 다른 기기에서 새로 제출하면, 새로고침 없이
+       바로 반영돼요. 이 화면은 제출물마다 "수정하기" 같은 인라인 폼이 있어서 부분만 다시 그리기
+       어려워요 — 그래서 editSubmission 저장 뒤 지금까지 해온 것과 같은 방식으로, 최초 한 번을
+       제외하고 데이터가 바뀔 때마다 이 화면 자체를 다시 불러요(viewMyFeedback). firebase 로그인이
+       안 돼 있으면(fbSignedIn=false) 구독을 시작하지 않고 지금처럼 화면을 열 때 한 번만 받아와요. */
+    if(fbSignedIn){
+      let firstSnap=true;
+      const unsub=fbDb.collection('ewl_submissions').where('id','==',USER.id).onSnapshot(()=>{
+        if(firstSnap){firstSnap=false;return;}
+        viewMyFeedback();
+      },err=>console.warn('내 제출 내역 실시간 구독 오류:',err));
+      trackViewUnsub(unsub);
+    }
     if(!subs.length){box.appendChild(el('div','hint','아직 제출한 내역이 없어요.'));return;}
     subs.forEach(s=>{
       const card=el('div');
@@ -2803,7 +2941,23 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
         if(!entry||!Array.isArray(entry.errors))return;
         entry.errors.forEach(e=>{
           const key=norm(e.correct);
-          if(e.correct&&key&&!seenCorrect.has(key)){seenCorrect.add(key);rewriteConds.push({label:'"'+e.correct+'"로 고쳐 쓰기',test:t=>norm(t).includes(key)});}
+          const wrongKey=norm(e.wrong);
+          // 예전엔 "고친 표현 그대로"를 문자 그대로 다시 써야만 통과였어서, 학생이 뜻은 맞게
+          // 다른 말로 잘 고쳐 써도 계속 "안 고쳐짐(✕)"으로 떠서 억울해했어요. 그래서 (1) 고친
+          // 표현을 그대로 썼거나, (2) 원래 틀렸던 표현이 더 이상 안 보이면(=다르게라도 고쳤으면)
+          // 둘 다 통과로 봐요. (제출을 막는 조건이 아니라 참고용 체크라 이 정도 관대함은 괜찮아요.)
+          if(e.correct&&key&&!seenCorrect.has(key)){
+            seenCorrect.add(key);
+            rewriteConds.push({
+              label:'"'+e.correct+'"로 고쳐 쓰기',
+              test:t=>{
+                const nt=norm(t);
+                if(normIncludesPhrase(nt,key))return true;
+                if(wrongKey&&!normIncludesPhrase(nt,wrongKey))return true;
+                return false;
+              }
+            });
+          }
         });
       });
       let detail='';
@@ -2906,6 +3060,21 @@ function viewTeacherHome(){setWide(false);mountView(w=>{
     }catch(e){}
     if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
     loading.remove();
+    /* 실시간 구독 — 학생이 새로 제출하거나 다른 선생님이 첨삭을 남기면, 새로고침 없이 이 목록에
+       바로 반영돼요. render()가 이미 준비돼 있으면 목록만 다시 그리고(renderReady), 처음부터
+       제출물이 하나도 없어서 아래 필터·render()가 아예 안 만들어졌던 경우엔 화면 자체를 새로
+       불러요(viewTeacherHome). 로그인 직후 firebase 인증이 안 됐으면(fbSignedIn=false) 구독을
+       시작하지 않고 지금까지처럼 이 화면을 열 때 한 번만 받아온 값으로 계속 동작해요. */
+    let renderReady=false,firstSnap=true;
+    if(fbSignedIn){
+      const unsub=fbDb.collection('ewl_submissions').onSnapshot(snap=>{
+        if(firstSnap){firstSnap=false;return;}
+        const fresh=snap.docs.map(d=>d.data());
+        all=USER.isAdmin?fresh:fresh.filter(s=>String(s.academy||'')===String(USER.academy||''));
+        if(renderReady)render(); else viewTeacherHome();
+      },err=>console.warn('교사 제출물 실시간 구독 오류:',err));
+      trackViewUnsub(unsub);
+    }
     if(!all.length){box.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
     const opt0=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
     if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
@@ -2938,6 +3107,7 @@ function viewTeacherHome(){setWide(false);mountView(w=>{
     };
     (fAcademy?[fAcademy.sel,fSchool.sel,fGrade.sel,fCls.sel,fType.sel]:[fSchool.sel,fGrade.sel,fCls.sel,fType.sel]).forEach(sel=>sel.addEventListener('change',render));
     render();
+    renderReady=true;
   })();
 });}
 
@@ -4801,7 +4971,7 @@ document.addEventListener('keydown',e=>{if(document.getElementById('exprModal'))
   if(e.key==='Enter'){const s=slides[idx];if(s&&s._box&&s._box._enterKey){e.preventDefault();s._box._enterKey();}return;}
   if(e.key==='ArrowRight')deckShow(idx+1);else if(e.key==='ArrowLeft')deckShow(idx-1);});
 homeBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;if(USER.role==='teacher')viewTeacherHome();else viewHome();};
-logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false};clearSession();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';viewLogin();};
+logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false};clearSession();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';try{fbAuth.signOut();}catch(e){}viewLogin();};
 
 /* ================= DRILL RUNNER ================= */
 function runDrill(P){setWide(false);deckInit();
@@ -6256,7 +6426,13 @@ async function loadLiveContent(){
   }catch(e){
     console.warn('컨텐츠를 실시간으로 불러오지 못했어요(기본 커리큘럼만 사용해요):',e);
   }
-  // 병합 순서가 중요해요: 레벨/챕터 구조부터 먼저 자리를 잡아야, 그 위에 문법 드릴 등 실제 내용을 끼워 넣을 수 있어요.
+  remergeContent();
+}
+/* loadLiveContent()가 data.xxx를 GEN/GENPARA/... 전역 변수에 채운 뒤 항상 실행하던 "병합" 순서를
+   그대로 뽑아낸 거예요. 실시간 구독(onSnapshot)도 콘텐츠가 바뀔 때마다 이 함수를 다시 불러서
+   똑같은 방식으로 반영해요 — 병합 순서가 중요해요: 레벨/챕터 구조부터 먼저 자리를 잡아야, 그 위에
+   문법 드릴 등 실제 내용을 끼워 넣을 수 있어요. */
+function remergeContent(){
   applyLevelsData();
   pinStoryLevelFirst();
   applyPatternStructureData();
@@ -6266,6 +6442,54 @@ async function loadLiveContent(){
   mergeArticle();
   mergeExam();
   mergeStory();
+}
+
+/* ================= 실시간 콘텐츠 구독 =================
+   로그인(mintToken) 뒤 firebase 인증이 성공하면(fbSignedIn) 시작돼요. 선생님이 컨텐츠·레벨·패턴
+   챕터를 고치면, 지금까지는 "다른 화면으로 이동해야" 반영됐는데, 이제는 컬렉션이 바뀌는 순간
+   GEN/GENPARA/... 전역 변수가 바로 갱신돼요(화면을 강제로 다시 그리지는 않아요 — 기존에도
+   loadLiveContent()를 다시 불렀을 때 지금 보고 있는 화면을 억지로 새로고침하지 않고 다음 화면
+   이동 때 반영되게 해온 것과 같은 방식이라, 한창 글을 쓰는 중에 화면이 갑자기 바뀌는 일이 없어요). */
+const CONTENT_REALTIME_MAP=[
+  ['gen','ewl_content_pattern'],
+  ['genpara','ewl_content_paragraph'],
+  ['genarticle','ewl_content_article'],
+  ['genexam','ewl_content_exam'],
+  ['story','ewl_content_story'],
+  ['levels','ewl_levels'],
+  ['patternStructure','ewl_patternStructure'],
+  ['patternUnits','ewl_pattern_units']
+];
+let _contentUnsubs=[];
+let _contentRemergeTimer=null;
+function scheduleRemergeContent(){
+  // 여러 컬렉션이 거의 동시에 바뀌어도(예: 챕터+유닛을 같이 저장) 병합을 한 번만 다시 돌리게 살짝 묶어줘요.
+  if(_contentRemergeTimer)clearTimeout(_contentRemergeTimer);
+  _contentRemergeTimer=setTimeout(()=>{ _contentRemergeTimer=null; remergeContent(); },150);
+}
+function startRealtimeContent(){
+  stopRealtimeContent();
+  CONTENT_REALTIME_MAP.forEach(([key,colName])=>{
+    const unsub=fbDb.collection(colName).onSnapshot(snap=>{
+      const list=snap.docs.map(d=>Object.assign({id:d.id},d.data()));
+      if(key==='gen')GEN=list;
+      else if(key==='genpara')GENPARA=list;
+      else if(key==='genarticle')GENARTICLE=list;
+      else if(key==='genexam')GENEXAM=list;
+      else if(key==='story')GENSTORY=list;
+      else if(key==='levels')LEVELS_DATA=list;
+      else if(key==='patternStructure')PATTERN_STRUCTURE_DATA=list;
+      // patternUnits(ewl_pattern_units)는 지금 클라이언트 병합 로직이 따로 쓰지 않아서(패턴 챕터
+      // 문서 안에 유닛이 함께 들어있는 구조예요) 최신 목록만 받아두고 화면 반영은 하지 않아요.
+      scheduleRemergeContent();
+    },err=>{ console.warn('실시간 콘텐츠 구독 오류('+colName+'):',err); });
+    _contentUnsubs.push(unsub);
+  });
+}
+function stopRealtimeContent(){
+  _contentUnsubs.forEach(fn=>{try{fn();}catch(e){}});
+  _contentUnsubs=[];
+  if(_contentRemergeTimer){clearTimeout(_contentRemergeTimer);_contentRemergeTimer=null;}
 }
 
 /* ================= start ================= */
