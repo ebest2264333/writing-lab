@@ -4602,6 +4602,14 @@ function viewStudentManage(){setWide(false);mountView(w=>{
   titleRow.appendChild(addBtn);
   w.appendChild(titleRow);
   w.appendChild(el('div','hint','아이디·비밀번호·이름과 학교/학년/반/학원 정보를 여기서 바로 추가·수정·삭제할 수 있어요. 저장은 즉시 반영돼요 (별도 사이트 반영 버튼이 필요 없어요).'));
+  // 학생이 많아지면 이름순 나열만으론 찾기 불편해서, 학원/학교/학년/반 기준으로 묶어볼 수 있게 했어요.
+  const GROUP_OPTS=[['name','이름순'],['academy','학원별'],['school','학교별'],['schoolGrade','학년별'],['cls','반별']];
+  const groupRow=el('div');groupRow.style.cssText='display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap';
+  groupRow.appendChild(el('div','hint','보기 방식'));
+  const groupSel=el('select','in');groupSel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px;min-width:120px';
+  GROUP_OPTS.forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;groupSel.appendChild(o);});
+  groupRow.appendChild(groupSel);
+  w.appendChild(groupRow);
   const box=el('div');box.style.marginTop='14px';
   const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
   w.appendChild(box);
@@ -4613,9 +4621,8 @@ function viewStudentManage(){setWide(false);mountView(w=>{
       if(data&&data.ok)students=data.students||[];
     }catch(e){}
     loading.remove();
-    if(!students.length){box.appendChild(el('div','hint','등록된 학생이 없어요. "+ 새 학생 추가"로 첫 학생을 등록해보세요.'));return;}
-    students.sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
-    students.forEach(s=>{
+    if(!students.length){box.appendChild(el('div','hint','등록된 학생이 없어요. "+ 새 학생 추가"로 첫 학생을 등록해보세요.'));groupRow.style.display='none';return;}
+    const renderRow=(container,s)=>{
       const row=el('div','point');row.style.cursor='default';
       row.appendChild(el('div','dot','●'));
       const ctx=[s.academy,s.school,s.schoolGrade,s.cls].filter(Boolean).join(' · ');
@@ -4640,8 +4647,37 @@ function viewStudentManage(){setWide(false);mountView(w=>{
       };
       btnRow.appendChild(editBtn);btnRow.appendChild(delBtn);
       row.appendChild(btnRow);
-      box.appendChild(row);
-    });
+      container.appendChild(row);
+    };
+    const render=()=>{
+      box.innerHTML='';
+      const groupKey=groupSel.value;
+      if(groupKey==='name'){
+        const sorted=students.slice().sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
+        sorted.forEach(s=>renderRow(box,s));
+        return;
+      }
+      const groups={};
+      students.forEach(s=>{
+        const k=String(s[groupKey]||'').trim()||'(미지정)';
+        (groups[k]=groups[k]||[]).push(s);
+      });
+      const keys=Object.keys(groups).sort((a,b)=>{
+        if(a==='(미지정)')return 1; if(b==='(미지정)')return -1;
+        return a.localeCompare(b,'ko',{numeric:true});
+      });
+      keys.forEach(k=>{
+        const list=groups[k].sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
+        const sec=el('div');sec.style.cssText='margin-bottom:18px;background:#fafaf9;border:1px solid #ecebe8;border-radius:14px;padding:12px 14px';
+        const head=el('div');head.style.cssText='font-size:13.5px;font-weight:800;color:var(--accent);margin-bottom:8px';
+        head.textContent=k+' ('+list.length+'명)';
+        sec.appendChild(head);
+        list.forEach(s=>renderRow(sec,s));
+        box.appendChild(sec);
+      });
+    };
+    groupSel.onchange=render;
+    render();
   })();
 });}
 function viewStudentForm(existing){setWide(false);mountView(w=>{
