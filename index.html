@@ -305,6 +305,30 @@
   .modal-x{background:var(--bg-1);border:none;border-radius:8px;width:30px;height:30px;font-size:14px;font-weight:800;color:var(--navy);cursor:pointer;flex:0 0 auto}
   .modal-x:hover{background:var(--line-2)}
   .modal-body{padding:18px 20px;overflow-y:auto}
+  /* ===== Re-Writing 화면용 "처음 쓴 글 → 고쳐 쓴 글" 비교 박스 =====
+     인쇄 리포트(printSubmissionReport)에서 쓰던 것과 똑같은 레이아웃·클래스를 화면에도 그대로
+     보여주려고 넣었어요. 다른 화면에 영향 안 주게 .rwcmp 안에서만 적용되게 스코프를 걸었어요. */
+  .rwcmp .compare{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.rwcmp .compare{grid-template-columns:1fr}}
+  .rwcmp .win{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;display:flex;flex-direction:column}
+  .rwcmp .win-bar{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg-1);border-bottom:1px solid var(--line);font-weight:800;font-size:12.5px}
+  .rwcmp .win-dots{display:inline-flex;gap:4px;flex:0 0 auto}
+  .rwcmp .win-dots span{width:7px;height:7px;border-radius:50%;background:#DDDCE3;display:inline-block}
+  .rwcmp .win.orig .win-bar{color:#B3261E;background:#FDEDEC}.rwcmp .win.orig .win-bar .win-dots span:nth-child(1){background:#E8ADA9}
+  .rwcmp .win.fixed .win-bar{color:#1C7A4D;background:#EAF7EF}.rwcmp .win.fixed .win-bar .win-dots span:nth-child(1){background:#A9DABE}
+  .rwcmp .win-body{padding:14px 16px;flex:1;font-size:13.5px}
+  .rwcmp .win.fixed .win-body{background:#FBFEFC}
+  .rwcmp p.osent{margin:0 0 2px;background:#EEF0FA;border-radius:6px;padding:5px 10px;display:inline-block;font-weight:700}
+  .rwcmp .err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}
+  .rwcmp .err-list li{margin-bottom:7px}
+  .rwcmp .err-pair{line-height:1.5}
+  .rwcmp .wrong{color:#B3261E;text-decoration:line-through}
+  .rwcmp .correct{color:#1C7A4D;font-weight:700}
+  .rwcmp .note{display:block;color:var(--muted);margin-top:2px;line-height:1.5}
+  .rwcmp .corrected-full{font-size:12.5px;color:#2B2733;margin:2px 0 8px;background:#F1FBFA;border-radius:6px;padding:5px 10px}
+  .rwcmp .cmt{font-size:12px;color:#9A5B12;margin:0 0 8px}
+  .rwcmp .overall{background:#F2FBF6;border-radius:8px;padding:11px 14px;font-size:13px;margin:10px 0 0;white-space:pre-line;border:1px solid #DCF0E3;border-left:4px solid #3FBE87}
+  .rwcmp .rsent-wrap p{margin:0 0 4px}
 </style>
 <!-- Firebase(실시간 연동용) — 파이어베이스 콘솔에서 받은 공개 설정값과 함께 아래 본문 스크립트 맨 앞에서
      초기화해요. compat 빌드라 firebase.xxx() 형태로 바로 쓸 수 있어요(별도 번들러 필요 없음). -->
@@ -1413,6 +1437,16 @@ function addAiCondCheckButton(container,ul,getText){
 const SESSION_KEY='ewl2_session';
 function saveSession(){try{store.set(SESSION_KEY,JSON.stringify(USER));}catch(e){}}
 function loadSession(){try{const raw=store.get(SESSION_KEY);if(!raw)return null;const u=JSON.parse(raw);if(!u||!u.id)return null;return u;}catch(e){return null;}}
+/* 선생님이 특정 학생 화면(미리보기)을 보다가 새로고침하면 항상 선생님 홈 화면으로 돌아가버리는
+   문제가 있었어요 — 이 사이트는 화면 전환을 URL 없이 자바스크립트로만 하다 보니, 새로고침하면
+   지금 어떤 학생을 보고 있었는지 기억할 방법이 없었어요. 그래서 "지금 어느 학생을 보고 있는지"만
+   따로 저장해뒀다가, 새로고침으로 다시 시작할 때(boot) 선생님 홈 대신 그 학생 화면으로 바로
+   돌아가게 해요. (학생 계정 쪽은 화면을 딱 하나만 더 깊이 들어갈 수 있는 구조가 아니라서 — 예:
+   퀴즈 도중 새로고침 — 여기선 다루지 않고, 레벨 홈 복원은 예전부터 되던 대로 그대로 둬요.) */
+const TEACHER_NAV_KEY='ewl_teacher_nav';
+function saveTeacherNav(studentId,studentName){try{store.set(TEACHER_NAV_KEY,JSON.stringify({studentId,studentName}));}catch(e){}}
+function clearTeacherNav(){try{store.set(TEACHER_NAV_KEY,'');}catch(e){}}
+function loadTeacherNav(){try{const raw=store.get(TEACHER_NAV_KEY);if(!raw)return null;const n=JSON.parse(raw);if(!n||!n.studentId)return null;return n;}catch(e){return null;}}
 function clearSession(){try{store.set(SESSION_KEY,'');}catch(e){}}
 function applySessionUI(){
   if(USER.role==='teacher'){whoEl.textContent=USER.name+' 선생님';}else{whoEl.textContent=USER.name+' 님';}
@@ -3170,7 +3204,7 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
 /* ================= 교사 대시보드 ================= */
 function uniqSorted(arr){return Array.from(new Set(arr.filter(v=>v!=null&&v!=='').map(v=>String(v)))).sort((a,b)=>a.localeCompare(b,'ko'));}
 const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기','글쓰기'],['기사요약','기사요약'],['수행평가','수행평가'],['Re-Writing','Re-Writing']];
-function viewTeacherHome(){setWide(false);mountView(w=>{
+function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
   const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap';
   titleRow.appendChild(el('h1','title',USER.name+' 선생님'+(USER.isAdmin?' · 전체 학원 관리자':(USER.academy?' · '+USER.academy:''))));
   w.appendChild(titleRow);
@@ -4801,6 +4835,7 @@ function viewStudentForm(existing){setWide(false);mountView(w=>{
    그 안에서 컨텐츠 하나를 누르면 그 컨텐츠에 대한 제출물이 보이도록 바꿨어요.
    (TEACHER_PREVIEW를 세팅하고 viewHome()을 그대로 재사용해요.) */
 function viewTeacherStudent(studentId,studentName){
+  saveTeacherNav(studentId,studentName);
   clearStage();
   stage.innerHTML='<div style="padding:70px 20px;text-align:center;color:#6b7684;font-size:15px">불러오는 중…</div>';
   (async()=>{
@@ -4992,7 +5027,36 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
       const aifb=parseAiFeedback(s.aiFeedback);
       const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
       const sentInputs=[];
-      if(s.text){
+      if(s.type==='Re-Writing'){
+        // Re-Writing 제출물 자체엔 보통 첨삭(틀린 부분)이 안 남아있어요 — 그 첨삭은 원본 글에 달려있어요.
+        // 그래서 여긴 "문장별 코멘트 남기기" 편집 UI 대신, 인쇄 리포트(printSubmissionReport)와 똑같은
+        // "처음 쓴 글(지적된 부분) → 고쳐 쓴 최종 글" 비교 레이아웃을 화면에도 그대로 보여줘요.
+        let original=null;
+        if(siblings&&siblings.length){
+          const key=s.point||s.chapter||'';
+          const cands=siblings.filter(x=>x!==s&&x.type!=='Re-Writing'&&(x.point||x.chapter||'')===key);
+          cands.sort((a,b)=>String(a.datetime||'')<String(b.datetime||'')?1:-1);
+          original=cands[0]||null;
+        }
+        const cmpWrap=el('div','rwcmp');cmpWrap.style.marginTop='12px';
+        if(original){
+          const oOverallHtml=(function(){const of=parseFeedback(original.feedback),oai=parseAiFeedback(original.aiFeedback),oaiGpt=parseAiFeedback(original.aiFeedbackGpt);
+            return [oai.overall,oaiGpt.overall,of.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');})();
+          cmpWrap.innerHTML='<div class="compare">'+
+            '<div class="win orig"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>처음 쓴 글 · 지적된 부분</div>'+
+              '<div class="win-body osent-wrap">'+annotatedSentencesHtml(original)+oOverallHtml+'</div></div>'+
+            '<div class="win fixed"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 최종 글</div>'+
+              '<div class="win-body rsent-wrap">'+
+              (s.text?splitSentences(s.text).map((sent)=>'<p>'+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+
+              processSectionHtml(original)+
+              '</div></div>'+
+            '</div>';
+        } else {
+          cmpWrap.innerHTML='<div class="win"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 글</div>'+
+            '<div class="win-body osent-wrap">'+(s.text?splitSentences(s.text).map((sent)=>'<p>'+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+'</div></div>';
+        }
+        card.appendChild(cmpWrap);
+      } else if(s.text){
         const sents=splitSentences(s.text);
         const listWrap=el('div');listWrap.style.marginTop='10px';
         listWrap.appendChild(el('div','fl','문장별 코멘트 (선택 — 틀린 이유를 남기고 싶은 문장에만 달아주세요)'));
@@ -5200,7 +5264,7 @@ document.addEventListener('keydown',e=>{if(document.getElementById('exprModal'))
   if(e.key==='Enter'){const s=slides[idx];if(s&&s._box&&s._box._enterKey){e.preventDefault();s._box._enterKey();}return;}
   if(e.key==='ArrowRight')deckShow(idx+1);else if(e.key==='ArrowLeft')deckShow(idx-1);});
 homeBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;if(USER.role==='teacher')viewTeacherHome();else viewHome();};
-logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false};clearSession();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';try{fbAuth.signOut();}catch(e){}viewLogin();};
+logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false};clearSession();clearTeacherNav();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';try{fbAuth.signOut();}catch(e){}viewLogin();};
 
 /* ================= DRILL RUNNER ================= */
 function runDrill(P){setWide(false);deckInit();
@@ -6735,7 +6799,17 @@ function stopRealtimeContent(){
       applyClassLevel(USER.cls);
     }
     applySessionUI();
-    enterHome();
+    if(USER.role==='teacher'){
+      const savedNav=loadTeacherNav();
+      if(savedNav&&savedNav.studentId){
+        try{ viewTeacherStudent(savedNav.studentId,savedNav.studentName); }
+        catch(e){ enterHome(); }
+      }else{
+        enterHome();
+      }
+    }else{
+      enterHome();
+    }
     fetchRoster().catch(()=>{});
   }else{
     viewLogin();
