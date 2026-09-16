@@ -4602,14 +4602,17 @@ function viewStudentManage(){setWide(false);mountView(w=>{
   titleRow.appendChild(addBtn);
   w.appendChild(titleRow);
   w.appendChild(el('div','hint','아이디·비밀번호·이름과 학교/학년/반/학원 정보를 여기서 바로 추가·수정·삭제할 수 있어요. 저장은 즉시 반영돼요 (별도 사이트 반영 버튼이 필요 없어요).'));
-  // 학생이 많아지면 이름순 나열만으론 찾기 불편해서, 학원/학교/학년/반 기준으로 묶어볼 수 있게 했어요.
-  const GROUP_OPTS=[['name','이름순'],['academy','학원별'],['school','학교별'],['schoolGrade','학년별'],['cls','반별']];
-  const groupRow=el('div');groupRow.style.cssText='display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap';
-  groupRow.appendChild(el('div','hint','보기 방식'));
-  const groupSel=el('select','in');groupSel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px;min-width:120px';
-  GROUP_OPTS.forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;groupSel.appendChild(o);});
-  groupRow.appendChild(groupSel);
-  w.appendChild(groupRow);
+  // 학생이 많아지면 이름순 나열만으론 찾기 불편해서, 교사 홈 화면 필터와 같은 방식으로
+  // 학원/학교/학년/반을 각각 골라 좁혀볼 수 있게 했어요 (선택 안 하면 "전체").
+  const mkFilterSelect=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:110px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
+    return{wrap,sel};};
+  const fAcademy=mkFilterSelect('학원'),fSchool=mkFilterSelect('학교'),fGrade=mkFilterSelect('학년'),fCls=mkFilterSelect('반');
+  const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-top:12px';
+  [fAcademy,fSchool,fGrade,fCls].forEach(f=>filterBox.appendChild(f.wrap));
+  w.appendChild(filterBox);
+  filterBox.style.display='none';
   const box=el('div');box.style.marginTop='14px';
   const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
   w.appendChild(box);
@@ -4621,7 +4624,7 @@ function viewStudentManage(){setWide(false);mountView(w=>{
       if(data&&data.ok)students=data.students||[];
     }catch(e){}
     loading.remove();
-    if(!students.length){box.appendChild(el('div','hint','등록된 학생이 없어요. "+ 새 학생 추가"로 첫 학생을 등록해보세요.'));groupRow.style.display='none';return;}
+    if(!students.length){box.appendChild(el('div','hint','등록된 학생이 없어요. "+ 새 학생 추가"로 첫 학생을 등록해보세요.'));return;}
     const renderRow=(container,s)=>{
       const row=el('div','point');row.style.cursor='default';
       row.appendChild(el('div','dot','●'));
@@ -4649,34 +4652,39 @@ function viewStudentManage(){setWide(false);mountView(w=>{
       row.appendChild(btnRow);
       container.appendChild(row);
     };
+    const fillOptions=(sel,values,allLabel)=>{
+      const prev=sel.value;
+      sel.innerHTML='';
+      const optAll=el('option');optAll.value='';optAll.textContent=allLabel;sel.appendChild(optAll);
+      values.forEach(v=>{const o=el('option');o.value=v;o.textContent=v;sel.appendChild(o);});
+      if(values.includes(prev))sel.value=prev;
+    };
+    const uniq=key=>Array.from(new Set(students.map(s=>String(s[key]||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko',{numeric:true}));
     const render=()=>{
       box.innerHTML='';
-      const groupKey=groupSel.value;
-      if(groupKey==='name'){
-        const sorted=students.slice().sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
-        sorted.forEach(s=>renderRow(box,s));
-        return;
-      }
-      const groups={};
-      students.forEach(s=>{
-        const k=String(s[groupKey]||'').trim()||'(미지정)';
-        (groups[k]=groups[k]||[]).push(s);
-      });
-      const keys=Object.keys(groups).sort((a,b)=>{
-        if(a==='(미지정)')return 1; if(b==='(미지정)')return -1;
-        return a.localeCompare(b,'ko',{numeric:true});
-      });
-      keys.forEach(k=>{
-        const list=groups[k].sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
-        const sec=el('div');sec.style.cssText='margin-bottom:18px;background:#fafaf9;border:1px solid #ecebe8;border-radius:14px;padding:12px 14px';
-        const head=el('div');head.style.cssText='font-size:13.5px;font-weight:800;color:var(--accent);margin-bottom:8px';
-        head.textContent=k+' ('+list.length+'명)';
-        sec.appendChild(head);
-        list.forEach(s=>renderRow(sec,s));
-        box.appendChild(sec);
-      });
+      // 학원을 고르면 그 학원에 속한 학생만 대상으로 학교/학년/반 선택지를 다시 만들어서,
+      // 존재하지 않는 조합(예: 그 학원엔 없는 학교)이 안 뜨게 해요.
+      const wantAcademy=fAcademy.sel.value,wantSchool=fSchool.sel.value,wantGrade=fGrade.sel.value,wantCls=fCls.sel.value;
+      const byAcademy=wantAcademy?students.filter(s=>String(s.academy||'').trim()===wantAcademy):students;
+      fillOptions(fAcademy.sel,uniq('academy'),'학원 전체');fAcademy.sel.value=wantAcademy;
+      fillOptions(fSchool.sel,Array.from(new Set(byAcademy.map(s=>String(s.school||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko')),'학교 전체');fSchool.sel.value=wantSchool;
+      fillOptions(fGrade.sel,Array.from(new Set(byAcademy.map(s=>String(s.schoolGrade||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko',{numeric:true})),'학년 전체');fGrade.sel.value=wantGrade;
+      fillOptions(fCls.sel,Array.from(new Set(byAcademy.map(s=>String(s.cls||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko',{numeric:true})),'반 전체');fCls.sel.value=wantCls;
+      const filtered=students.filter(s=>
+        (!wantAcademy||String(s.academy||'').trim()===wantAcademy)&&
+        (!wantSchool||String(s.school||'').trim()===wantSchool)&&
+        (!wantGrade||String(s.schoolGrade||'').trim()===wantGrade)&&
+        (!wantCls||String(s.cls||'').trim()===wantCls)
+      ).sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
+      if(!filtered.length){box.appendChild(el('div','hint','조건에 맞는 학생이 없어요.'));return;}
+      filtered.forEach(s=>renderRow(box,s));
     };
-    groupSel.onchange=render;
+    filterBox.style.display='flex';
+    fillOptions(fAcademy.sel,uniq('academy'),'학원 전체');
+    fillOptions(fSchool.sel,uniq('school'),'학교 전체');
+    fillOptions(fGrade.sel,uniq('schoolGrade'),'학년 전체');
+    fillOptions(fCls.sel,uniq('cls'),'반 전체');
+    [fAcademy,fSchool,fGrade,fCls].forEach(f=>f.sel.onchange=render);
     render();
   })();
 });}
