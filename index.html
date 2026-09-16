@@ -3112,34 +3112,45 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
 function uniqSorted(arr){return Array.from(new Set(arr.filter(v=>v!=null&&v!=='').map(v=>String(v)))).sort((a,b)=>a.localeCompare(b,'ko'));}
 const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기','글쓰기'],['기사요약','기사요약'],['수행평가','수행평가'],['Re-Writing','Re-Writing']];
 function viewTeacherHome(){setWide(false);mountView(w=>{
-  const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
+  const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap';
   titleRow.appendChild(el('h1','title',USER.name+' 선생님'+(USER.isAdmin?' · 전체 학원 관리자':(USER.academy?' · '+USER.academy:''))));
-  const addContentBtn=el('button','btn ghost','🧩 컨텐츠 추가');addContentBtn.type='button';addContentBtn.style.cssText='padding:10px 18px;font-size:14px';
-  addContentBtn.onclick=()=>viewContentAdd();
-  titleRow.appendChild(addContentBtn);
-  const aiChatBotBtn=el('button','btn ghost','🤖 AI 챗봇으로 만들기');aiChatBotBtn.type='button';aiChatBotBtn.style.cssText='padding:10px 18px;font-size:14px';
-  aiChatBotBtn.onclick=()=>viewAiContentChatBot();
-  titleRow.appendChild(aiChatBotBtn);
+  w.appendChild(titleRow);
+  // 메뉴 버튼이 하나씩 늘어나면서 뒤죽박죽 보이던 걸, 하는 일이 비슷한 것끼리 묶어서
+  // "콘텐츠" / "제출·리포트" / "운영 관리(관리자 전용)" 세 그룹으로 나눠 보여줘요.
+  // 그냥 회색 안내 문구만으로는 그룹 구분이 잘 안 보여서, 카드 형태(연한 배경+테두리)로 감싸서
+  // 한눈에 "여긴 한 묶음이다"가 보이게 했어요.
+  const mkMenuGroup=(label)=>{
+    const group=el('div');
+    group.style.cssText='display:flex;flex-direction:column;gap:10px;background:#fafaf9;border:1px solid #ecebe8;border-radius:14px;padding:14px 16px';
+    const lb=el('div',null,label);
+    lb.style.cssText='font-size:12.5px;font-weight:800;letter-spacing:.02em;color:var(--accent)';
+    group.appendChild(lb);
+    const row=el('div');row.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
+    group.appendChild(row);
+    return{group,row};
+  };
+  const mkMenuBtn=(label,onclick)=>{const b=el('button','btn ghost',label);b.type='button';b.style.cssText='padding:10px 18px;font-size:14px;white-space:nowrap';b.onclick=onclick;return b;};
+  const menuGroups=el('div');menuGroups.style.cssText='display:flex;gap:14px;flex-wrap:wrap;margin-top:14px';
+  const contentGroup=mkMenuGroup('콘텐츠');
+  contentGroup.row.appendChild(mkMenuBtn('🧩 컨텐츠 추가',()=>viewContentAdd()));
+  contentGroup.row.appendChild(mkMenuBtn('🤖 AI 챗봇으로 만들기',()=>viewAiContentChatBot()));
   // 컨텐츠 수정은 이제 관리자뿐 아니라 모든 선생님이 쓸 수 있어요 — 이미 올라간(스프레드시트에 저장된) 문제·본문·주제도
   // 선생님이 직접 사이트에서 고칠 수 있어야 해서예요. 학생 명단 관리는 계정 관리라 관리자 전용으로 남겨둬요.
-  const editContentBtn=el('button','btn ghost','✏️ 컨텐츠 수정');editContentBtn.type='button';editContentBtn.style.cssText='padding:10px 18px;font-size:14px';
-  editContentBtn.onclick=()=>viewContentEditPicker();
-  titleRow.appendChild(editContentBtn);
+  contentGroup.row.appendChild(mkMenuBtn('✏️ 컨텐츠 수정',()=>viewContentEditPicker()));
+  menuGroups.appendChild(contentGroup.group);
+  const reportGroup=mkMenuGroup('제출·리포트');
   // 학생 홈 화면(커리큘럼)을 거치지 않고, 곧바로 "학생 목록 → 그 학생이 쓴 글 목록 → 리포트 버튼"
   // 순서로 바로 인쇄까지 갈 수 있는 지름길이에요. 매번 학생 화면을 눌러 들어가서 컨텐츠를 찾을
   // 필요 없이, 리포트만 뽑고 싶을 때 여기서 바로 시작하면 돼요.
-  const reportListBtn=el('button','btn ghost','🖨 REPORT 인쇄');reportListBtn.type='button';reportListBtn.style.cssText='padding:10px 18px;font-size:14px';
-  reportListBtn.onclick=()=>viewReportStudentList();
-  titleRow.appendChild(reportListBtn);
+  reportGroup.row.appendChild(mkMenuBtn('🖨 REPORT 인쇄',()=>viewReportStudentList()));
+  menuGroups.appendChild(reportGroup.group);
   if(USER.isAdmin){
-    const manageLevelsBtn=el('button','btn ghost','🏷️ 레벨 관리');manageLevelsBtn.type='button';manageLevelsBtn.style.cssText='padding:10px 18px;font-size:14px';
-    manageLevelsBtn.onclick=()=>viewLevelManage();
-    titleRow.appendChild(manageLevelsBtn);
-    const manageStudentsBtn=el('button','btn ghost','👥 학생 명단 관리');manageStudentsBtn.type='button';manageStudentsBtn.style.cssText='padding:10px 18px;font-size:14px';
-    manageStudentsBtn.onclick=()=>viewStudentManage();
-    titleRow.appendChild(manageStudentsBtn);
+    const adminGroup=mkMenuGroup('운영 관리 (관리자 전용)');
+    adminGroup.row.appendChild(mkMenuBtn('🏷️ 레벨 관리',()=>viewLevelManage()));
+    adminGroup.row.appendChild(mkMenuBtn('👥 학생 명단 관리',()=>viewStudentManage()));
+    menuGroups.appendChild(adminGroup.group);
   }
-  w.appendChild(titleRow);
+  w.appendChild(menuGroups);
   w.appendChild(el('div','hint',USER.isAdmin?'모든 학원의 학생을 볼 수 있어요. 학원·학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.':'학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.'));
   const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin:14px 0';
   w.appendChild(filterBox);
