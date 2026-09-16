@@ -1334,7 +1334,7 @@ function toStoryTopic(g){
   }));
   return {id:g.id,level:g.level,title:g.title||'',titleKo:g.titleKo||'',intro:g.intro||'',sampleText:g.sampleText||'',pics,
     minWords:Number(g.minWords||0)||0,
-    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||'',targetClass:g.targetClass||''};
+    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||g.targetGrade||'',targetClass:g.targetClass||''};
 }
 const STORY={};
 function mergeStory(){
@@ -4588,8 +4588,11 @@ const STUDENT_FIELDS=[
   {key:'id',label:'아이디',ph:'예) kim01'},
   {key:'pw',label:'비밀번호',ph:'예) 1234'},
   {key:'name',label:'이름',ph:'예) 김민준'},
-  {key:'school',label:'학교',ph:'예) 잠원중'},
-  {key:'schoolGrade',label:'학년',ph:'예) 2학년'},
+  // 학교/학년 형식이 콘텐츠의 "대상 학교"·"대상 학년" 칸과 글자 그대로 똑같아야 매칭돼요(예:
+  // 콘텐츠에 "잠원중"이라고 적어뒀는데 학생 정보엔 "잠원중학교"라고 적으면 그 콘텐츠가 안 보여요).
+  // 그래서 형식을 여기 직접 보이게 적어뒀어요.
+  {key:'school',label:'학교',ph:'예) 잠원중',note:'꼭 "OO초"·"OO중"·"OO고" 형식으로 적어주세요 (예: 잠원중, 서울고). "잠원중학교"처럼 적으면 콘텐츠 대상 매칭이 안 될 수 있어요.'},
+  {key:'schoolGrade',label:'학년',ph:'예) 2',note:'숫자만 적어주세요 ("2학년"이 아니라 2).'},
   {key:'cls',label:'반',ph:'예) A반 (없으면 비워둬도 돼요)'},
   {key:'academy',label:'학원',ph:'예) 아이콘 학원 (한 학원만 쓰면 비워둬도 돼요)'}
 ];
@@ -4702,6 +4705,7 @@ function viewStudentForm(existing){setWide(false);mountView(w=>{
     if(f.ph)inp.placeholder=f.ph;
     if(existing&&existing[f.key]!==undefined)inp.value=existing[f.key];
     wrap.appendChild(inp);
+    if(f.note){const noteEl=el('div',null,f.note);noteEl.style.cssText='font-size:12px;color:#c2650a';wrap.appendChild(noteEl);}
     refs[f.key]=inp;
     form.appendChild(wrap);
   });
