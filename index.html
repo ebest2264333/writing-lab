@@ -4907,10 +4907,19 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
         const rewriteEligible=!!(s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
         const rewriteDone=(siblings||[]).some(x=>x.type==='Re-Writing');
         if(rewriteEligible||rewriteDone){
-          const rwBadge=el('div');
-          rwBadge.style.cssText='margin-top:8px;display:inline-block;padding:4px 12px;border-radius:999px;font-size:12.5px;font-weight:700;'+
-            (rewriteDone?'background:#e6f6ec;color:#059669':'background:#fdf1e7;color:#c2650a');
-          rwBadge.textContent=rewriteDone?'🔁 Re-Writing 완료함':'⏳ 아직 Re-Writing 안 함';
+          // 예전엔 이 배지가 그냥 글자만 있는 <div>라서, "Re-Writing 완료함"이라고는 뜨는데 정작 그
+          // 다시 쓴 글이 어디 있는지 갈 방법이 없었어요(직접 "🕓 이전 제출 보기"를 펼쳐서 찾아야 했어요).
+          // 완료된 경우엔 눌러서 바로 그 Re-Writing 제출물 상세로 이동하게 버튼으로 바꿨어요.
+          const rewriteSubs=(siblings||[]).filter(x=>x.type==='Re-Writing').sort((a,b)=>String(b.datetime||'').localeCompare(String(a.datetime||'')));
+          const rwBadge=el(rewriteDone?'button':'div');
+          if(rewriteDone)rwBadge.type='button';
+          rwBadge.style.cssText='margin-top:8px;display:inline-block;padding:4px 12px;border-radius:999px;font-size:12.5px;font-weight:700;border:none;'+
+            (rewriteDone?'background:#e6f6ec;color:#059669;cursor:pointer':'background:#fdf1e7;color:#c2650a');
+          rwBadge.textContent=rewriteDone?'🔁 Re-Writing 완료함 (눌러서 보기)':'⏳ 아직 Re-Writing 안 함';
+          if(rewriteDone&&rewriteSubs[0]){
+            const rewriteSub=rewriteSubs[0];
+            rwBadge.onclick=()=>viewTeacherSubmissionDetail(rewriteSub,studentId,studentName,siblings,()=>viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn));
+          }
           card.appendChild(rwBadge);
         }
       }
