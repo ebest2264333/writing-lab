@@ -1457,7 +1457,24 @@ function draftBanner(savedAt){
 
 /* view helpers */
 function clearStage(){stage.innerHTML='';}
-function mountView(build){clearStage();nav.classList.remove('on');clearViewUnsubs();const v=el('div','view active');const w=el('div','wrap');v.appendChild(w);stage.appendChild(v);prog.style.width='0';build(w);}
+let EWL_POPSTATE_BOUND=false;
+/* 브라우저/모바일 기기의 "뒤로가기"를 누르면 화면 안 "◀ 뒤로" 버튼이 아니라 사이트 자체를 나가버리는
+   문제가 있었어요 — 이 사이트는 페이지 이동 없이 화면만 바꿔치기하는 SPA라서, 브라우저 히스토리에
+   아무것도 안 쌓이면 뒤로가기가 곧바로 이 사이트를 열기 전 페이지로 나가버려요. 그래서 화면이 바뀔
+   때마다(mountView가 호출될 때마다) 히스토리를 하나씩 쌓아두고, 뒤로가기(popstate)가 감지되면 지금
+   화면에 이미 있는 "◀ 뒤로" 버튼을 코드로 대신 눌러줘서, 실제로 사이트 안에서 한 단계만 뒤로
+   가게 만들어요. 뒤로가기 버튼이 없는 화면(맨 처음 홈 화면 등)에서는 그대로 사이트를 나가요 —
+   그게 자연스러운 동작이에요. */
+function mountView(build){clearStage();nav.classList.remove('on');clearViewUnsubs();const v=el('div','view active');const w=el('div','wrap');v.appendChild(w);stage.appendChild(v);prog.style.width='0';build(w);
+  try{history.pushState({ewlNav:true},'',location.href);}catch(e){}
+  if(!EWL_POPSTATE_BOUND){
+    EWL_POPSTATE_BOUND=true;
+    window.addEventListener('popstate',()=>{
+      const bk=document.querySelector('.backbtn');
+      if(bk){try{history.pushState({ewlNav:true},'',location.href);}catch(e){} bk.click();}
+    });
+  }
+}
 
 /* ================= LOGIN ================= */
 let ROSTER=null,TEACHERS=null,rosterLoading=null;
