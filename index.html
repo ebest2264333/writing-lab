@@ -1614,15 +1614,6 @@ function viewHome(){setWide(false);mountView(w=>{
     const c4=el('button','track exam',ic4+'<div class="tt">수행평가 대비</div><div class="td">학교 수행평가 주제·조건에 맞춰 미리 써보기 · 자동 채점 · 선생님 첨삭</div><div class="tk">주제 골라 연습하기</div>');
     c4.onclick=()=>viewExamMenu();
     tr.appendChild(c4);
-    // Re-Writing은 "이미 첨삭받은 내 글을 골라서 다시 쓰기"라는 학생 전용 동작이라, 선생님이 학생 대신
-    // 새로 쓸 수는 없어요. 미리보기 모드에서는 이 카드는 건너뛰어요(그 학생이 실제로 낸 Re-Writing 글은
-    // 원래 항목의 "이전 제출 보기"에서 함께 보여요).
-    if(!TEACHER_PREVIEW){
-      const ic5='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></div>';
-      const c5=el('button','track rewrite',ic5+'<div class="tt">Re-Writing</div><div class="td">첨삭받은 글을 고쳐진 내용대로 처음부터 전체 다시 써보기</div><div class="tk">첨삭 끝난 글 골라 다시 쓰기</div>');
-      c5.onclick=()=>viewRewriteList();
-      tr.appendChild(c5);
-    }
   }
   // Story Writing은 초5 전용 컨텐츠라, 다른 학년 홈 화면에는 아예 안 보여야 해요(예전엔 여기 있는 카드가
   // storyOnly 여부와 상관없이 항상 추가돼서 모든 학년에 다 보였던 버그가 있었어요).
@@ -1631,6 +1622,16 @@ function viewHome(){setWide(false);mountView(w=>{
     const c6=el('button','track story',ic6+'<div class="tt">Story Writing</div><div class="td">그림을 보고 영어로 이야기 만들기 · 단어 카드 게임 · 발음 듣기</div><div class="tk">그림 이야기 골라 써보기</div>');
     c6.onclick=()=>viewStoryMenu();
     tr.appendChild(c6);
+  }
+  // Re-Writing은 "이미 첨삭받은 내 글을 골라서 다시 쓰기"라는 학생 전용 동작이라, 선생님이 학생 대신
+  // 새로 쓸 수는 없어요(미리보기 모드에서는 건너뛰어요). 예전엔 이 카드가 examArticleOnly(중3)·
+  // storyOnly(초5) 분기 안에는 아예 없어서 그 학년 학생들은 Re-Writing 자체를 못 봤는데, 모든 학년에서
+  // 공통으로 필요한 기본 기능이라 학년/레벨과 상관없이 맨 아래에 항상 뜨도록 바꿨어요.
+  if(!TEACHER_PREVIEW){
+    const ic5='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></div>';
+    const c5=el('button','track rewrite',ic5+'<div class="tt">Re-Writing</div><div class="td">첨삭받은 글을 고쳐진 내용대로 처음부터 전체 다시 써보기</div><div class="tk">첨삭 끝난 글 골라 다시 쓰기</div>');
+    c5.onclick=()=>viewRewriteList();
+    tr.appendChild(c5);
   }
   w.appendChild(tr);
   if(!TEACHER_PREVIEW){
