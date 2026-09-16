@@ -5026,16 +5026,13 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
             const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
             let data=null;try{data=await res.json();}catch(e){}
             if(!data||!data.ok)throw new Error((data&&data.error)||'AI 첨삭 생성에 실패했어요.');
-            // 지연시간과 상관없이 방금 만든 결과를 바로 보여줘요(선생님이 직접 지금 만든 거니까요).
-            const freshAifb=parseAiFeedback(data.aiFeedback);
-            const freshAifbGpt=parseAiFeedback(data.aiFeedbackGpt);
-            if(freshAifb.overall){
-              mountAiOverallBox(card,nowWrap,'background:#eef0ff;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.6;white-space:pre-line;margin-top:12px',freshAifb.overall,s,'claude',freshAifb);
-            }
-            if(freshAifbGpt.overall){
-              mountAiOverallBox(card,nowWrap,'background:#e6f6f3;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.6;white-space:pre-line;margin-top:8px',freshAifbGpt.overall,s,'gpt',freshAifbGpt);
-            }
-            nowMsg.className='fx ok';nowMsg.textContent='✅ 방금 생성했어요. 문장별 첨삭까지 보려면 이 화면을 새로고침(◀ 뒤로 갔다가 다시 들어오기)해보세요. 학생 화면에도 지연 없이 바로 보여요.';
+            // 예전엔 여기서 총평 박스만 손으로 끼워넣고 "새로고침해서 문장별 첨삭 보세요"라고 안내했는데,
+            // 그러지 말고 s(제출물 객체, siblings 안의 것과 같은 참조라서 여기서 바로 갱신해도 안전해요)에
+            // 새 첨삭을 반영한 뒤 이 상세 화면 자체를 다시 그려서, 문장별 첨삭까지 클릭 한 번으로 바로 보이게 해요.
+            s.aiFeedback=data.aiFeedback||s.aiFeedback;
+            if(data.aiFeedbackGpt)s.aiFeedbackGpt=data.aiFeedbackGpt;
+            viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn);
+            return;
           }catch(e){
             nowMsg.className='fx no';nowMsg.textContent=String(e.message||e);
           }finally{
@@ -5055,9 +5052,9 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
         const feedbackStr=JSON.stringify({overall:ta.value,sentences:sentencesOut});
         try{
           const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'feedback',subId:s.subId,feedback:feedbackStr,academy:s.academy||''})});
-          const txt=await res.text();
-          if(txt.indexOf('OK')>-1){fx.className='fx ok';fx.textContent='저장했어요.';}
-          else{fx.className='fx no';fx.textContent='저장하지 못했어요: '+txt;}
+          let data=null;try{data=await res.json();}catch(e){}
+          if(data&&data.ok){fx.className='fx ok';fx.textContent='저장했어요.';}
+          else{fx.className='fx no';fx.textContent='저장하지 못했어요: '+((data&&data.error)||'알 수 없는 오류');}
         }catch(e){fx.className='fx no';fx.textContent='저장하지 못했어요. 인터넷 연결을 확인하세요.';}
         saveBtn.disabled=false;saveBtn.textContent=prev;
       };
