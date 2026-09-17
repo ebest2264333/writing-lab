@@ -2054,6 +2054,18 @@ function parseWrongReport(raw){
   if(!raw)return[];
   try{const arr=JSON.parse(raw);return Array.isArray(arr)?arr:[];}catch(e){return[];}
 }
+/** Re-Writing 비교 화면("처음 쓴 글 · 지적된 부분")에서, 원본 글에 저장된 첨삭/문항 결과가
+ *  하나도 없을 때 그냥 빈 화면처럼 보이지 않도록 — 선생님 첨삭(feedback)·AI 첨삭(aiFeedback류)·
+ *  문법드릴 문항별 결과(wrongReport) 중 하나라도 있는지 확인해요. 셋 다 없으면(예: 원본에
+ *  첨삭을 아직 한 번도 저장한 적이 없으면) 안내 문구를 보여줘요. */
+function hasAnyOriginalFeedback(sub){
+  if(!sub)return false;
+  const fb=parseFeedback(sub.feedback),aifb=parseAiFeedback(sub.aiFeedback),aifbGpt=parseAiFeedback(sub.aiFeedbackGpt);
+  const hasSentenceMarks=[fb,aifb,aifbGpt].some(f=>f&&f.sentences&&Object.keys(f.sentences).length);
+  const hasOverall=!!(fb.overall||aifb.overall||aifbGpt.overall);
+  const hasWrongReport=!!(sub.wrongReport&&parseWrongReport(sub.wrongReport).length);
+  return hasSentenceMarks||hasOverall||hasWrongReport;
+}
 /** 문법 드릴의 문항별 결과(맞은 것·틀린 것 전부)를 학생·선생님 화면에 똑같이 보여주는 카드 — 문항 종류(퀴즈/배열/영작),
  *  문제, 학생이 쓴 답, 정답을 나란히 보여줘요. 틀린 문항은 학생 답에 빨간 취소선이 붙고, 맞은 문항은 ✅로 표시돼요. */
 function renderDrillWrongReport(itemArr){
@@ -2377,10 +2389,13 @@ function printSubmissionReport(s,studentName,studentId,academyName,siblings){
   if(original){
     const oOverallHtml=(function(){const of=parseFeedback(original.feedback),oai=parseAiFeedback(original.aiFeedback),oaiGpt=parseAiFeedback(original.aiFeedbackGpt);
       return [oai.overall,oaiGpt.overall,of.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');})();
+    // 원본이 문법드릴이면 첨삭 대신 문항별 결과(wrongReport)에 "틀린 부분"이 담겨있어요.
+    const oWrongHtml=original.wrongReport?renderDrillWrongReport(parseWrongReport(original.wrongReport)):'';
+    const oNoFeedbackHtml=hasAnyOriginalFeedback(original)?'':'<div class="hint" style="margin-top:8px">⚠️ 이 원본 글에는 아직 저장된 첨삭이 없어요 — 원본 제출물 화면에서 먼저 첨삭(AI 첨삭 또는 선생님 첨삭)을 남기면 여기에도 나와요.</div>';
     essaySectionHtml='<h2 class="sec">처음 쓴 글 → 고쳐 쓴 글 비교</h2>'+
       '<div class="compare">'+
         '<div class="win orig"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>처음 쓴 글 · 지적된 부분</div>'+
-          '<div class="win-body osent-wrap">'+annotatedSentencesHtml(original)+oOverallHtml+'</div></div>'+
+          '<div class="win-body osent-wrap">'+annotatedSentencesHtml(original)+oOverallHtml+oWrongHtml+oNoFeedbackHtml+'</div></div>'+
         '<div class="win fixed"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 최종 글</div>'+
           '<div class="win-body rsent-wrap">'+
           (s.text?splitSentences(s.text).map((sent)=>'<p>'+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+
@@ -5042,9 +5057,12 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){se
         if(original){
           const oOverallHtml=(function(){const of=parseFeedback(original.feedback),oai=parseAiFeedback(original.aiFeedback),oaiGpt=parseAiFeedback(original.aiFeedbackGpt);
             return [oai.overall,oaiGpt.overall,of.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');})();
+          // 원본이 문법드릴이면 첨삭 대신 문항별 결과(wrongReport)에 "틀린 부분"이 담겨있어요.
+          const oWrongHtml=original.wrongReport?renderDrillWrongReport(parseWrongReport(original.wrongReport)):'';
+          const oNoFeedbackHtml=hasAnyOriginalFeedback(original)?'':'<div class="hint" style="margin-top:8px">⚠️ 이 원본 글에는 아직 저장된 첨삭이 없어요 — 원본 제출물 화면에서 먼저 첨삭(AI 첨삭 또는 선생님 첨삭)을 남기면 여기에도 나와요.</div>';
           cmpWrap.innerHTML='<div class="compare">'+
             '<div class="win orig"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>처음 쓴 글 · 지적된 부분</div>'+
-              '<div class="win-body osent-wrap">'+annotatedSentencesHtml(original)+oOverallHtml+'</div></div>'+
+              '<div class="win-body osent-wrap">'+annotatedSentencesHtml(original)+oOverallHtml+oWrongHtml+oNoFeedbackHtml+'</div></div>'+
             '<div class="win fixed"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 최종 글</div>'+
               '<div class="win-body rsent-wrap">'+
               (s.text?splitSentences(s.text).map((sent)=>'<p>'+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+
