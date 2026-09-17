@@ -1518,6 +1518,20 @@ let ROSTER=null,TEACHERS=null,rosterLoading=null;
 let CLASS_LEVELS={};
 function loadRosterCache(){try{return JSON.parse(store.get('ewl2_roster')||'{}')}catch(e){return {}}}
 function saveRosterCache(students,teachers,classLevels){try{store.set('ewl2_roster',JSON.stringify({students:students||[],teachers:teachers||[],classLevels:classLevels||{}}));}catch(e){}}
+/* 커리큘럼 컨텐츠(levels/pattern/paragraph/article/exam/story)도 로스터처럼 로컬에 캐시해둬요.
+ * 예전엔 새로고침할 때마다 이 전체 컨텐츠를 서버에서 다 받아올 때까지 화면이 하얗게 비어있었는데
+ * (보통 1초 정도 걸려요) — 이제 캐시가 있으면 그걸로 즉시 화면부터 그리고, 최신 내용은 뒤에서
+ * 조용히 받아와서 반영해요(remergeContent가 원래도 화면을 억지로 다시 그리진 않아요). */
+function loadContentCache(){try{return JSON.parse(store.get('ewl2_content')||'{}')}catch(e){return {}}}
+function saveContentCache(){
+  try{
+    store.set('ewl2_content',JSON.stringify({
+      levels:LEVELS_DATA,patternStructure:PATTERN_STRUCTURE_DATA,
+      gen:GEN,genpara:GENPARA,genarticle:GENARTICLE,genexam:GENEXAM,story:GENSTORY,
+      drillMinWords:DRILL_MIN_WORDS,drillMinSentences:DRILL_MIN_SENTENCES
+    }));
+  }catch(e){}
+}
 function fetchRoster(){
   if(rosterLoading)return rosterLoading;
   rosterLoading=(async()=>{
@@ -6747,6 +6761,7 @@ async function loadLiveContent(){
       if(Array.isArray(data.story))GENSTORY=data.story;
       if(typeof data.drillMinWords==='number'&&data.drillMinWords>=0)DRILL_MIN_WORDS=data.drillMinWords;
       if(typeof data.drillMinSentences==='number'&&data.drillMinSentences>=0)DRILL_MIN_SENTENCES=data.drillMinSentences;
+      saveContentCache();
     }
   }catch(e){
     console.warn('컨텐츠를 실시간으로 불러오지 못했어요(기본 커리큘럼만 사용해요):',e);
@@ -6819,10 +6834,28 @@ function stopRealtimeContent(){
 
 /* ================= start ================= */
 (async function boot(){
-  // "불러오는 중…" 문구를 여기서 한 번 띄웠다가, 곧이어 로그인 화면/홈 화면이 뜨면서 또
-  // 다른 "불러오는 중…"이 겹쳐 보여서 화면이 깜빡이는 것처럼 느껴졌어요 — 그래서 이 첫 화면
-  // 로딩 문구는 없애고, 조용히 데이터만 받아온 뒤 완성된 화면을 한 번에 보여줘요.
-  await loadLiveContent();
+  // 예전엔 매번 새로고침할 때마다 커리큘럼 전체(레벨·패턴·수행평가 등)를 서버에서 다 받아올 때까지
+  // 화면이 하얗게 비어있었어요(보통 1초 정도) — 그 사이엔 딱히 보여줄 데이터가 없어서 "불러오는
+  // 중" 문구를 띄우거나 아예 하얗게 비워두거나 둘 중 하나였어요. 이제 이전에 받아둔 컨텐츠가
+  // 로컬에 캐시돼 있으면 그걸로 즉시 화면부터 그리고, 최신 내용은 뒤에서 조용히 받아와 반영해요
+  // (컨텐츠가 실제로 바뀌었을 때만 remergeContent가 다시 계산해요 — 화면을 억지로 새로고침하진
+  // 않아요). 캐시가 아예 없는 첫 방문(이 브라우저에서 처음 여는 경우)에만 예전처럼 기다려요.
+  const cachedContent=loadContentCache();
+  const hasCachedContent=!!(cachedContent&&(cachedContent.levels||cachedContent.gen||cachedContent.genpara||cachedContent.genarticle||cachedContent.genexam||cachedContent.story));
+  if(hasCachedContent){
+    if(Array.isArray(cachedContent.levels))LEVELS_DATA=cachedContent.levels;
+    if(Array.isArray(cachedContent.patternStructure))PATTERN_STRUCTURE_DATA=cachedContent.patternStructure;
+    if(Array.isArray(cachedContent.gen))GEN=cachedContent.gen;
+    if(Array.isArray(cachedContent.genpara))GENPARA=cachedContent.genpara;
+    if(Array.isArray(cachedContent.genarticle))GENARTICLE=cachedContent.genarticle;
+    if(Array.isArray(cachedContent.genexam))GENEXAM=cachedContent.genexam;
+    if(Array.isArray(cachedContent.story))GENSTORY=cachedContent.story;
+    if(typeof cachedContent.drillMinWords==='number')DRILL_MIN_WORDS=cachedContent.drillMinWords;
+    if(typeof cachedContent.drillMinSentences==='number')DRILL_MIN_SENTENCES=cachedContent.drillMinSentences;
+    remergeContent();
+  }else{
+    await loadLiveContent();
+  }
   const sess=loadSession();
   if(sess&&sess.id){
     USER=Object.assign({id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false},sess);
@@ -6848,6 +6881,7 @@ function stopRealtimeContent(){
   }else{
     viewLogin();
   }
+  if(hasCachedContent)loadLiveContent().catch(()=>{}); // 캐시로 먼저 그린 뒤, 최신 내용은 뒤에서 조용히 갱신해요.
 })();
 </script>
 </body>
