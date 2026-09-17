@@ -2717,6 +2717,9 @@ function printStudentRewriteReport(preview,selectedPoints){
       return html;
     }).join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
     const overallHtml=[aifb.overall,aifbGpt.overall,fb.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');
+    // 원본이 문법드릴이면 첨삭 대신 문항별 결과(wrongReport)에 "틀린 부분"이 담겨있어요.
+    const oWrongHtml=o.wrongReport?renderDrillWrongReport(parseWrongReport(o.wrongReport)):'';
+    const oNoFeedbackHtml=hasAnyOriginalFeedback(o)?'':'<div class="hint" style="margin-top:8px">⚠️ 이 원본 글에는 아직 저장된 첨삭이 없어요 — 원본 제출물 화면에서 먼저 첨삭(AI 첨삭 또는 선생님 첨삭)을 남기면 여기에도 나와요.</div>';
     const rewriteSents=r.text?splitSentences(r.text):[];
     const rewriteHtml=rewriteSents.length?rewriteSents.map((s)=>'<p>'+escH(s)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
     const scoreLabel=(o.total!=null&&String(o.total).trim()!==''&&String(o.total)!=='-')?(' &nbsp;·&nbsp; 점수 '+escH(String(o.total))+(o.grade?(' ('+escH(o.grade)+'등급)'):'')):'';
@@ -2726,7 +2729,7 @@ function printStudentRewriteReport(preview,selectedPoints){
       rubricSectionHtml(parseRubricEval(o.rubric)||autoComputeRubric(o),p.point,(preview&&preview.studentName)||'')+
       '<div class="compare">'+
         '<div class="win orig"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>처음 쓴 글 · 지적된 부분</div>'+
-          '<div class="win-body osent-wrap">'+sentsHtml+overallHtml+'</div></div>'+
+          '<div class="win-body osent-wrap">'+sentsHtml+overallHtml+oWrongHtml+oNoFeedbackHtml+'</div></div>'+
         '<div class="win fixed"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 최종 글</div>'+
           '<div class="win-body rsent-wrap">'+rewriteHtml+processSectionHtml(o)+'</div></div>'+
       '</div>'+
