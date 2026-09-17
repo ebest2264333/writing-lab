@@ -322,10 +322,10 @@
   .rwcmp .err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}
   .rwcmp .err-list li{margin-bottom:7px}
   .rwcmp .err-pair{line-height:1.5}
-  .rwcmp .wrong{color:#2B2733;text-decoration:line-through}
+  .rwcmp .wrong{color:#B3261E;text-decoration:line-through}
   .rwcmp .correct{color:#B3261E;font-weight:700}
   .rwcmp .missing{color:#1D4ED8;font-weight:700}
-  .rwcmp .suggest{color:#7C3AED;font-weight:700}
+  .rwcmp .suggest{color:#7C3AED;font-weight:800}
   .rwcmp .type-tag{font-size:11px;font-weight:700;margin-left:4px}
   .rwcmp .note{display:block;color:var(--muted);margin-top:2px;line-height:1.5}
   .rwcmp .corrected-full{font-size:12.5px;color:#2B2733;margin:2px 0 8px;background:#F1FBFA;border-radius:6px;padding:5px 10px}
@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-17e';
+const APP_VERSION='2026-09-17i';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2277,10 +2277,10 @@ const REPORT_BASE_CSS=
   '.err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}'+
   '.err-list li{margin-bottom:7px;break-inside:avoid;page-break-inside:avoid}'+
   '.err-pair{line-height:1.5}'+
-  '.wrong{color:#2B2733;text-decoration:line-through}'+
+  '.wrong{color:#B3261E;text-decoration:line-through}'+
   '.correct{color:#B3261E;font-weight:700}'+
   '.missing{color:#1D4ED8;font-weight:700}'+
-  '.suggest{color:#7C3AED;font-weight:700}'+
+  '.suggest{color:#7C3AED;font-weight:800}'+
   '.type-tag{font-size:11px;font-weight:700;margin-left:4px}'+
   '.note{display:block;color:#8D8298;margin-top:2px;line-height:1.5}'+
   '.corrected-full{font-size:12.5px;color:#2B2733;margin:2px 0 8px;background:#F1FBFA;border-radius:0;padding:5px 10px}'+
@@ -3176,9 +3176,9 @@ function renderInlineDiff(sentence,errors){
     if(type==='missing'){
       out+=escH(e.wrong)+' <b style="color:#1D4ED8">'+escH(e.correct||'')+'</b>';
     }else if(type==='suggestion'){
-      out+=escH(e.wrong)+' <b style="color:#7C3AED">💡'+escH(e.correct||'')+'</b>';
+      out+=escH(e.wrong)+' <b style="color:#7C3AED;font-weight:800">💡'+escH(e.correct||'')+'</b>';
     }else{
-      out+='<s style="color:#2B2733">'+escH(e.wrong)+'</s> <b style="color:#B3261E">'+escH(e.correct||'')+'</b>';
+      out+='<s style="color:#B3261E">'+escH(e.wrong)+'</s> <b style="color:#B3261E">'+escH(e.correct||'')+'</b>';
     }
     pos=idx+e.wrong.length;
   });
@@ -5915,11 +5915,17 @@ function runParagraph(topic){setWide(true);deckInit();
     const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
     const saveMsg=el('span','fx');draftSaveMsgRef=saveMsg;saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);left.appendChild(saveRow);
     left.appendChild(el('div','enter-tip','시간 안에 다 못 쓰면 "임시 저장"을 눌러두고, 나중에 다시 로그인해서 이어서 쓸 수 있어요.'));
-    const conds=[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'연결어(First/Second/Also/However…) 사용',test:t=>HBCONNRE.test(t)},{label:'부연설명 표현(because / For example / As a result 등) 사용',test:t=>HBDETAILRE.test(t)},{label:topic.grammarLabel,test:t=>gtest.test(t)},{label:'마무리 표현(In conclusion / I hope / I wish…)',test:t=>HBCONCLRE.test(t)}];
+    const PARA_MIN_WORDS=200;
+    const conds=[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'전체 '+PARA_MIN_WORDS+'단어 이상',test:t=>countWords(t)>=PARA_MIN_WORDS},{label:'연결어(First/Second/Also/However…) 사용',test:t=>HBCONNRE.test(t)},{label:'부연설명 표현(because / For example / As a result 등) 사용',test:t=>HBDETAILRE.test(t)},{label:topic.grammarLabel,test:t=>gtest.test(t)},{label:'마무리 표현(In conclusion / I hope / I wish…)',test:t=>HBCONCLRE.test(t)}];
     const ul=el('ul','conds');conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});left.appendChild(ul);
-    btn.onclick=()=>{ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';});ST.draft=ta.value;};
+    // ⚠️ 다른 세 글쓰기 화면(조건 영작/요약문/주제 글쓰기)은 입력할 때마다(input 이벤트) 실시간으로
+    // 조건을 확인하는데, 이 문단 쓰기(Paragraph Writing) 화면만 "조건 확인" 버튼을 눌러야만
+    // 체크되던 버그가 있었어요. 그래서 다른 화면들과 똑같이 checkConds 함수를 만들어서
+    // input 이벤트에도 연결해요 — 버튼은 그대로 두고 눌러도 같은 함수가 실행돼요.
+    const checkConds=()=>{ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';});ST.draft=ta.value;};
+    btn.onclick=checkConds;
     const ref=el('div','ref');right.appendChild(ref);
-    const pv=el('div','preview');pv.style.marginTop='12px';pv.appendChild(el('h3',null,'실시간 글'));const pvb=el('div','pv-body');pv.appendChild(pvb);const meta=el('div','pv-meta');const chS=el('span','mchip','0문장');meta.appendChild(chS);pv.appendChild(meta);right.appendChild(pv);
+    const pv=el('div','preview');pv.style.marginTop='12px';pv.appendChild(el('h3',null,'실시간 글'));const pvb=el('div','pv-body');pv.appendChild(pvb);const meta=el('div','pv-meta');const chS=el('span','mchip','0문장');const chW=el('span','mchip','0단어 / '+PARA_MIN_WORDS+'단어');meta.appendChild(chS);meta.appendChild(chW);pv.appendChild(meta);right.appendChild(pv);
     const line=(emoji,en,ko,sub)=>{const d=el('div','rline');d.innerHTML='<div class="re">'+(sub?'&nbsp;&nbsp;↳ ':emoji+' ')+(en||'—')+'</div>'+(ko?'<div class="rk">'+(sub?'&nbsp;&nbsp;&nbsp;&nbsp;':'')+ko+'</div>':'');return d;};
     const renderRef=()=>{ref.innerHTML='<h4>내 브레인스토밍 아이디어</h4>';let any=false;
       HBLAYERS.forEach(L=>{const bl=ST.brain[L.key]||{};
@@ -5927,10 +5933,13 @@ function runParagraph(topic){setWide(true);deckInit();
         else{const ie=(bl.ideaEn||'').trim(),ik=(bl.ideaKo||'').trim(),de=(bl.detailEn||'').trim(),dk=(bl.detailKo||'').trim();
           if(ie||ik){any=true;ref.appendChild(line(L.emoji,ie,ik,false));}if(de||dk){any=true;ref.appendChild(line(L.emoji,de,dk,true));}}});
       if(!any)ref.appendChild(el('div','rk','STEP 5에서 아이디어를 적으면 여기에 보여요.'));};
-    const renderPv=()=>{const t=ta.value.trim();pvb.textContent=t||'…';const ns=sc(t);chS.textContent=ns+'문장';chS.className='mchip'+(ns>=10?' good':'');counter.textContent='현재 '+ns+'문장';};
-    ta.addEventListener('input',()=>{renderPv();ST.draft=ta.value;if(ta.value.trim())doAutosavePara();});ta.addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});
+    const renderPv=()=>{const t=ta.value.trim();pvb.textContent=t||'…';const ns=sc(t);const nw=countWords(t);
+      chS.textContent=ns+'문장';chS.className='mchip'+(ns>=10?' good':'');
+      chW.textContent=nw+'단어 / '+PARA_MIN_WORDS+'단어';chW.className='mchip'+(nw>=PARA_MIN_WORDS?' good':'');
+      counter.textContent='현재 '+ns+'문장 · '+nw+'단어 (목표 '+PARA_MIN_WORDS+'단어)';};
+    ta.addEventListener('input',()=>{renderPv();checkConds();if(ta.value.trim())doAutosavePara();});ta.addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});
     saveBtn.onclick=()=>{ST.draft=ta.value;saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='저장했어요! 나중에 이어서 쓸 수 있어요.';};
-    b._render=()=>{renderRef();renderPv();};b._save=()=>{ST.draft=ta.value;};
+    b._render=()=>{renderRef();renderPv();checkConds();};b._save=()=>{ST.draft=ta.value;};
     wrap.appendChild(left);wrap.appendChild(right);b.appendChild(wrap);
     b._draftBannerSlot=bannerSlot;},{wide:true,focus:'textarea'});
   slides[slides.length-1]._onEnter=function(){this._box._render&&this._box._render();};
