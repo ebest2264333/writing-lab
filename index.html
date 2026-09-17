@@ -216,10 +216,10 @@
   /* Re-Writing 화면 전용 3분할: 왼쪽(고쳐진 원문 참고자료) · 가운데(다시쓰기, 더 넓게) · 오른쪽(조건 확인) */
   .rewriter{display:flex;gap:18px;align-items:stretch}
   .rw-left{flex:0 1 35%;min-width:0;display:flex;flex-direction:column}
-  .rw-left-scroll{flex:1;max-height:70vh;overflow-y:auto;padding-right:4px}
-  .rw-mid{flex:1 1 41%;min-width:0;position:sticky;top:0;display:flex;flex-direction:column}
-  .rw-right{flex:0 1 24%;min-width:220px;position:sticky;top:0}
-  @media(max-width:1000px){.rewriter{flex-direction:column}.rw-left,.rw-mid,.rw-right{width:100%;flex-basis:auto;position:static}.rw-left{display:block}.rw-left-scroll{max-height:none}}
+  .rw-left-scroll{flex:1;padding-right:4px}
+  .rw-mid{flex:1 1 41%;min-width:0;position:sticky;top:0;display:flex;flex-direction:column;align-self:flex-start}
+  .rw-right{flex:0 1 24%;min-width:220px;position:sticky;top:0;align-self:flex-start}
+  @media(max-width:1000px){.rewriter{flex-direction:column}.rw-left,.rw-mid,.rw-right{width:100%;flex-basis:auto;position:static}.rw-left{display:block}}
   .slot{margin:9px 0}.slot .sl{font-size:12.5px;font-weight:700;color:#4a4a6a;margin-bottom:3px;display:flex;align-items:center;gap:6px}
   .slot .tag{display:inline-block;width:19px;height:19px;border-radius:50%;border:1.5px solid var(--line-2);text-align:center;line-height:16px;font-size:11px;font-weight:800;color:var(--muted);flex:0 0 auto}
   .slot.ok .tag{background:var(--green);border-color:var(--green);color:#fff}
@@ -322,8 +322,8 @@
   .rwcmp .err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}
   .rwcmp .err-list li{margin-bottom:7px}
   .rwcmp .err-pair{line-height:1.5}
-  .rwcmp .wrong{color:#B3261E;text-decoration:line-through}
-  .rwcmp .correct{color:#1C7A4D;font-weight:700}
+  .rwcmp .wrong{color:#2B2733;text-decoration:line-through}
+  .rwcmp .correct{color:#B3261E;font-weight:700}
   .rwcmp .missing{color:#1D4ED8;font-weight:700}
   .rwcmp .suggest{color:#7C3AED;font-weight:700}
   .rwcmp .type-tag{font-size:11px;font-weight:700;margin-left:4px}
@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-17c';
+const APP_VERSION='2026-09-17d';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1474,7 +1474,9 @@ function loadSession(){try{const raw=store.get(SESSION_KEY);if(!raw)return null;
    돌아가게 해요. (학생 계정 쪽은 화면을 딱 하나만 더 깊이 들어갈 수 있는 구조가 아니라서 — 예:
    퀴즈 도중 새로고침 — 여기선 다루지 않고, 레벨 홈 복원은 예전부터 되던 대로 그대로 둬요.) */
 const TEACHER_NAV_KEY='ewl_teacher_nav';
-function saveTeacherNav(studentId,studentName){try{store.set(TEACHER_NAV_KEY,JSON.stringify({studentId,studentName}));}catch(e){}}
+// subId를 같이 저장해두면, 새로고침했을 때 학생 홈 화면이 아니라 실제로 보고 있던 그 제출물의
+// 첨삭 화면까지 바로 복원할 수 있어요. subId를 생략하면(학생 홈 화면으로 나갈 때) 그 부분만 지워요.
+function saveTeacherNav(studentId,studentName,subId){try{store.set(TEACHER_NAV_KEY,JSON.stringify({studentId,studentName,subId:subId||''}));}catch(e){}}
 function clearTeacherNav(){try{store.set(TEACHER_NAV_KEY,'');}catch(e){}}
 function loadTeacherNav(){try{const raw=store.get(TEACHER_NAV_KEY);if(!raw)return null;const n=JSON.parse(raw);if(!n||!n.studentId)return null;return n;}catch(e){return null;}}
 function clearSession(){try{store.set(SESSION_KEY,'');}catch(e){}}
@@ -2275,8 +2277,8 @@ const REPORT_BASE_CSS=
   '.err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}'+
   '.err-list li{margin-bottom:7px;break-inside:avoid;page-break-inside:avoid}'+
   '.err-pair{line-height:1.5}'+
-  '.wrong{color:#B3261E;text-decoration:line-through}'+
-  '.correct{color:#1C7A4D;font-weight:700}'+
+  '.wrong{color:#2B2733;text-decoration:line-through}'+
+  '.correct{color:#B3261E;font-weight:700}'+
   '.missing{color:#1D4ED8;font-weight:700}'+
   '.suggest{color:#7C3AED;font-weight:700}'+
   '.type-tag{font-size:11px;font-weight:700;margin-left:4px}'+
@@ -2944,7 +2946,7 @@ function renderAiSentenceBlock(aiEntry,label,accent){
   let html='<div style="margin-top:4px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.7;border-left:3px solid '+accent+'">';
   errors.forEach(e=>{
     const type=e.type||'wrong';
-    const correctColor=type==='missing'?'#1D4ED8':(type==='suggestion'?'#7C3AED':accent);
+    const correctColor=type==='missing'?'#1D4ED8':(type==='suggestion'?'#7C3AED':'#B3261E');
     const prefix=type==='suggestion'?'💡':'';
     html+='<div style="color:#374151">• '+escH(e.wrong)+' → <b style="color:'+correctColor+'">'+prefix+escH(e.correct)+'</b>'+(e.note?('&nbsp;&nbsp;'+escH(e.note)):'')+'</div>';
   });
@@ -3156,11 +3158,13 @@ function viewRewriteList(){setWide(true);mountView(w=>{
 });}
 
 /** 문장 안에서 틀린 부분(errors[].wrong)만 찾아 그 자리에만 표시를 하고 바로 옆에 고친/제안 표현을
- *  붙여요(문장 전체를 긋지 않고, 나머지 부분은 그대로 둬요). type에 따라 표시가 달라요 —
- *  "wrong"(명백히 틀림)은 빨간 취소선+지정된 색으로 고침, "missing"(빠진 표현 삽입)은 원래 부분은
- *  그대로 두고 파란색으로 빠진 표현만 끼워 넣어요, "suggestion"(더 나은 표현 제안)은 보라색으로
- *  💡 표시와 함께 참고용으로 보여줘요. 여러 개의 오류가 있으면 문장에서 나온 순서대로 처리해요. */
-function renderInlineDiff(sentence,errors,color){
+ *  붙여요(문장 전체를 긋지 않고, 나머지 부분은 그대로 둬요). type에 따라 색만 다르게 표시해요 —
+ *  "wrong"(명백히 틀림)은 검정 취소선+빨간색으로 고침, "missing"(빠진 표현 삽입)은 원래 부분은
+ *  그대로 두고 파란색으로 빠진 표현만 끼워 넣어요, "suggestion"(더 나은 표현 제안)은 보라색 💡로
+ *  참고용으로 보여줘요. 왜 그런지에 대한 설명(note)은 문장 중간에 끼워 넣지 않고(읽기 흐름이 끊겨서),
+ *  호출하는 쪽에서 문장 "아래에 별도 줄"로 모아서 보여줘요(이 함수는 문장 자체만 그려요).
+ *  여러 개의 오류가 있으면 문장에서 나온 순서대로 처리해요. */
+function renderInlineDiff(sentence,errors){
   if(!errors||!errors.length)return escH(sentence);
   const found=errors.map(e=>({e,idx:(e&&e.wrong)?sentence.indexOf(e.wrong):-1})).filter(x=>x.idx>-1).sort((a,b)=>a.idx-b.idx);
   if(!found.length)return escH(sentence);
@@ -3169,18 +3173,28 @@ function renderInlineDiff(sentence,errors,color){
     if(idx<pos)return; // 겹치는 위치는 건너뛰어요 (이미 앞 오류가 그 자리를 덮었어요)
     out+=escH(sentence.slice(pos,idx));
     const type=e.type||'wrong';
-    const noteHtml=e.note?(' <span style="color:#7c3aed;font-size:12px">('+escH(e.note)+')</span>'):'';
     if(type==='missing'){
-      out+=escH(e.wrong)+' <b style="color:#1D4ED8">'+escH(e.correct||'')+'</b><span style="font-size:11px;color:#1D4ED8">(빠진 표현)</span>'+noteHtml;
+      out+=escH(e.wrong)+' <b style="color:#1D4ED8">'+escH(e.correct||'')+'</b>';
     }else if(type==='suggestion'){
-      out+=escH(e.wrong)+' <b style="color:#7C3AED">💡'+escH(e.correct||'')+'</b><span style="font-size:11px;color:#7C3AED">(제안)</span>'+noteHtml;
+      out+=escH(e.wrong)+' <b style="color:#7C3AED">💡'+escH(e.correct||'')+'</b>';
     }else{
-      out+='<s style="color:#dc2626">'+escH(e.wrong)+'</s> <b style="color:'+color+'">'+escH(e.correct||'')+'</b>'+noteHtml;
+      out+='<s style="color:#2B2733">'+escH(e.wrong)+'</s> <b style="color:#B3261E">'+escH(e.correct||'')+'</b>';
     }
     pos=idx+e.wrong.length;
   });
   out+=escH(sentence.slice(pos));
   return out;
+}
+/** renderInlineDiff로 문장 자체는 다 그린 뒤, 그 문장에 달린 오류들의 "왜 그런지" 설명(note)만
+ *  따로 모아서 문장 아래에 줄바꿈된 목록으로 보여줘요(문장 읽기 흐름을 안 끊으려고 분리했어요). */
+function inlineDiffNotesHtml(errorsList,color){
+  const notes=[];
+  (errorsList||[]).forEach(errors=>{
+    (errors||[]).forEach(e=>{ if(e&&e.note)notes.push(e.note); });
+  });
+  if(!notes.length)return '';
+  return '<div style="margin-top:4px;color:'+(color||'#7c3aed')+';font-size:12.5px;line-height:1.6">'+
+    notes.map(n=>'· '+escH(n)).join('<br>')+'</div>';
 }
 function viewRewriteWrite(sub){setWide(true);mountView(w=>{
   const bk=el('button','backbtn','◀ 목록으로');bk.onclick=viewRewriteList;w.appendChild(bk);
@@ -3229,9 +3243,10 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
       const aiGptObj=(aiGpt&&typeof aiGpt==='object')?aiGpt:null;
       const row=el('div');row.style.cssText='border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb;font-size:14px;line-height:1.7';
       let mainLine='';
-      if(aiObj&&Array.isArray(aiObj.errors)&&aiObj.errors.length)mainLine+='<div>'+renderInlineDiff(sent,aiObj.errors,'#4338ca')+'</div>';
-      if(aiGptObj&&Array.isArray(aiGptObj.errors)&&aiGptObj.errors.length)mainLine+='<div'+(mainLine?' style="margin-top:4px"':'')+'>'+renderInlineDiff(sent,aiGptObj.errors,'#0f766e')+'</div>';
+      if(aiObj&&Array.isArray(aiObj.errors)&&aiObj.errors.length)mainLine+='<div>'+renderInlineDiff(sent,aiObj.errors)+'</div>';
+      if(aiGptObj&&Array.isArray(aiGptObj.errors)&&aiGptObj.errors.length)mainLine+='<div'+(mainLine?' style="margin-top:4px"':'')+'>'+renderInlineDiff(sent,aiGptObj.errors)+'</div>';
       if(!mainLine)mainLine=escH(sent);
+      mainLine+=inlineDiffNotesHtml([aiObj&&aiObj.errors,aiGptObj&&aiGptObj.errors],'#6b7684');
       [aiObj,aiGptObj].forEach(entry=>{
         if(!entry||!Array.isArray(entry.errors))return;
         entry.errors.forEach(e=>{
@@ -4937,7 +4952,10 @@ function viewStudentForm(existing){setWide(false);mountView(w=>{
    이제는 학생이 실제로 보는 홈 화면(레벨·트랙·챕터 구조)을 그대로 보여주고,
    그 안에서 컨텐츠 하나를 누르면 그 컨텐츠에 대한 제출물이 보이도록 바꿨어요.
    (TEACHER_PREVIEW를 세팅하고 viewHome()을 그대로 재사용해요.) */
-function viewTeacherStudent(studentId,studentName){
+/** afterLoad를 안 주면(보통의 경우) 기존처럼 학생 홈 화면(viewHome)을 보여줘요. afterLoad를 주면
+ *  (새로고침 복원용) 데이터를 다 받아온 뒤 그 콜백을 대신 실행해요 — 예를 들어 새로고침 전에 보고
+ *  있던 특정 제출물 상세 화면으로 바로 들어가는 데 써요. */
+function viewTeacherStudent(studentId,studentName,afterLoad){
   saveTeacherNav(studentId,studentName);
   // "불러오는 중…" 문구를 화면 전체에 띄웠다가 곧바로 학생 홈 화면으로 바뀌는 게 계속 반복되면서
   // 깜빡이는 느낌이 나서(특히 새로고침 직후 boot()의 로딩 문구 바로 뒤에 또 떴었어요), 이 화면은
@@ -4963,8 +4981,18 @@ function viewTeacherStudent(studentId,studentName){
     const pGrade=(acct&&acct.schoolGrade)||(first&&first.schoolGrade)||'';
     const pCls=(acct&&acct.cls)||(first&&first.cls)||'';
     TEACHER_PREVIEW={studentId,studentName,subs,ctx,school:pSchool,schoolGrade:pGrade,cls:pCls};
-    viewHome();
+    if(afterLoad){ afterLoad(subs); } else { viewHome(); }
   })();
+}
+/** 새로고침 복원 전용 — 학생 홈이 아니라, 새로고침 전에 보고 있던 그 제출물의 첨삭 화면까지
+ *  바로 들어가요. subId로 못 찾으면(글이 삭제됐거나 형식이 안 맞으면) 그냥 학생 홈으로 대신 가요. */
+function restoreTeacherSubmissionDetail(studentId,studentName,subId){
+  viewTeacherStudent(studentId,studentName,(subs)=>{
+    const target=(subs||[]).find(s=>s.subId===subId);
+    if(!target){ viewHome(); return; }
+    const matches=teacherPreviewSubsFor(target.chapter,target.point);
+    viewTeacherSubmissionDetail(target,studentId,studentName,matches&&matches.length?matches:[target],()=>viewTeacherStudent(studentId,studentName));
+  });
 }
 
 /* 선생님이 학생 홈 화면(TEACHER_PREVIEW)에서 컨텐츠 하나를 눌렀을 때 보여주는 화면.
@@ -5028,7 +5056,9 @@ function mountAiOverallBox(card,beforeNode,boxStyle,overallText,s,provider,fbObj
   if(beforeNode)card.insertBefore(box,beforeNode);else card.appendChild(box);
   return box;
 }
-function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){setWide(true);mountView(w=>{
+function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
+  if(s&&s.subId&&studentId)saveTeacherNav(studentId,studentName,s.subId);
+  setWide(true);mountView(w=>{
   const bk=el('button','backbtn',backFn?'◀ 뒤로':'◀ 제출 목록');bk.onclick=backFn||(()=>viewTeacherStudent(studentId,studentName));w.appendChild(bk);
   w.appendChild(el('h1','title',studentName+' · '+(s.point||s.chapter||'')));
   w.appendChild(el('div','hint','('+(s.type||'')+' · '+(s.datetime||'')+')'));
@@ -6930,7 +6960,10 @@ function stopRealtimeContent(){
     if(USER.role==='teacher'){
       const savedNav=loadTeacherNav();
       if(savedNav&&savedNav.studentId){
-        try{ viewTeacherStudent(savedNav.studentId,savedNav.studentName); }
+        try{
+          if(savedNav.subId){ restoreTeacherSubmissionDetail(savedNav.studentId,savedNav.studentName,savedNav.subId); }
+          else{ viewTeacherStudent(savedNav.studentId,savedNav.studentName); }
+        }
         catch(e){ enterHome(); }
       }else{
         enterHome();
