@@ -339,6 +339,9 @@
 <body>
 <div id="page">
 <div id="frame">
+  <div id="updateBanner" style="display:none;position:sticky;top:0;z-index:9999;background:#fef3c7;color:#78350f;padding:8px 14px;font-size:13px;text-align:center;font-weight:700">
+    🔄 사이트가 새 버전으로 업데이트됐어요. <button id="updateReloadBtn" style="margin-left:8px;padding:3px 10px;font-size:12.5px;border:1px solid #78350f;background:#fff;border-radius:6px;cursor:pointer;font-weight:700">지금 새로고침</button>
+  </div>
   <div id="topbar"><span class="logo">English Writing Lab</span><span class="who" id="who"></span><button class="hbtn" id="homeBtn" style="display:none">← 홈</button><button class="hbtn" id="logoutBtn" style="display:none">로그아웃</button></div>
   <div id="progress"><span></span></div>
   <div id="stage"></div>
@@ -348,6 +351,30 @@
 <script>
 // const SUBMIT_URL="https://script.google.com/macros/s/AKfycbwyL3hM4syjOmtxSQ2bxG-XWXYyHhlfxvtAUhleP5hWf2pmcYP5nHxmHmLyz5R1KRgh/exec"; // 옛 백엔드(백업용, 롤백 시 이 줄 주석 해제)
 const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
+/* 새 버전을 GitHub에 올려도, 이미 열려있는 브라우저 탭은(새로고침 전까지는) 예전 코드를 계속
+ * 메모리에서 실행하고 있어요 — 이건 정적 HTML 페이지의 근본적인 특성이라(실행 중인 자바스크립트
+ * 코드 자체를 바꿔치기할 수는 없어요), 지금 보고 있는 그 화면을 "새로고침 없이" 바꿔치기할 방법은
+ * 없어요. 대신, 새 버전이 올라온 걸 자동으로 감지해뒀다가(NEW_VERSION_AVAILABLE) 화면이 바뀌는
+ * 다음 순간(=다른 버튼을 눌러 다른 화면으로 넘어가려는 순간, mountView 참고)에 자동으로 새로고침해서
+ * 최신 코드를 받아오게 했어요 — 사람이 직접 새로고침 버튼을 누를 필요가 없어요. 화면이 안 바뀌고
+ * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
+ * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
+ * (예: 배포 날짜+순번 — "2026-09-17a") */
+const APP_VERSION='2026-09-17b';
+let NEW_VERSION_AVAILABLE=false;
+function checkForNewVersion(){
+  fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
+    const m=html.match(/const APP_VERSION=['"]([^'"]+)['"]/);
+    if(m&&m[1]&&m[1]!==APP_VERSION){
+      NEW_VERSION_AVAILABLE=true;
+      const banner=document.getElementById('updateBanner');
+      if(banner)banner.style.display='block';
+    }
+  }).catch(()=>{});
+}
+(function(){const reloadBtn=document.getElementById('updateReloadBtn');if(reloadBtn)reloadBtn.onclick=()=>location.reload();})();
+setInterval(checkForNewVersion,5*60*1000); // 5분마다 확인
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible')checkForNewVersion(); });
 
 /* ================= Firebase (실시간 연동) =================
    콘텐츠/제출물을 새로고침 없이 실시간으로 받아오기 위한 설정이에요. 이 값들은 "비밀"이 아니라
@@ -1499,7 +1526,13 @@ let EWL_POPSTATE_BOUND=false;
    화면에 이미 있는 "◀ 뒤로" 버튼을 코드로 대신 눌러줘서, 실제로 사이트 안에서 한 단계만 뒤로
    가게 만들어요. 뒤로가기 버튼이 없는 화면(맨 처음 홈 화면 등)에서는 그대로 사이트를 나가요 —
    그게 자연스러운 동작이에요. */
-function mountView(build){clearStage();nav.classList.remove('on');clearViewUnsubs();const v=el('div','view active');const w=el('div','wrap');v.appendChild(w);stage.appendChild(v);prog.style.width='0';build(w);
+function mountView(build){
+  // 새 버전이 배포된 걸 감지해두었으면(NEW_VERSION_AVAILABLE), 다음 화면 전환 시점에 새 화면을
+  // 그리는 대신 페이지를 통째로 새로고침해서 최신 코드를 받아와요 — "다른 버튼을 누르면 자동으로
+  // 최신 버전이 반영되게" 해달라는 요청을 이렇게 구현했어요. 화면이 바뀌는 순간(=원래도 지금
+  // 화면을 떠나는 시점)에만 일어나서, 한창 입력 중인 화면에서 갑자기 새로고침되는 일은 없어요.
+  if(typeof NEW_VERSION_AVAILABLE!=='undefined'&&NEW_VERSION_AVAILABLE){location.reload();return;}
+  clearStage();nav.classList.remove('on');clearViewUnsubs();const v=el('div','view active');const w=el('div','wrap');v.appendChild(w);stage.appendChild(v);prog.style.width='0';build(w);
   try{history.pushState({ewlNav:true},'',location.href);}catch(e){}
   if(!EWL_POPSTATE_BOUND){
     EWL_POPSTATE_BOUND=true;
