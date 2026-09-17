@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-17d';
+const APP_VERSION='2026-09-17e';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3187,14 +3187,23 @@ function renderInlineDiff(sentence,errors){
 }
 /** renderInlineDiff로 문장 자체는 다 그린 뒤, 그 문장에 달린 오류들의 "왜 그런지" 설명(note)만
  *  따로 모아서 문장 아래에 줄바꿈된 목록으로 보여줘요(문장 읽기 흐름을 안 끊으려고 분리했어요). */
-function inlineDiffNotesHtml(errorsList,color){
+function inlineDiffNotesHtml(errorsList){
   const notes=[];
   (errorsList||[]).forEach(errors=>{
-    (errors||[]).forEach(e=>{ if(e&&e.note)notes.push(e.note); });
+    (errors||[]).forEach(e=>{ if(e&&e.note)notes.push(e); });
   });
   if(!notes.length)return '';
-  return '<div style="margin-top:4px;color:'+(color||'#7c3aed')+';font-size:12.5px;line-height:1.6">'+
-    notes.map(n=>'· '+escH(n)).join('<br>')+'</div>';
+  // 예전엔 회색/보라색 작은 글씨 한 줄로만 나와서 "왜 틀렸는지" 설명이 눈에 잘 안 띈다는 피드백이
+  // 있었어요. type별 색(빨강/파랑/보라)에 맞춘 왼쪽 띠 + 배경이 있는 카드로 바꿔서, 위 문장의 틀린
+  // 부분과 아래 설명이 색으로 바로 연결되어 보이고 시각적으로도 눈에 띄게 했어요.
+  const colorOf=t=>t==='missing'?'#1D4ED8':(t==='suggestion'?'#7C3AED':'#B3261E');
+  const bgOf=t=>t==='missing'?'#eef4ff':(t==='suggestion'?'#f5f0ff':'#fdeeee');
+  return '<div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">'+
+    notes.map(e=>{
+      const c=colorOf(e.type||'wrong');
+      return '<div style="background:'+bgOf(e.type||'wrong')+';border-left:3px solid '+c+';border-radius:6px;padding:5px 9px;font-size:13px;line-height:1.55;color:#3a3a45;font-weight:600">'+escH(e.note)+'</div>';
+    }).join('')+
+    '</div>';
 }
 function viewRewriteWrite(sub){setWide(true);mountView(w=>{
   const bk=el('button','backbtn','◀ 목록으로');bk.onclick=viewRewriteList;w.appendChild(bk);
@@ -3235,18 +3244,25 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
     const sents=splitSentences(sub.text);
     const listWrap=el('div');listWrap.style.marginTop='14px';
     listWrap.appendChild(el('div','fl','✍️ 원래 쓴 글 (틀린 부분은 빨간 줄, 고친 표현·해설을 옆에 표시했어요)'));
+    // 틀린 부분이 하나도 없는 문장들이 여러 개 연달아 있으면, 예전엔 문장 하나마다 각자 박스가
+    // 생겨서 화면이 쓸데없이 길고 답답해 보였어요. 이제 "고칠 것 없는 문장들"은 연달아 나오는
+    // 동안 하나의 박스에 이어붙여서(줄바꿈 없이 문단처럼) 보여주고, 고칠 부분이 있는 문장만
+    // 그 옆/아래에 자기만의 강조 박스로 따로 보여줘요.
+    let plainBuf=[];
+    const flushPlain=()=>{
+      if(!plainBuf.length)return;
+      const row=el('div');row.style.cssText='border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb;font-size:14px;line-height:1.7';
+      row.innerHTML=plainBuf.map(s=>escH(s)).join(' ');
+      listWrap.appendChild(row);
+      plainBuf=[];
+    };
     sents.forEach((sent,i)=>{
       const ai=aifb.sentences[i]||aifb.sentences[String(i)];
       const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
       const c=fb.sentences[i]||fb.sentences[String(i)];
       const aiObj=(ai&&typeof ai==='object')?ai:null;
       const aiGptObj=(aiGpt&&typeof aiGpt==='object')?aiGpt:null;
-      const row=el('div');row.style.cssText='border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb;font-size:14px;line-height:1.7';
-      let mainLine='';
-      if(aiObj&&Array.isArray(aiObj.errors)&&aiObj.errors.length)mainLine+='<div>'+renderInlineDiff(sent,aiObj.errors)+'</div>';
-      if(aiGptObj&&Array.isArray(aiGptObj.errors)&&aiGptObj.errors.length)mainLine+='<div'+(mainLine?' style="margin-top:4px"':'')+'>'+renderInlineDiff(sent,aiGptObj.errors)+'</div>';
-      if(!mainLine)mainLine=escH(sent);
-      mainLine+=inlineDiffNotesHtml([aiObj&&aiObj.errors,aiGptObj&&aiGptObj.errors],'#6b7684');
+      const hasErrors=(aiObj&&Array.isArray(aiObj.errors)&&aiObj.errors.length)||(aiGptObj&&Array.isArray(aiGptObj.errors)&&aiGptObj.errors.length);
       [aiObj,aiGptObj].forEach(entry=>{
         if(!entry||!Array.isArray(entry.errors))return;
         entry.errors.forEach(e=>{
@@ -3260,11 +3276,20 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
           if(!g.corrects.some(c=>norm(c)===key))g.corrects.push(e.correct);
         });
       });
+      if(!hasErrors&&!c){ plainBuf.push(sent); return; }
+      flushPlain();
+      const row=el('div');row.style.cssText='border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb;font-size:14px;line-height:1.7';
+      let mainLine='';
+      if(aiObj&&Array.isArray(aiObj.errors)&&aiObj.errors.length)mainLine+='<div>'+renderInlineDiff(sent,aiObj.errors)+'</div>';
+      if(aiGptObj&&Array.isArray(aiGptObj.errors)&&aiGptObj.errors.length)mainLine+='<div'+(mainLine?' style="margin-top:4px"':'')+'>'+renderInlineDiff(sent,aiGptObj.errors)+'</div>';
+      if(!mainLine)mainLine=escH(sent);
+      mainLine+=inlineDiffNotesHtml([aiObj&&aiObj.errors,aiGptObj&&aiGptObj.errors]);
       let detail='';
       if(c)detail+='<div style="margin-top:2px;color:#b45309;font-size:13px">💬 '+escH(c)+'</div>';
       row.innerHTML=mainLine+(detail?('<div style="margin-top:4px">'+detail+'</div>'):'');
       listWrap.appendChild(row);
     });
+    flushPlain();
     leftScroll.appendChild(listWrap);
   }
   // 예전엔 "고친 표현 그대로"를 문자 그대로 다시 써야만 통과였어서, 학생이 뜻은 맞게 다른 말로
