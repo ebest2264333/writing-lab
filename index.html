@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-17j';
+const APP_VERSION='2026-09-17l';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1424,13 +1424,44 @@ let TEACHER_PREVIEW=null;
    있고, 나머지(Paragraph/Article/수행평가/Story)는 제출할 때 제목만 저장되기 때문이에요. */
 function teacherPreviewSubsFor(chapterKey,title){
   if(!TEACHER_PREVIEW)return[];
-  return TEACHER_PREVIEW.subs.filter(s=>{
+  return subsMatchFor(TEACHER_PREVIEW.subs,chapterKey,title);
+}
+/* teacherPreviewSubsFor와 같은 매칭 규칙을, 임의의 제출물 배열(subs)에 대해서 쓸 수 있게 뽑아둔
+   버전이에요 — 아래 reconcileDoneFromServer에서 "내 제출 내역"에 대해 똑같은 규칙으로 매칭할 때 써요. */
+function subsMatchFor(subs,chapterKey,title){
+  return (subs||[]).filter(s=>{
     if(s.chapter===chapterKey&&(title===undefined||s.point===title))return true;
-    // Re-Writing은 chapter가 항상 'Rewriting'으로 저장되고(원래 컨텐츠가 뭐였는지는 point에 원래 제목이
-    // 그대로 남아있어요), 그래서 원래 항목의 제출 목록에 같이 묶여 보이도록 여기서 함께 매칭해줘요.
     if(title!==undefined&&s.chapter==='Rewriting'&&s.point===title)return true;
     return false;
   });
+}
+/* ⚠️ "완료" 표시를 그동안 각 목록 화면(Pattern Drill·Paragraph·Article·수행평가·Story)마다
+ *  이 기기의 localStorage(loadProg)만 보고 켰는데, 이건 "이 브라우저에서 저장한 기록"일 뿐이라
+ *  기기를 바꾸거나, 예전 사이트(마이그레이션 이전)에서 이미 낸 글은 로컬 기록이 없어서 실제로는
+ *  제출했는데도 "안 낸 것"처럼 보이는 문제가 있었어요(Olivia·Cain처럼 마이그레이션 전에 낸 글이
+ *  대표적인 예). 그래서 화면은 우선 로컬 기록으로 빠르게 그리고, 그 아래에서 서버에 실제 저장된
+ *  "내 제출 내역"과 다시 한 번 대조해서 필요하면 완료 표시를 새로 켜줘요(이미 켜져 있으면 건너뛰어요).
+ *  rowsByKey: { 아무_고유키: {row, dot, meta, chapterKey, title, doneLabel} } */
+function reconcileDoneFromServer(rowsByKey){
+  if(!USER||!USER.id||!SUBMIT_URL)return;
+  const keys=Object.keys(rowsByKey||{});
+  if(!keys.length)return;
+  (async()=>{
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      const subs=(data&&data.ok)?(data.submissions||[]):[];
+      if(!subs.length)return;
+      keys.forEach(key=>{
+        const r=rowsByKey[key];
+        if(!r||!r.row||r.row.classList.contains('done'))return;
+        if(!subsMatchFor(subs,r.chapterKey,r.title).length)return;
+        r.row.classList.add('done');
+        if(r.dot)r.dot.textContent='✓';
+        if(r.meta)r.meta.textContent=r.doneLabel||'다시 풀기';
+      });
+    }catch(e){}
+  })();
 }
 /* AI로 조건 확인하기 — 정규식으로 판단하기 애매한 문법 조건도 AI가 글 전체를 읽고 직접 판단해줘요.
    너무 자주 누르지 못하도록 클라이언트에서도 쿨다운(초읽기)을 걸어요 (서버에서도 한 번 더 막아줘요). */
@@ -1758,6 +1789,7 @@ function viewPointMenu(){setWide(false);mountView(w=>{
   w.appendChild(el('h1','title','Pattern Drill · '+lv.name));
   w.appendChild(el('div','hint',TEACHER_PREVIEW?'Unit을 선택하면 이 학생이 낸 글을 볼 수 있어요.':'챕터에서 Unit을 선택하면 학습이 시작돼요.'));
   const P=TEACHER_PREVIEW?null:loadProg();
+  const rowsById={};
   lv.chapters.forEach(c=>{const box=el('div','chapter');box.appendChild(el('div','ch-h',c.t));
     c.points.forEach(p=>{
       if(TEACHER_PREVIEW){
@@ -1771,12 +1803,15 @@ function viewPointMenu(){setWide(false);mountView(w=>{
         box.appendChild(row);return;
       }
       const done=!!P[p.id];const row=el('div','point'+(p.soon?' soon':'')+(done?' done':''));
-      row.appendChild(el('div','dot',done?'✓':'·'));
+      const dot=el('div','dot',done?'✓':'·');row.appendChild(dot);
       row.appendChild(el('div','pt',p.title));
-      if(!p.soon)row.appendChild(el('div','meta',done?'다시 풀기':'퀴즈10·배열15·영작15'));
+      const meta=p.soon?null:el('div','meta',done?'다시 풀기':'퀴즈10·배열15·영작15');
+      if(meta)row.appendChild(meta);
       if(!p.soon)row.onclick=()=>runDrill(p);
-      box.appendChild(row);});
+      box.appendChild(row);
+      if(!p.soon)rowsById[p.id]={row,dot,meta,chapterKey:p.id,title:p.title,doneLabel:'다시 풀기'};});
     w.appendChild(box);});
+  if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsById);
 });}
 
 /* ================= PARAGRAPH MENU ================= */
@@ -1788,6 +1823,12 @@ function viewParaMenu(){setWide(false);mountView(w=>{
   const list=(PARA[curLevel]||[]);
   if(!list.length)w.appendChild(el('div','hint','이 레벨의 주제는 준비 중이에요.'));
   const box=el('div','chapter');box.appendChild(el('div','ch-h','주제 (Topics)'));
+  // ⚠️ 예전엔 이 목록이 "제출했는지"를 아예 확인하지 않아서(다른 콘텐츠 종류들과 달리) 항상
+  // 안 한 것처럼(● 점만) 보였어요. 다른 화면들처럼 우선 이 기기에 저장된 진행 기록(loadProg)으로
+  // 빠르게 표시하고, 그 아래에서 서버에 실제로 저장된 제출물과 다시 한 번 대조해서(다른 기기·
+  // 브라우저에서 제출한 경우도 놓치지 않게) 필요하면 완료 표시를 갱신해요.
+  const P=loadProg();
+  const rowsByTitle={};
   list.forEach(t=>{
     if(TEACHER_PREVIEW){
       if(t.soon)return;
@@ -1799,9 +1840,13 @@ function viewParaMenu(){setWide(false);mountView(w=>{
       row.onclick=()=>viewTeacherContentSubmissions(t.title,matches,viewParaMenu);
       box.appendChild(row);return;
     }
-    const row=el('div','point'+(t.soon?' soon':''));row.appendChild(el('div','dot',t.soon?'·':'●'));
+    const done=!!P['PARA-'+t.id];const row=el('div','point'+(t.soon?' soon':'')+(done?' done':''));
+    const dot=el('div','dot',t.soon?'·':(done?'✓':'●'));row.appendChild(dot);
     row.appendChild(el('div','pt',t.title+' — <span style="color:#6b7684;font-weight:600;font-size:13px">'+t.genre+' · 문법: '+t.grammar+'</span>'));
-    if(!t.soon)row.onclick=()=>runParagraph(t);box.appendChild(row);});
+    const meta=el('div','meta',done?'다시 쓰기':'');row.appendChild(meta);
+    if(!t.soon)row.onclick=()=>runParagraph(t);box.appendChild(row);
+    if(!t.soon)rowsByTitle[t.id]={row,dot,meta,chapterKey:'Paragraph Writing',title:t.title,doneLabel:'다시 쓰기'};});
+  if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsByTitle);
   w.appendChild(box);
 });}
 
@@ -1815,6 +1860,7 @@ function viewArticleMenu(){setWide(false);mountView(w=>{
   if(!list.length)w.appendChild(el('div','hint','지금 볼 수 있는 기사가 없어요.'));
   const box=el('div','chapter');box.appendChild(el('div','ch-h','기사 (Articles)'));
   const P=loadProg();
+  const rowsById={};
   list.forEach(a=>{
     if(TEACHER_PREVIEW){
       const matches=teacherPreviewSubsFor('Article Reading',a.title);
@@ -1825,10 +1871,13 @@ function viewArticleMenu(){setWide(false);mountView(w=>{
       row.onclick=()=>viewTeacherContentSubmissions(a.title,matches,viewArticleMenu);
       box.appendChild(row);return;
     }
-    const done=!!P['ART-'+a.id];const row=el('div','point'+(done?' done':''));row.appendChild(el('div','dot',done?'✓':'●'));
+    const done=!!P['ART-'+a.id];const row=el('div','point'+(done?' done':''));
+    const dot=el('div','dot',done?'✓':'●');row.appendChild(dot);
     row.appendChild(el('div','pt',a.title+' — <span style="color:#6b7684;font-weight:600;font-size:13px">'+(a.source||'')+'</span>'));
-    row.appendChild(el('div','meta',done?'다시 풀기':'기사 읽기·요약'));
-    row.onclick=()=>runArticle(a);box.appendChild(row);});
+    const meta=el('div','meta',done?'다시 풀기':'기사 읽기·요약');row.appendChild(meta);
+    row.onclick=()=>runArticle(a);box.appendChild(row);
+    rowsById[a.id]={row,dot,meta,chapterKey:'Article Reading',title:a.title,doneLabel:'다시 풀기'};});
+  if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsById);
   w.appendChild(box);
 });}
 
@@ -1841,6 +1890,7 @@ function viewExamMenu(){setWide(false);mountView(w=>{
   if(!list.length)w.appendChild(el('div','hint','지금 볼 수 있는 주제가 없어요.'));
   const box=el('div','chapter');box.appendChild(el('div','ch-h','주제 (Topics)'));
   const P=loadProg();
+  const rowsById={};
   list.forEach(t=>{
     if(TEACHER_PREVIEW){
       const matches=teacherPreviewSubsFor('Performance Assessment',t.title);
@@ -1851,10 +1901,13 @@ function viewExamMenu(){setWide(false);mountView(w=>{
       row.onclick=()=>viewTeacherContentSubmissions(t.title,matches,viewExamMenu);
       box.appendChild(row);return;
     }
-    const done=!!P['EX-'+t.id];const row=el('div','point'+(done?' done':''));row.appendChild(el('div','dot',done?'✓':'●'));
+    const done=!!P['EX-'+t.id];const row=el('div','point'+(done?' done':''));
+    const dot=el('div','dot',done?'✓':'●');row.appendChild(dot);
     row.appendChild(el('div','pt',t.title));
-    row.appendChild(el('div','meta',done?'다시 풀기':'조건 확인·글쓰기'));
-    row.onclick=()=>runExam(t);box.appendChild(row);});
+    const meta=el('div','meta',done?'다시 풀기':'조건 확인·글쓰기');row.appendChild(meta);
+    row.onclick=()=>runExam(t);box.appendChild(row);
+    rowsById[t.id]={row,dot,meta,chapterKey:'Performance Assessment',title:t.title,doneLabel:'다시 풀기'};});
+  if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsById);
   w.appendChild(box);
 });}
 
@@ -1868,6 +1921,7 @@ function viewStoryMenu(){setWide(false);mountView(w=>{
   if(!list.length)w.appendChild(el('div','hint','지금 볼 수 있는 이야기가 없어요.'));
   const box=el('div','chapter');box.appendChild(el('div','ch-h','Stories'));
   const P=loadProg();
+  const rowsById={};
   list.forEach(s=>{
     const stTitle=s.title||s.titleKo||s.id;
     if(TEACHER_PREVIEW){
@@ -1879,10 +1933,13 @@ function viewStoryMenu(){setWide(false);mountView(w=>{
       row.onclick=()=>viewTeacherContentSubmissions(stTitle,matches,viewStoryMenu);
       box.appendChild(row);return;
     }
-    const done=!!P['ST-'+s.id];const row=el('div','point'+(done?' done':''));row.appendChild(el('div','dot',done?'✓':'●'));
+    const done=!!P['ST-'+s.id];const row=el('div','point'+(done?' done':''));
+    const dot=el('div','dot',done?'✓':'●');row.appendChild(dot);
     row.appendChild(el('div','pt',(s.title||s.titleKo||s.id)+(s.titleKo?(' — <span style="color:#6b7684;font-weight:600;font-size:13px">'+escH(s.titleKo)+'</span>'):'')));
-    row.appendChild(el('div','meta',done?'다시 풀기':'그림 보고 이야기 쓰기'));
-    row.onclick=()=>runStory(s);box.appendChild(row);});
+    const meta=el('div','meta',done?'다시 풀기':'그림 보고 이야기 쓰기');row.appendChild(meta);
+    row.onclick=()=>runStory(s);box.appendChild(row);
+    rowsById[s.id]={row,dot,meta,chapterKey:'Story Writing',title:stTitle,doneLabel:'다시 풀기'};});
+  if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsById);
   w.appendChild(box);
 });}
 
