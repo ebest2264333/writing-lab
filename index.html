@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-17l';
+const APP_VERSION='2026-09-18a';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3444,6 +3444,62 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
   // 순서로 바로 인쇄까지 갈 수 있는 지름길이에요. 매번 학생 화면을 눌러 들어가서 컨텐츠를 찾을
   // 필요 없이, 리포트만 뽑고 싶을 때 여기서 바로 시작하면 돼요.
   reportGroup.row.appendChild(mkMenuBtn('🖨 REPORT 인쇄',()=>viewReportStudentList()));
+  // "글은 냈는데 AI 첨삭이 아직 없는" 제출물(예전에 API 오류가 났었거나, 이번에 새로 추가된
+  // 문법 연계·학년별 톤 조정 기능 이전에 저장된 것들)을 학생마다 일일이 "지금 생성하기"를
+  // 누르지 않고 한 번에 처리할 수 있게 해달라는 요청으로 추가했어요. 한 번 요청에 여러 개를
+  // 다 돌리면 서버 요청 시간 제한을 넘길 수 있어서, 몇 개씩 나눠 반복 호출하며 진행 상황을
+  // 보여줘요(batchGenerateMissingFeedback, limit개씩).
+  const batchStatus=el('div');batchStatus.style.cssText='display:none;margin-top:10px;background:#fafaf9;border:1px solid #ecebe8;border-radius:12px;padding:12px 14px';
+  const batchBtn=mkMenuBtn('⚡ AI 첨삭 안 된 것들 한번에 생성',()=>{
+    batchBtn.disabled=true;
+    batchStatus.style.display='block';
+    batchStatus.innerHTML='';
+    const checkMsg=el('div','hint','확인 중…');batchStatus.appendChild(checkMsg);
+    (async()=>{
+      const call=async(limit)=>{
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'batchGenerateMissingFeedback',academy:USER.academy||'',limit})});
+        const data=await res.json();
+        if(!data||!data.ok)throw new Error((data&&data.error)||'확인에 실패했어요.');
+        return data;
+      };
+      try{
+        const first=await call(0);
+        if(!first.totalMissing){
+          checkMsg.textContent='AI 첨삭이 안 된 글이 없어요. 모두 완료됐어요!';
+          batchBtn.disabled=false;return;
+        }
+        checkMsg.innerHTML='';
+        const info=el('div','hint','AI 첨삭이 없는 글이 총 '+first.totalMissing+'개 있어요. 시작하면 몇 개씩 순서대로 만들어요(시간이 좀 걸려요).');
+        batchStatus.appendChild(info);
+        const startBtn=el('button','btn','시작하기');startBtn.type='button';startBtn.style.cssText='margin-top:8px;padding:6px 14px;font-size:13px';
+        batchStatus.appendChild(startBtn);
+        startBtn.onclick=async()=>{
+          startBtn.disabled=true;
+          const prog=el('div','fx');prog.style.marginTop='8px';batchStatus.appendChild(prog);
+          let remaining=first.totalMissing,done=0,failedTotal=0;
+          prog.textContent='0 / '+first.totalMissing+' 처리 중…';
+          try{
+            while(remaining>0){
+              const r=await call(5);
+              done+=r.succeeded;failedTotal+=r.failed;remaining=r.remaining;
+              prog.textContent=done+' / '+first.totalMissing+' 처리 중…'+(failedTotal?(' (실패 '+failedTotal+'개)'):'');
+              if(r.processed===0)break; // 안전장치: 더 못 줄어들면 무한루프 방지
+            }
+            prog.className='fx ok';
+            prog.textContent='완료! '+done+'개 생성'+(failedTotal?(', '+failedTotal+'개는 실패(다시 시도해주세요)'):'')+'.';
+          }catch(e){
+            prog.className='fx no';prog.textContent='중간에 오류가 났어요: '+String((e&&e.message)||e)+' — 버튼을 다시 눌러 이어서 하실 수 있어요.';
+          }
+          batchBtn.disabled=false;
+        };
+      }catch(e){
+        checkMsg.className='fx no';checkMsg.textContent='확인 중 오류: '+String((e&&e.message)||e);
+        batchBtn.disabled=false;
+      }
+    })();
+  });
+  reportGroup.row.appendChild(batchBtn);
+  reportGroup.group.appendChild(batchStatus);
   menuGroups.appendChild(reportGroup.group);
   if(USER.isAdmin){
     const adminGroup=mkMenuGroup('운영 관리 (관리자 전용)');
