@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-18b';
+const APP_VERSION='2026-09-18d';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3444,6 +3444,26 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
   // 순서로 바로 인쇄까지 갈 수 있는 지름길이에요. 매번 학생 화면을 눌러 들어가서 컨텐츠를 찾을
   // 필요 없이, 리포트만 뽑고 싶을 때 여기서 바로 시작하면 돼요.
   reportGroup.row.appendChild(mkMenuBtn('🖨 REPORT 인쇄',()=>viewReportStudentList()));
+  // 학생별로 묶어서 보는 "학생 목록"과 달리, 제출물 하나하나를 표로 쭉 보면서 상태(첨삭대상/완료)와
+  // 담당 선생님을 한눈에 확인·지정하고 싶다는 요청으로 추가했어요(예전 학원 관리 시스템의
+  // "첨삭관리" 화면 스타일).
+  reportGroup.row.appendChild(mkMenuBtn('📋 첨삭관리',()=>viewGradingManage()));
+  // "담당으로 지정되면 그 선생님이 첨삭해야 할 목록을 볼 수 있으면 좋겠다"는 요청으로 추가했어요.
+  // 첨삭관리 표를 "나에게 배정된 것 + 아직 첨삭 안 된 것"으로 미리 좁혀서 열어줘요. 몇 개가
+  // 밀려있는지 바로 보이게, 화면을 열 때 조용히 개수를 세서 버튼에 표시해요(0개면 숫자는 안 붙여요).
+  const myListBtn=mkMenuBtn('📥 내 첨삭 목록',()=>viewGradingManage({teacherId:USER.id,status:'pending'}));
+  reportGroup.row.appendChild(myListBtn);
+  (async()=>{
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      let all=(data&&data.ok)?(data.submissions||[]):[];
+      if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+      const hasFeedback=s=>!!((s.aiFeedback&&String(s.aiFeedback).trim())||(s.aiFeedbackGpt&&String(s.aiFeedbackGpt).trim())||(s.feedback&&String(s.feedback).trim()));
+      const cnt=all.filter(s=>String(s.assignedTeacherId||'')===String(USER.id)&&!hasFeedback(s)).length;
+      if(cnt>0)myListBtn.textContent='📥 내 첨삭 목록 ('+cnt+')';
+    }catch(e){}
+  })();
   // "글은 냈는데 AI 첨삭이 아직 없는" 제출물(예전에 API 오류가 났었거나, 이번에 새로 추가된
   // 문법 연계·학년별 톤 조정 기능 이전에 저장된 것들)을 학생마다 일일이 "지금 생성하기"를
   // 누르지 않고 한 번에 처리할 수 있게 해달라는 요청으로 추가했어요. 한 번 요청에 여러 개를
@@ -3581,6 +3601,132 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
     (fAcademy?[fAcademy.sel,fSchool.sel,fGrade.sel,fCls.sel,fType.sel]:[fSchool.sel,fGrade.sel,fCls.sel,fType.sel]).forEach(sel=>sel.addEventListener('change',render));
     render();
     renderReady=true;
+  })();
+});}
+
+/* "📋 첨삭관리" — 학생별로 묶는 "학생 목록"과 달리, 제출물 하나하나를 표(줄 하나 = 제출물 하나)로
+ * 쭉 보여줘요. 상태(첨삭대상/첨삭완료)를 색으로 구분하고, 영역·상태·첨삭담당·제출일로 좁혀볼 수
+ * 있고, 표 안에서 바로 담당 선생님을 지정할 수 있어요(누가 실제로 첨삭했는지 자동 기록이 아니라,
+ * 선생님들끼리 업무를 나누기 위해 사람이 직접 지정하는 값이에요). 줄을 누르면 그 제출물의 첨삭
+ * 화면(viewTeacherSubmissionDetail)으로 바로 들어가요.
+ */
+function viewGradingManage(opts){setWide(true);mountView(w=>{
+  const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','📋 첨삭관리'));
+  w.appendChild(el('div','hint','제출된 글을 한 줄씩 표로 보여줘요. 영역·상태·첨삭담당·제출일로 좁혀보고, 표 안에서 바로 담당 선생님을 지정할 수 있어요. 줄을 누르면 첨삭 화면으로 들어가요.'));
+  const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin:14px 0;align-items:flex-end';
+  w.appendChild(filterBox);
+  const mkSelect=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:110px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
+    return{wrap,sel};};
+  const mkDateField=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const inp=el('input','in');inp.type='date';inp.style.cssText='padding:7px 10px;font-size:14px;border-radius:10px';wrap.appendChild(inp);
+    return{wrap,inp};};
+  const fAcademy=USER.isAdmin?mkSelect('학원'):null;
+  const fType=mkSelect('영역'),fStatus=mkSelect('상태'),fTeacher=mkSelect('첨삭담당');
+  const fFrom=mkDateField('제출일(부터)'),fTo=mkDateField('제출일(까지)');
+  if(fAcademy)filterBox.appendChild(fAcademy.wrap);
+  [fType,fStatus,fTeacher].forEach(f=>filterBox.appendChild(f.wrap));
+  filterBox.appendChild(fFrom.wrap);filterBox.appendChild(fTo.wrap);
+  const opt0=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
+  EXAM_TYPE_OPTS.forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;fType.sel.appendChild(o);});
+  opt0(fStatus.sel,'전체');
+  [['pending','첨삭대상'],['done','첨삭완료']].forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;fStatus.sel.appendChild(o);});
+  opt0(fTeacher.sel,'전체');
+  const oUn=el('option');oUn.value='__unassigned__';oUn.textContent='미지정';fTeacher.sel.appendChild(oUn);
+  (TEACHERS||[]).forEach(t=>{const o=el('option');o.value=t.id;o.textContent=t.name||t.id;fTeacher.sel.appendChild(o);});
+  // "내 첨삭 목록" 버튼 등에서 미리 상태·담당 선생님을 정해서 들어올 수 있게(예: 이 선생님에게
+  // 배정된, 아직 안 끝난 것만 바로 보여주기) — opts로 초기 필터값을 받아서 미리 선택해둬요.
+  if(opts&&opts.status!=null)fStatus.sel.value=opts.status;
+  if(opts&&opts.teacherId!=null)fTeacher.sel.value=opts.teacherId;
+  const tableWrap=el('div');tableWrap.style.cssText='overflow-x:auto;margin-top:10px';
+  const loading=el('div','hint','불러오는 중…');tableWrap.appendChild(loading);
+  w.appendChild(tableWrap);
+  (async()=>{
+    let all=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok)all=data.submissions||[];
+    }catch(e){}
+    if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+    loading.remove();
+    if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
+    if(!all.length){tableWrap.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
+    const hasFeedback=s=>!!((s.aiFeedback&&String(s.aiFeedback).trim())||(s.aiFeedbackGpt&&String(s.aiFeedbackGpt).trim())||(s.feedback&&String(s.feedback).trim()));
+    const parseDt=s=>{const raw=String(s.datetime||'').trim();if(!raw)return null;const d=new Date(raw.replace(' ','T'));return isNaN(d.getTime())?null:d;};
+    const fmtElapsed=ms=>{if(ms==null)return '-';if(ms<0)ms=0;const t=Math.floor(ms/1000),dd=Math.floor(t/86400),h=Math.floor((t%86400)/3600),m=Math.floor((t%3600)/60),s2=t%60,z=x=>String(x).padStart(2,'0');return (dd>0?dd+'일 ':'')+z(h)+':'+z(m)+':'+z(s2);};
+    const render=()=>{
+      Array.from(tableWrap.children).forEach(c=>c.remove());
+      const fa=fAcademy?fAcademy.sel.value:'',ft=fType.sel.value,fst=fStatus.sel.value,fte=fTeacher.sel.value,ff=fFrom.inp.value,ftt=fTo.inp.value;
+      let filtered=all.filter(s=>{
+        if(fa&&s.academy!==fa)return false;
+        if(ft&&s.type!==ft)return false;
+        const done=hasFeedback(s);
+        if(fst==='pending'&&done)return false;
+        if(fst==='done'&&!done)return false;
+        if(fte==='__unassigned__'&&s.assignedTeacherId)return false;
+        if(fte&&fte!=='__unassigned__'&&String(s.assignedTeacherId||'')!==fte)return false;
+        const dateOnly=String(s.datetime||'').slice(0,10);
+        if(ff&&dateOnly<ff)return false;
+        if(ftt&&dateOnly>ftt)return false;
+        return true;
+      });
+      filtered.sort((a,b)=>String(b.datetime||'').localeCompare(String(a.datetime||'')));
+      if(!filtered.length){tableWrap.appendChild(el('div','hint','조건에 맞는 제출 내역이 없어요.'));return;}
+      const table=el('table');table.style.cssText='width:100%;border-collapse:collapse;font-size:13px;min-width:860px';
+      const thead=el('thead');const headRow=el('tr');
+      const cols=['No','제출시간(경과)','상태'].concat(USER.isAdmin?['학원']:[]).concat(['이름(아이디)','영역','내용','학교·학년·반','첨삭담당']);
+      cols.forEach(c=>{const th=el('th',null,c);th.style.cssText='text-align:left;padding:8px 10px;border-bottom:2px solid #ecebe8;white-space:nowrap;color:#6b7684;font-size:12px';headRow.appendChild(th);});
+      thead.appendChild(headRow);table.appendChild(thead);
+      const tbody=el('tbody');
+      const now=Date.now();
+      filtered.forEach((s,i)=>{
+        const done=hasFeedback(s);
+        const tr=el('tr');
+        tr.style.cssText='background:'+(done?'#f0faf3':'#fdeeee')+';cursor:pointer';
+        const dtObj=parseDt(s);
+        const elapsed=dtObj?fmtElapsed(now-dtObj.getTime()):'-';
+        const td=(html)=>{const t=el('td');t.innerHTML=html;t.style.cssText='padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);vertical-align:top';return t;};
+        tr.appendChild(td(String(filtered.length-i)));
+        tr.appendChild(td(escH(s.datetime||'-')+'<div style="color:#6b7684;font-size:11.5px">('+elapsed+')</div>'));
+        tr.appendChild(td('<span style="font-weight:800;color:'+(done?'#059669':'#c2412f')+'">'+(done?'첨삭완료':'첨삭대상')+'</span>'));
+        if(USER.isAdmin)tr.appendChild(td(escH(s.academy||'-')));
+        tr.appendChild(td('<b>'+escH(s.name||s.id||'')+'</b><div style="color:#6b7684;font-size:11.5px">('+escH(s.id||'')+')</div>'));
+        tr.appendChild(td(escH(s.type||'-')));
+        tr.appendChild(td(escH(s.point||s.chapter||'-')));
+        tr.appendChild(td(escH([s.school,s.schoolGrade&&(s.schoolGrade+'학년'),s.cls].filter(Boolean).join(' · ')||'-')));
+        const teacherTd=el('td');teacherTd.style.cssText='padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);vertical-align:top';
+        const tsel=el('select','in');tsel.style.cssText='padding:4px 6px;font-size:12.5px;border-radius:8px';
+        const o0=el('option');o0.value='';o0.textContent='미지정';tsel.appendChild(o0);
+        (TEACHERS||[]).forEach(t=>{const o=el('option');o.value=t.id;o.textContent=t.name||t.id;if(String(s.assignedTeacherId||'')===String(t.id))o.selected=true;tsel.appendChild(o);});
+        tsel.onclick=e=>e.stopPropagation();
+        tsel.onmousedown=e=>e.stopPropagation();
+        tsel.onchange=async e=>{
+          e.stopPropagation();
+          const chosen=(TEACHERS||[]).find(t=>String(t.id)===tsel.value);
+          tsel.disabled=true;
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'assignSubmissionTeacher',role:'teacher',academy:USER.academy||'',subId:s.subId,teacherId:tsel.value,teacherName:chosen?(chosen.name||chosen.id):''})});
+            const data=await res.json();
+            if(!data||!data.ok)throw new Error((data&&data.error)||'저장하지 못했어요.');
+            s.assignedTeacherId=tsel.value;s.assignedTeacherName=chosen?(chosen.name||chosen.id):'';
+          }catch(err){alert('담당 지정에 실패했어요: '+String((err&&err.message)||err));}
+          tsel.disabled=false;
+        };
+        teacherTd.appendChild(tsel);
+        tr.appendChild(teacherTd);
+        tr.onclick=()=>viewTeacherSubmissionDetail(s,s.id,s.name||s.id,[s],()=>viewGradingManage());
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      tableWrap.appendChild(table);
+    };
+    (fAcademy?[fAcademy.sel,fType.sel,fStatus.sel,fTeacher.sel]:[fType.sel,fStatus.sel,fTeacher.sel]).forEach(sel=>sel.addEventListener('change',render));
+    [fFrom.inp,fTo.inp].forEach(inp=>inp.addEventListener('change',render));
+    render();
   })();
 });}
 
