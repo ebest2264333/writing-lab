@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-18f';
+const APP_VERSION='2026-09-18g';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -5296,8 +5296,22 @@ function viewTeacherManage(){setWide(false);mountView(w=>{
   w.appendChild(box);
   (async()=>{
     let teachers=[];
+    // ⚠️ fetchRoster()는 한 번 받아오면 그 결과를 계속 재사용하는 캐시라(로그인 화면에서는 그게
+    // 맞아요 — 매번 새로 받을 필요가 없으니까), 여기서 그대로 쓰면 방금 추가·삭제한 선생님이
+    // 새로고침 전까지 반영이 안 됐어요. 이 화면은 "지금 명단"을 봐야 하는 관리 화면이라 캐시를
+    // 거치지 않고 매번 서버에서 새로 받아와요(전역 TEACHERS·캐시도 같이 갱신해서 다른 화면도
+    // 최신 값을 쓰게 해요).
     try{
-      const r=await fetchRoster();teachers=r.teachers||[];
+      const res=await fetch(SUBMIT_URL+'?_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok&&Array.isArray(data.teachers)){
+        teachers=data.teachers;
+        TEACHERS=teachers;
+        if(Array.isArray(data.students))ROSTER=data.students;
+        saveRosterCache(ROSTER,TEACHERS,CLASS_LEVELS);
+      }else{
+        const c=loadRosterCache();teachers=c.teachers||[];
+      }
     }catch(e){const c=loadRosterCache();teachers=c.teachers||[];}
     if(!USER.isAdmin&&USER.isAcademyAdmin)teachers=teachers.filter(t=>String(t.academy||'').trim()===String(USER.academy||'').trim());
     loading.remove();
