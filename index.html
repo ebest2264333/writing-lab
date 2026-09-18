@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-18g';
+const APP_VERSION='2026-09-18h';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3470,6 +3470,9 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
   // 담당 선생님을 한눈에 확인·지정하고 싶다는 요청으로 추가했어요(예전 학원 관리 시스템의
   // "첨삭관리" 화면 스타일).
   reportGroup.row.appendChild(mkMenuBtn('📋 첨삭관리',()=>viewGradingManage()));
+  // "AI 첨삭을 몇 번 했는지 컨텐츠별 통계도 보고 싶다"는 요청으로 추가했어요 — 학생이 글 쓰는
+  // 중간에 누르는 조건 확인용 AI 호출은 빼고, 실제로 AI 첨삭이 만들어진 글만 세요.
+  reportGroup.row.appendChild(mkMenuBtn('📊 첨삭 통계',()=>viewAiStats()));
   // "담당으로 지정되면 그 선생님이 첨삭해야 할 목록을 볼 수 있으면 좋겠다"는 요청으로 추가했어요.
   // 첨삭관리 표를 "나에게 배정된 것 + 아직 첨삭 안 된 것"으로 미리 좁혀서 열어줘요. 몇 개가
   // 밀려있는지 바로 보이게, 화면을 열 때 조용히 개수를 세서 버튼에 표시해요(0개면 숫자는 안 붙여요).
@@ -3477,7 +3480,7 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
   reportGroup.row.appendChild(myListBtn);
   (async()=>{
     try{
-      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
       let all=(data&&data.ok)?(data.submissions||[]):[];
       if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
@@ -3490,16 +3493,49 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
   // 문법 연계·학년별 톤 조정 기능 이전에 저장된 것들)을 학생마다 일일이 "지금 생성하기"를
   // 누르지 않고 한 번에 처리할 수 있게 해달라는 요청으로 추가했어요. 한 번 요청에 여러 개를
   // 다 돌리면 서버 요청 시간 제한을 넘길 수 있어서, 몇 개씩 나눠 반복 호출하며 진행 상황을
-  // 보여줘요(batchGenerateMissingFeedback, limit개씩).
+  // 보여줘요(batchGenerateMissingFeedback, limit개씩). 전체 관리자가 학원이 여러 개 생기면서,
+  // "전체"를 한 번에 다 돌리기보다 학원별·반별로 나눠서 처리하고 싶다는 요청으로 학원·반 선택
+  // 필터를 추가했어요(학원은 전체 관리자만 골라요 — 일반 선생님·학원 관리자는 자기 학원 고정).
   const batchStatus=el('div');batchStatus.style.cssText='display:none;margin-top:10px;background:#fafaf9;border:1px solid #ecebe8;border-radius:12px;padding:12px 14px';
+  const mkBatchSel=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:110px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const sel=el('select','in');sel.style.cssText='padding:6px 8px;font-size:13px;border-radius:8px';wrap.appendChild(sel);
+    return{wrap,sel};};
+  const batchFilterRow=el('div');batchFilterRow.style.cssText='display:none;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:8px';
+  const bfAcademy=USER.isAdmin?mkBatchSel('학원'):null;
+  const bfCls=mkBatchSel('반');
+  const opt0b=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
+  const fillBatchCls=()=>{
+    const wantAcademy=bfAcademy?bfAcademy.sel.value:(USER.academy||'');
+    const pool=(ROSTER||[]).filter(s=>!wantAcademy||String(s.academy||'').trim()===wantAcademy);
+    const prev=bfCls.sel.value;
+    bfCls.sel.innerHTML='';opt0b(bfCls.sel,'반 전체');
+    Array.from(new Set(pool.map(s=>String(s.cls||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko',{numeric:true})).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;bfCls.sel.appendChild(o);});
+    bfCls.sel.value=prev;
+  };
+  if(bfAcademy){
+    opt0b(bfAcademy.sel,'학원 전체');
+    Array.from(new Set((ROSTER||[]).map(s=>String(s.academy||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko')).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;bfAcademy.sel.appendChild(o);});
+    bfAcademy.sel.onchange=fillBatchCls;
+    batchFilterRow.appendChild(bfAcademy.wrap);
+  }
+  fillBatchCls();
+  batchFilterRow.appendChild(bfCls.wrap);
+  const scanBtn=el('button','btn','확인하기');scanBtn.type='button';scanBtn.style.cssText='padding:8px 16px;font-size:13px';
+  batchFilterRow.appendChild(scanBtn);
   const batchBtn=mkMenuBtn('⚡ AI 첨삭 안 된 것들 한번에 생성',()=>{
-    batchBtn.disabled=true;
+    batchFilterRow.style.display=batchFilterRow.style.display==='none'?'flex':'none';
+  });
+  scanBtn.onclick=()=>{
+    scanBtn.disabled=true;
     batchStatus.style.display='block';
     batchStatus.innerHTML='';
+    const scopeAcademy=bfAcademy?bfAcademy.sel.value:(USER.academy||'');
+    const scopeCls=bfCls.sel.value;
     const checkMsg=el('div','hint','확인 중…');batchStatus.appendChild(checkMsg);
     (async()=>{
       const call=async(limit)=>{
-        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'batchGenerateMissingFeedback',role:'teacher',academy:USER.academy||'',limit})});
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'batchGenerateMissingFeedback',role:'teacher',academy:scopeAcademy,cls:scopeCls,limit})});
         const data=await res.json();
         if(!data||!data.ok)throw new Error((data&&data.error)||'확인에 실패했어요.');
         return data;
@@ -3507,11 +3543,11 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
       try{
         const first=await call(0);
         if(!first.totalMissing){
-          checkMsg.textContent='AI 첨삭이 안 된 글이 없어요. 모두 완료됐어요!';
-          batchBtn.disabled=false;return;
+          checkMsg.textContent='AI 첨삭이 안 된 글이 없어요('+(scopeAcademy||'전체 학원')+(scopeCls?' · '+scopeCls+'반':'')+'). 모두 완료됐어요!';
+          scanBtn.disabled=false;return;
         }
         checkMsg.innerHTML='';
-        const info=el('div','hint','AI 첨삭이 없는 글이 총 '+first.totalMissing+'개 있어요. 시작하면 몇 개씩 순서대로 만들어요(시간이 좀 걸려요).');
+        const info=el('div','hint',(scopeAcademy||'전체 학원')+(scopeCls?' · '+scopeCls+'반':'')+' 범위에 AI 첨삭이 없는 글이 총 '+first.totalMissing+'개 있어요. 시작하면 몇 개씩 나눠서 만들어요(시간이 좀 걸려요).');
         batchStatus.appendChild(info);
         const startBtn=el('button','btn','시작하기');startBtn.type='button';startBtn.style.cssText='margin-top:8px;padding:6px 14px;font-size:13px';
         batchStatus.appendChild(startBtn);
@@ -3532,15 +3568,16 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
           }catch(e){
             prog.className='fx no';prog.textContent='중간에 오류가 났어요: '+String((e&&e.message)||e)+' — 버튼을 다시 눌러 이어서 하실 수 있어요.';
           }
-          batchBtn.disabled=false;
+          scanBtn.disabled=false;
         };
       }catch(e){
         checkMsg.className='fx no';checkMsg.textContent='확인 중 오류: '+String((e&&e.message)||e);
-        batchBtn.disabled=false;
+        scanBtn.disabled=false;
       }
     })();
-  });
+  };
   reportGroup.row.appendChild(batchBtn);
+  reportGroup.group.appendChild(batchFilterRow);
   reportGroup.group.appendChild(batchStatus);
   menuGroups.appendChild(reportGroup.group);
   // "전체 관리자"(isAdmin, 모든 학원)뿐 아니라 "학원별 관리자"(isAcademyAdmin, 자기 학원만)도
@@ -3574,7 +3611,7 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
   (async()=>{
     let all=[];
     try{
-      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
       if(data&&data.ok)all=data.submissions||[];
     }catch(e){}
@@ -3674,7 +3711,7 @@ function viewGradingManage(opts){setWide(true);mountView(w=>{
   (async()=>{
     let all=[];
     try{
-      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
       if(data&&data.ok)all=data.submissions||[];
     }catch(e){}
@@ -3757,6 +3794,109 @@ function viewGradingManage(opts){setWide(true);mountView(w=>{
   })();
 });}
 
+/* "📊 첨삭 통계" — 학생이 글 쓰는 중간에 누르는 "AI로 조건 확인하기"(addAiCondCheckButton)는
+ * 여기 안 들어가요. 그건 조건 충족 여부만 즉석에서 확인하는 별개 기능이라 aiFeedback 필드에
+ * 아무것도 남기지 않아요. 여기서 세는 건 오직 "실제로 AI 첨삭이 만들어진 제출물 수"예요
+ * (학생이 제출하면 서버가 자동으로 만들거나, 선생님이 "지금 생성하기"·"한번에 생성"으로
+ * 직접 만든 것 전부 포함 — 결과적으로 aiFeedback/aiFeedbackGpt가 채워진 글이면 다 세요).
+ * 컨텐츠 종류는 s.type 필드가 아니라(새 제출물엔 이 필드가 안 채워져 있어요) chapter 값으로
+ * 구분해요 — Paragraph Writing/Article Reading/Performance Assessment/Story Writing/Rewriting은
+ * 고정된 챕터 이름이고, 그 외(문법드릴은 유닛마다 챕터 값이 달라요)는 전부 문법드릴로 묶어요. */
+const AI_STATS_TYPE_DEFS=[
+  {key:'drill',label:'문법드릴',test:s=>!['Rewriting','Paragraph Writing','Article Reading','Performance Assessment','Story Writing'].includes(String(s.chapter||''))},
+  {key:'paragraph',label:'Paragraph Writing',test:s=>s.chapter==='Paragraph Writing'},
+  {key:'article',label:'Article Reading',test:s=>s.chapter==='Article Reading'},
+  {key:'performance',label:'Performance Assessment',test:s=>s.chapter==='Performance Assessment'},
+  {key:'story',label:'Story Writing',test:s=>s.chapter==='Story Writing'},
+  {key:'rewriting',label:'Re-Writing',test:s=>s.chapter==='Rewriting'}
+];
+function viewAiStats(){setWide(true);mountView(w=>{
+  const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','📊 첨삭 통계'));
+  w.appendChild(el('div','hint','실제로 AI 첨삭이 만들어진 글 수를 학생별·컨텐츠 종류별로 월 단위로 보여줘요. (학생이 글 쓰는 중간에 누르는 "AI로 조건 확인하기"는 포함되지 않아요.)'));
+  const now=new Date();
+  const navRow=el('div');navRow.style.cssText='display:flex;align-items:flex-end;gap:10px;margin:14px 0;flex-wrap:wrap';
+  const prevBtn=el('button','btn ghost','◀');prevBtn.type='button';prevBtn.style.cssText='padding:6px 12px;height:36px';
+  const nextBtn=el('button','btn ghost','▶');nextBtn.type='button';nextBtn.style.cssText='padding:6px 12px;height:36px';
+  const ySel=el('select','in');ySel.style.cssText='padding:6px 10px;font-size:14px;border-radius:8px';
+  const yNow=now.getFullYear();
+  for(let y=yNow-5;y<=yNow+2;y++){const o=el('option');o.value=y;o.textContent=y+'년';ySel.appendChild(o);}
+  const mSel=el('select','in');mSel.style.cssText='padding:6px 10px;font-size:14px;border-radius:8px';
+  for(let m=1;m<=12;m++){const o=el('option');o.value=m;o.textContent=String(m).padStart(2,'0')+'월';mSel.appendChild(o);}
+  ySel.value=yNow;mSel.value=now.getMonth()+1;
+  navRow.appendChild(prevBtn);navRow.appendChild(ySel);navRow.appendChild(mSel);navRow.appendChild(nextBtn);
+  let fAcademySel=null;
+  if(USER.isAdmin){
+    const fAcademyWrap=el('div');fAcademyWrap.style.cssText='display:flex;flex-direction:column;gap:4px;margin-left:6px';
+    fAcademyWrap.appendChild(el('div','hint','학원'));
+    fAcademySel=el('select','in');fAcademySel.style.cssText='padding:6px 10px;font-size:14px;border-radius:8px';
+    fAcademyWrap.appendChild(fAcademySel);
+    navRow.appendChild(fAcademyWrap);
+  }
+  w.appendChild(navRow);
+  const tableWrap=el('div');tableWrap.style.cssText='overflow-x:auto;margin-top:10px';
+  const loading=el('div','hint','불러오는 중…');tableWrap.appendChild(loading);
+  w.appendChild(tableWrap);
+  (async()=>{
+    let all=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok)all=data.submissions||[];
+    }catch(e){}
+    if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+    loading.remove();
+    const hasFeedback=s=>!!((s.aiFeedback&&String(s.aiFeedback).trim())||(s.aiFeedbackGpt&&String(s.aiFeedbackGpt).trim()));
+    if(fAcademySel){
+      const opt0=(label)=>{const o=el('option');o.value='';o.textContent=label;fAcademySel.appendChild(o);};
+      opt0('학원 전체');
+      Array.from(new Set(all.map(s=>String(s.academy||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko')).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fAcademySel.appendChild(o);});
+    }
+    if(!all.length){tableWrap.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
+    const render=()=>{
+      Array.from(tableWrap.children).forEach(c=>c.remove());
+      const y=Number(ySel.value),m=Number(mSel.value);
+      const ym=y+'-'+String(m).padStart(2,'0');
+      const wantAcademy=fAcademySel?fAcademySel.value:'';
+      const scoped=all.filter(s=>hasFeedback(s)&&String(s.datetime||'').slice(0,7)===ym&&(!wantAcademy||String(s.academy||'')===wantAcademy));
+      if(!scoped.length){tableWrap.appendChild(el('div','hint',y+'년 '+m+'월에는 AI 첨삭이 완료된 글이 없어요.'));return;}
+      const byStudent={};
+      scoped.forEach(s=>{
+        const key=String(s.id||'')+'|'+String(s.academy||'');
+        if(!byStudent[key])byStudent[key]={id:s.id,name:s.name,academy:s.academy,counts:{}};
+        const t=AI_STATS_TYPE_DEFS.find(t=>t.test(s));
+        const tk=t?t.key:'drill';
+        byStudent[key].counts[tk]=(byStudent[key].counts[tk]||0)+1;
+      });
+      const rows=Object.values(byStudent).sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
+      const table=el('table');table.style.cssText='width:100%;border-collapse:collapse;font-size:13px;min-width:760px';
+      const thead=el('thead');const headRow=el('tr');
+      const cols=(USER.isAdmin?['학원']:[]).concat(['이름','아이디']).concat(AI_STATS_TYPE_DEFS.map(t=>t.label)).concat(['TOTAL']);
+      cols.forEach(c=>{const th=el('th',null,c);th.style.cssText='text-align:left;padding:8px 10px;border-bottom:2px solid #ecebe8;white-space:nowrap;color:#6b7684;font-size:12px';headRow.appendChild(th);});
+      thead.appendChild(headRow);table.appendChild(thead);
+      const tbody=el('tbody');
+      rows.forEach(r=>{
+        const tr=el('tr');
+        const td=(txt,bold)=>{const t=el('td',null,txt);t.style.cssText='padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06)'+(bold?';font-weight:800':'');return t;};
+        if(USER.isAdmin)tr.appendChild(td(escH(r.academy||'-')));
+        tr.appendChild(td(escH(r.name||r.id||'')));
+        tr.appendChild(td(escH(r.id||'')));
+        let total=0;
+        AI_STATS_TYPE_DEFS.forEach(t=>{const c=r.counts[t.key]||0;total+=c;tr.appendChild(td(String(c)));});
+        tr.appendChild(td(String(total),true));
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      tableWrap.appendChild(table);
+    };
+    [ySel,mSel].forEach(sel=>sel.addEventListener('change',render));
+    if(fAcademySel)fAcademySel.addEventListener('change',render);
+    prevBtn.onclick=()=>{let y=Number(ySel.value),m=Number(mSel.value)-1;if(m<1){m=12;y--;}ySel.value=y;mSel.value=m;render();};
+    nextBtn.onclick=()=>{let y=Number(ySel.value),m=Number(mSel.value)+1;if(m>12){m=1;y++;}ySel.value=y;mSel.value=m;render();};
+    render();
+  })();
+});}
+
 /* "🖨 REPORT 인쇄"로 들어오면, 학생의 커리큘럼 홈 화면을 거치지 않고 곧바로 학생 목록만 보여줘요.
  * 학생을 고르면 그 학생이 그동안 제출한 글이 최신순으로 쭉 나열되고, 각 줄 오른쪽의 "리포트" 버튼을
  * 누르면 바로 그 제출물의 인쇄 화면(printSubmissionReport)이 새 탭으로 떠요. */
@@ -3770,7 +3910,7 @@ function viewReportStudentList(){setWide(false);mountView(w=>{
   (async()=>{
     let all=[];
     try{
-      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
       if(data&&data.ok)all=data.submissions||[];
     }catch(e){}
