@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-18h';
+const APP_VERSION='2026-09-18l';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1465,6 +1465,9 @@ function reconcileDoneFromServer(rowsByKey){
         r.row.classList.add('done');
         if(r.dot)r.dot.textContent='✓';
         if(r.meta)r.meta.textContent=r.doneLabel||'다시 풀기';
+        // 화면 표시만 "완료"로 바꾸는 게 아니라, onclick이 실제로 참조하는 state.done도 같이
+        // 켜줘야 그 즉시(새로고침 없이) 눌렀을 때 review 모드(마지막 글로 바로 이동)로 들어가요.
+        if(r.state)r.state.done=true;
       });
     }catch(e){}
   })();
@@ -1808,19 +1811,25 @@ function viewPointMenu(){setWide(false);mountView(w=>{
         row.onclick=()=>viewTeacherContentSubmissions(p.title,matches,viewPointMenu);
         box.appendChild(row);return;
       }
-      const done=!!P[p.id];const row=el('div','point'+(p.soon?' soon':'')+(done?' done':''));
-      const dot=el('div','dot',done?'✓':'·');row.appendChild(dot);
+      // done을 그냥 지역변수로 캡처해서 onclick에 박아두면, 아래 reconcileDoneFromServer가
+      // 나중에(로컬 기록엔 없지만 서버엔 있는 제출을 찾아서) 화면 표시만 "완료"로 바꿔주고 이
+      // onclick은 그대로 review:false로 남아있는 문제가 있었어요 — 그래서 화면엔 체크·"제출한 글
+      // 보기·수정"이 떠 있는데 눌러보면 처음부터 다시 푸는 것처럼 보였던 거예요. state 객체로
+      // 감싸서 onclick이 클릭하는 "그 순간"의 최신 done 값을 읽도록 고쳤어요.
+      const state={done:!!P[p.id]};
+      const row=el('div','point'+(p.soon?' soon':'')+(state.done?' done':''));
+      const dot=el('div','dot',state.done?'✓':'·');row.appendChild(dot);
       row.appendChild(el('div','pt',p.title));
       // 이미 완료한 유닛은 눌러도 퀴즈·배열·영작을 처음부터 다시 푸는 게 아니라, 마지막으로 낸
       // "조건 영작" 글을 그대로 불러와서 바로 수정할 수 있는 화면으로 들어가요(runDrill의 review
       // 모드). chapterPoints·pointIndex는 그 화면에서 "◀ 이전 문제 / 다음 문제 ▶"로 같은 챕터의
       // 다른 유닛으로 바로 넘나들 수 있게 넘겨주는 값이에요.
-      const meta=p.soon?null:el('div','meta',done?'제출한 글 보기·수정':'퀴즈10·배열15·영작15');
+      const meta=p.soon?null:el('div','meta',state.done?'제출한 글 보기·수정':'퀴즈10·배열15·영작15');
       if(meta)row.appendChild(meta);
       const chapterPoints=c.points.filter(x=>!x.soon);
-      if(!p.soon)row.onclick=()=>runDrill(p,{review:done,chapterPoints,pointIndex:chapterPoints.indexOf(p)});
+      if(!p.soon)row.onclick=()=>runDrill(p,{review:state.done,chapterPoints,pointIndex:chapterPoints.indexOf(p)});
       box.appendChild(row);
-      if(!p.soon)rowsById[p.id]={row,dot,meta,chapterKey:p.id,title:p.title,doneLabel:'제출한 글 보기·수정'};});
+      if(!p.soon)rowsById[p.id]={row,dot,meta,state,chapterKey:p.id,title:p.title,doneLabel:'제출한 글 보기·수정'};});
     w.appendChild(box);});
   if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsById);
 });}
@@ -3813,7 +3822,7 @@ const AI_STATS_TYPE_DEFS=[
 function viewAiStats(){setWide(true);mountView(w=>{
   const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
   w.appendChild(el('h1','title','📊 첨삭 통계'));
-  w.appendChild(el('div','hint','실제로 AI 첨삭이 만들어진 글 수를 학생별·컨텐츠 종류별로 월 단위로 보여줘요. (학생이 글 쓰는 중간에 누르는 "AI로 조건 확인하기"는 포함되지 않아요.)'));
+  w.appendChild(el('div','hint','실제로 AI 첨삭이 만들어진 글 수를 학원별·컨텐츠 종류별로 합쳐서 월 단위로 보여줘요(학생별로는 안 나눠요). 학생이 글 쓰는 중간에 누르는 "AI로 조건 확인하기"는 포함되지 않아요.'));
   const now=new Date();
   const navRow=el('div');navRow.style.cssText='display:flex;align-items:flex-end;gap:10px;margin:14px 0;flex-wrap:wrap';
   const prevBtn=el('button','btn ghost','◀');prevBtn.type='button';prevBtn.style.cssText='padding:6px 12px;height:36px';
@@ -3860,27 +3869,27 @@ function viewAiStats(){setWide(true);mountView(w=>{
       const wantAcademy=fAcademySel?fAcademySel.value:'';
       const scoped=all.filter(s=>hasFeedback(s)&&String(s.datetime||'').slice(0,7)===ym&&(!wantAcademy||String(s.academy||'')===wantAcademy));
       if(!scoped.length){tableWrap.appendChild(el('div','hint',y+'년 '+m+'월에는 AI 첨삭이 완료된 글이 없어요.'));return;}
-      const byStudent={};
+      // 학생별로 한 줄씩 보여주는 게 아니라, 학원별로 컨텐츠 종류마다 몇 번 AI 첨삭을 썼는지만
+      // 합쳐서 보여줘요(요청: "학원별로 콘텐츠별로 몇 회 사용했나만 보이는 거 — 애들별은 안 보여").
+      const byAcademy={};
       scoped.forEach(s=>{
-        const key=String(s.id||'')+'|'+String(s.academy||'');
-        if(!byStudent[key])byStudent[key]={id:s.id,name:s.name,academy:s.academy,counts:{}};
+        const key=String(s.academy||'').trim();
+        if(!byAcademy[key])byAcademy[key]={academy:key,counts:{}};
         const t=AI_STATS_TYPE_DEFS.find(t=>t.test(s));
         const tk=t?t.key:'drill';
-        byStudent[key].counts[tk]=(byStudent[key].counts[tk]||0)+1;
+        byAcademy[key].counts[tk]=(byAcademy[key].counts[tk]||0)+1;
       });
-      const rows=Object.values(byStudent).sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
-      const table=el('table');table.style.cssText='width:100%;border-collapse:collapse;font-size:13px;min-width:760px';
+      const rows=Object.values(byAcademy).sort((a,b)=>String(a.academy||'').localeCompare(String(b.academy||''),'ko'));
+      const table=el('table');table.style.cssText='width:100%;border-collapse:collapse;font-size:13px;min-width:640px';
       const thead=el('thead');const headRow=el('tr');
-      const cols=(USER.isAdmin?['학원']:[]).concat(['이름','아이디']).concat(AI_STATS_TYPE_DEFS.map(t=>t.label)).concat(['TOTAL']);
+      const cols=['학원'].concat(AI_STATS_TYPE_DEFS.map(t=>t.label)).concat(['TOTAL']);
       cols.forEach(c=>{const th=el('th',null,c);th.style.cssText='text-align:left;padding:8px 10px;border-bottom:2px solid #ecebe8;white-space:nowrap;color:#6b7684;font-size:12px';headRow.appendChild(th);});
       thead.appendChild(headRow);table.appendChild(thead);
       const tbody=el('tbody');
       rows.forEach(r=>{
         const tr=el('tr');
         const td=(txt,bold)=>{const t=el('td',null,txt);t.style.cssText='padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06)'+(bold?';font-weight:800':'');return t;};
-        if(USER.isAdmin)tr.appendChild(td(escH(r.academy||'-')));
-        tr.appendChild(td(escH(r.name||r.id||'')));
-        tr.appendChild(td(escH(r.id||'')));
+        tr.appendChild(td(escH(r.academy||'(학원 미지정)')));
         let total=0;
         AI_STATS_TYPE_DEFS.forEach(t=>{const c=r.counts[t.key]||0;total+=c;tr.appendChild(td(String(c)));});
         tr.appendChild(td(String(total),true));
