@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-18d';
+const APP_VERSION='2026-09-18f';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -482,6 +482,12 @@ function splitWordLines(raw){
 const sc=t=>(t||"").split(/[.?!\n]+/).map(x=>x.trim()).filter(Boolean).length;
 const fmtDur=ms=>{const s=Math.max(0,Math.round((ms||0)/1000));const m=Math.floor(s/60),r=s%60;return m>0?(m+'분 '+r+'초'):(r+'초');};
 const genSubId=()=>(USER.id||'anon')+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
+// ⚠️ 예전엔 제출할 때마다 매번 새 랜덤 subId(genSubId)를 만들어서, 같은 과제를 두 번 내면(더블클릭,
+// 실수로 다시 제출, "수정해서 다시 내기" 등) 문서가 하나 더 늘어났어요. 그래서 서버가 나중에 따로
+// "중복 정리"를 해줘야 했는데, 애초에 "같은 학생 + 같은 챕터 + 같은 제목"이면 항상 똑같은 문서
+// ID가 나오게 만들면 저장할 때 자동으로 그 문서를 덮어써서(overwrite) 중복 자체가 생기지 않아요.
+// (문서 ID로만 쓰이는 값이라 사람이 읽을 일은 없어요 — 특수문자만 안전하게 다듬어요.)
+const submissionDocId=(chapter,point)=>'sub_'+[USER.id||'anon',chapter,point].map(s=>String(s||'').replace(/[^a-zA-Z0-9가-힣_-]/g,'_')).join('__');
 // 글 제출 저장 자체는 서버가 이제 바로 응답하고, AI 첨삭은 이 함수로 따로(기다리지 않고) 요청해요.
 // 제출 저장 fetch가 끝난 뒤(=Firestore에 이미 저장된 뒤)에 불러야, generateFeedbackNow가 그 문서를
 // 찾다가 "아직 없음" 오류를 내는 경우가 없어요. 실패해도(네트워크 문제 등) 조용히 넘어가요 —
@@ -1414,7 +1420,7 @@ function mergeStory(){
 }
 
 /* ================= app state ================= */
-let USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false},curLevel='L1';
+let USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isAcademyAdmin:false,isTestAccount:false},curLevel='L1';
 /* 선생님이 학생 목록에서 학생을 고르면, 그 학생 이름으로 이 값이 채워져요. 이 값이 있는 동안은
    학생용 홈 화면(viewHome)·각 트랙 메뉴 화면이 "그 학생이 이미 낸 글이 있는지" 보여주는 미리보기
    모드로 동작해요 — 실제로 문제를 풀거나 글을 쓸 수는 없고, 커리큘럼을 죽 둘러보다가 항목을 누르면
@@ -1668,7 +1674,7 @@ function viewLogin(){setWide(false);mountView(w=>{
     if(tmatch){
       if(String(tmatch.pw||'')!==pwv){fx.className='fx no';fx.textContent='비밀번호가 올바르지 않아요.';pi.value='';pi.focus();return;}
       USER.id=tmatch.id;USER.name=tmatch.name||tmatch.id;USER.role='teacher';
-      USER.academy=tmatch.academy||'';USER.isAdmin=!!String(tmatch.isAdmin||'').trim();
+      USER.academy=tmatch.academy||'';USER.isAdmin=!!String(tmatch.isAdmin||'').trim();USER.isAcademyAdmin=!!String(tmatch.isAcademyAdmin||'').trim();
       saveSession();applySessionUI();
       signInFirebaseRealtime(idv,pwv);
       fx.className='';fx.textContent='';
@@ -1805,11 +1811,16 @@ function viewPointMenu(){setWide(false);mountView(w=>{
       const done=!!P[p.id];const row=el('div','point'+(p.soon?' soon':'')+(done?' done':''));
       const dot=el('div','dot',done?'✓':'·');row.appendChild(dot);
       row.appendChild(el('div','pt',p.title));
-      const meta=p.soon?null:el('div','meta',done?'다시 풀기':'퀴즈10·배열15·영작15');
+      // 이미 완료한 유닛은 눌러도 퀴즈·배열·영작을 처음부터 다시 푸는 게 아니라, 마지막으로 낸
+      // "조건 영작" 글을 그대로 불러와서 바로 수정할 수 있는 화면으로 들어가요(runDrill의 review
+      // 모드). chapterPoints·pointIndex는 그 화면에서 "◀ 이전 문제 / 다음 문제 ▶"로 같은 챕터의
+      // 다른 유닛으로 바로 넘나들 수 있게 넘겨주는 값이에요.
+      const meta=p.soon?null:el('div','meta',done?'제출한 글 보기·수정':'퀴즈10·배열15·영작15');
       if(meta)row.appendChild(meta);
-      if(!p.soon)row.onclick=()=>runDrill(p);
+      const chapterPoints=c.points.filter(x=>!x.soon);
+      if(!p.soon)row.onclick=()=>runDrill(p,{review:done,chapterPoints,pointIndex:chapterPoints.indexOf(p)});
       box.appendChild(row);
-      if(!p.soon)rowsById[p.id]={row,dot,meta,chapterKey:p.id,title:p.title,doneLabel:'다시 풀기'};});
+      if(!p.soon)rowsById[p.id]={row,dot,meta,chapterKey:p.id,title:p.title,doneLabel:'제출한 글 보기·수정'};});
     w.appendChild(box);});
   if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsById);
 });}
@@ -3198,7 +3209,18 @@ function viewRewriteList(){setWide(true);mountView(w=>{
       if(data&&data.ok)subs=data.submissions||[];
     }catch(e){}
     loading.remove();
-    const eligible=subs.filter(s=>s.type!=='Re-Writing'&&s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
+    const eligibleAll=subs.filter(s=>s.type!=='Re-Writing'&&s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
+    // 같은 컨텐츠(같은 종류+챕터+제목)를 여러 번 제출한 경우(더블클릭 등으로 거의 동시에 두 번
+    // 저장된 옛날 기록 포함) 다시쓰기 목록엔 그때마다 한 줄씩 다 나와서 똑같은 카드가 여러 개
+    // 보였어요. 어차피 학생 입장에선 "이 컨텐츠, 다시 써보기"가 목적이라 가장 최근 제출물 하나만
+    // 보여주면 충분해서, 종류+챕터+제목이 같으면 최신 것만 남겨요.
+    const eligibleByKey=new Map();
+    eligibleAll.forEach(s=>{
+      const key=(s.type||'')+'|'+(s.chapter||'')+'|'+(s.point||'');
+      const prev=eligibleByKey.get(key);
+      if(!prev||String(s.datetime||'')>String(prev.datetime||''))eligibleByKey.set(key,s);
+    });
+    const eligible=Array.from(eligibleByKey.values());
     if(!eligible.length){filterWrap.style.display='none';box.appendChild(el('div','hint','아직 다시 써볼 수 있는 글이 없어요. AI 첨삭이 완료된 제출물이 있어야 다시쓰기를 할 수 있어요.'));return;}
     // 실제로 그 학생 글에 있는 컨텐츠 종류만 드롭다운에 보여줘요 (전체 종류를 다 보여주면 선택해도 텅 비는 경우가 생겨서).
     const presentTypes=new Set(eligible.map(s=>s.type||''));
@@ -3395,7 +3417,7 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
     subBtn.disabled=true;const prev=subBtn.textContent;subBtn.textContent='제출 중…';
     const now=new Date(),z=x=>String(x).padStart(2,'0');
     const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());
-    const payload={book:'',chapter:'Rewriting',point:sub.point||sub.chapter||'',name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:genSubId(),datetime:dt,
+    const payload={book:'',chapter:'Rewriting',point:sub.point||sub.chapter||'',name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Rewriting',sub.point||sub.chapter||''),datetime:dt,
       final:ta.value,progress:'원본 제출: '+(sub.datetime||'')};
     let sent=false;
     if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;triggerAiFeedbackNow(payload.subId,payload.academy);}catch(e){}}
@@ -3521,10 +3543,15 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
   reportGroup.row.appendChild(batchBtn);
   reportGroup.group.appendChild(batchStatus);
   menuGroups.appendChild(reportGroup.group);
-  if(USER.isAdmin){
-    const adminGroup=mkMenuGroup('운영 관리 (관리자 전용)');
-    adminGroup.row.appendChild(mkMenuBtn('🏷️ 레벨 관리',()=>viewLevelManage()));
+  // "전체 관리자"(isAdmin, 모든 학원)뿐 아니라 "학원별 관리자"(isAcademyAdmin, 자기 학원만)도
+  // 여기 보여요 — 학원별 관리자는 자기 학원의 학생·선생님 계정만 관리할 수 있어요(화면 안에서
+  // 다시 한 번 자기 학원으로 좁혀져요). 레벨 관리(콘텐츠 구조)는 학원 구분 없이 전체에 영향을
+  // 주는 설정이라 전체 관리자만 볼 수 있게 남겨뒀어요.
+  if(USER.isAdmin||USER.isAcademyAdmin){
+    const adminGroup=mkMenuGroup(USER.isAdmin?'운영 관리 (전체 관리자)':'운영 관리 (학원 관리자 · '+(USER.academy||'우리 학원')+')');
+    if(USER.isAdmin)adminGroup.row.appendChild(mkMenuBtn('🏷️ 레벨 관리',()=>viewLevelManage()));
     adminGroup.row.appendChild(mkMenuBtn('👥 학생 명단 관리',()=>viewStudentManage()));
+    adminGroup.row.appendChild(mkMenuBtn('🧑‍🏫 선생님 계정 관리',()=>viewTeacherManage()));
     menuGroups.appendChild(adminGroup.group);
   }
   w.appendChild(menuGroups);
@@ -5114,9 +5141,10 @@ function viewStudentManage(){setWide(false);mountView(w=>{
     const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
     const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
     return{wrap,sel};};
+  const showAcademyFilter=USER.isAdmin; // 학원별 관리자는 학원이 하나로 고정이라 이 필터가 필요 없어요.
   const fAcademy=mkFilterSelect('학원'),fSchool=mkFilterSelect('학교'),fGrade=mkFilterSelect('학년'),fCls=mkFilterSelect('반');
   const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-top:12px';
-  [fAcademy,fSchool,fGrade,fCls].forEach(f=>filterBox.appendChild(f.wrap));
+  (showAcademyFilter?[fAcademy,fSchool,fGrade,fCls]:[fSchool,fGrade,fCls]).forEach(f=>filterBox.appendChild(f.wrap));
   w.appendChild(filterBox);
   filterBox.style.display='none';
   const box=el('div');box.style.marginTop='14px';
@@ -5129,6 +5157,9 @@ function viewStudentManage(){setWide(false);mountView(w=>{
       const data=await res.json();
       if(data&&data.ok)students=data.students||[];
     }catch(e){}
+    // 학원별 관리자(isAcademyAdmin)는 전체 관리자와 달리 자기 학원 학생만 봐야 해서, 여기서
+    // 미리 걸러둬요(학원 선택 필터도 안 보여줘요 — 어차피 하나뿐이라 고를 필요가 없어요).
+    if(!USER.isAdmin&&USER.isAcademyAdmin)students=students.filter(s=>String(s.academy||'').trim()===String(USER.academy||'').trim());
     loading.remove();
     if(!students.length){box.appendChild(el('div','hint','등록된 학생이 없어요. "+ 새 학생 추가"로 첫 학생을 등록해보세요.'));return;}
     const renderRow=(container,s)=>{
@@ -5145,7 +5176,7 @@ function viewStudentManage(){setWide(false);mountView(w=>{
         if(!confirm((s.name||s.id)+' 학생을 삭제할까요? 이 작업은 되돌릴 수 없어요.'))return;
         delBtn.disabled=true;delBtn.textContent='삭제 중…';
         try{
-          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'deleteStudent',id:s.id})});
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'deleteStudent',id:s.id,role:'teacher',requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||''})});
           let data=null;try{data=await res.json();}catch(e){}
           if(data&&data.ok===false)throw new Error(data.error||'삭제 실패');
           viewStudentManage();
@@ -5201,12 +5232,16 @@ function viewStudentForm(existing){setWide(false);mountView(w=>{
   w.appendChild(el('div','hint',isEdit?'아이디를 바꾸면 학생은 새 아이디로 로그인해야 해요 (다른 학생이 이미 쓰는 아이디로는 바꿀 수 없어요).':'아이디·비밀번호·이름은 꼭 채워주세요. 나머지는 비워둬도 로그인엔 문제없어요.'));
   const form=el('div');form.style.cssText='display:flex;flex-direction:column;gap:14px;margin-top:16px';
   const refs={};
+  // 학원별 관리자(isAcademyAdmin)는 다른 학원에 학생을 등록/이관할 수 없게, "학원" 칸을 자기
+  // 학원 값으로 고정하고 수정하지 못하게 해요(전체 관리자만 자유롭게 적을 수 있어요).
+  const lockAcademy=!USER.isAdmin&&USER.isAcademyAdmin;
   STUDENT_FIELDS.forEach(f=>{
     const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:6px';
     wrap.appendChild(el('div','hint',f.label));
     const inp=el('input','in');inp.type='text';inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
     if(f.ph)inp.placeholder=f.ph;
     if(existing&&existing[f.key]!==undefined)inp.value=existing[f.key];
+    if(f.key==='academy'&&lockAcademy){inp.value=USER.academy||'';inp.disabled=true;inp.style.background='#f2f2f0';}
     wrap.appendChild(inp);
     if(f.note){const noteEl=el('div',null,f.note);noteEl.style.cssText='font-size:12px;color:#c2650a';wrap.appendChild(noteEl);}
     refs[f.key]=inp;
@@ -5221,8 +5256,9 @@ function viewStudentForm(existing){setWide(false);mountView(w=>{
   w.appendChild(btnRow);
   w.appendChild(msg);
   saveBtn.onclick=async()=>{
-    const payload={action:'saveStudent'};
+    const payload={action:'saveStudent',role:'teacher',requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||''};
     STUDENT_FIELDS.forEach(f=>{payload[f.key]=refs[f.key].value.trim();});
+    if(lockAcademy)payload.academy=USER.academy||''; // disabled input이라 값이 안 들어올 수 있어서 확실히 채워요.
     if(isEdit)payload.originalId=existing.id;
     if(!payload.id){msg.className='fx no';msg.textContent='아이디를 입력해주세요.';return;}
     if(!payload.pw){msg.className='fx no';msg.textContent='비밀번호를 입력해주세요.';return;}
@@ -5233,6 +5269,140 @@ function viewStudentForm(existing){setWide(false);mountView(w=>{
       let data=null;try{data=await res.json();}catch(e){}
       if(data&&data.ok===false)throw new Error(data.error||'저장 실패');
       viewStudentManage();
+    }catch(e){
+      msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요: '+String(e.message||e);
+      saveBtn.disabled=false;
+    }
+  };
+});}
+
+/* "전체 관리자"뿐 아니라 "학원별 관리자"도 선생님 계정을 만들 수 있게 해달라는 요청으로 추가했어요.
+ * - 전체 관리자(USER.isAdmin): 모든 학원의 선생님 계정을 보고, 새 관리자(전체/학원별)를 지정할 수 있어요.
+ * - 학원별 관리자(USER.isAcademyAdmin만 true): 자기 학원 선생님만 보이고, 새로 만드는 계정은 항상
+ *   "일반 선생님"이에요(관리자 권한은 줄 수 없어요) — 다른 관리자 계정도 여기서 손댈 수 없어요.
+ * 실제 권한 확인은 서버(handleSaveTeacher/handleDeleteTeacher)에서 한 번 더 해요 — 화면에서 막아놔도
+ * 요청 자체를 조작하면 우회될 수 있어서, 학원 밖 계정 수정·관리자 권한 부여는 서버도 거절해요. */
+function viewTeacherManage(){setWide(false);mountView(w=>{
+  const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
+  const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
+  titleRow.appendChild(el('h1','title','🧑‍🏫 선생님 계정 관리'));
+  const addBtn=el('button','btn green','+ 새 선생님 추가');addBtn.type='button';addBtn.style.cssText='padding:10px 18px;font-size:14px';
+  addBtn.onclick=()=>viewTeacherForm(null);
+  titleRow.appendChild(addBtn);
+  w.appendChild(titleRow);
+  w.appendChild(el('div','hint',USER.isAdmin?'모든 학원의 선생님 계정을 관리할 수 있어요. 관리자 권한(전체/학원별)도 여기서 지정할 수 있어요.':'우리 학원('+(USER.academy||'')+') 선생님 계정만 보여요. 관리자 권한은 전체 관리자만 지정할 수 있어요.'));
+  const box=el('div');box.style.marginTop='14px';
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  (async()=>{
+    let teachers=[];
+    try{
+      const r=await fetchRoster();teachers=r.teachers||[];
+    }catch(e){const c=loadRosterCache();teachers=c.teachers||[];}
+    if(!USER.isAdmin&&USER.isAcademyAdmin)teachers=teachers.filter(t=>String(t.academy||'').trim()===String(USER.academy||'').trim());
+    loading.remove();
+    if(!teachers.length){box.appendChild(el('div','hint','등록된 선생님 계정이 없어요.'));return;}
+    const roleLabel=t=>t.isAdmin?'전체 관리자':(t.isAcademyAdmin?'학원 관리자':'선생님');
+    teachers.slice().sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko')).forEach(t=>{
+      const row=el('div','point');row.style.cursor='default';
+      row.appendChild(el('div','dot','●'));
+      const ctx=[t.academy,roleLabel(t)].filter(Boolean).join(' · ');
+      row.appendChild(el('div','pt',(t.name||t.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+t.id+(ctx?' · '+ctx:'')+')</span>'));
+      // 학원별 관리자는 다른 관리자 계정(전체/학원별)을 건드릴 수 없게, 그런 계정엔 수정·삭제
+      // 버튼 자체를 안 보여줘요(본인이 본인 계정을 고치는 것도 실수로 관리자 권한을 잃을 수
+      // 있어서 막아뒀어요 — 계정 정보를 바꾸고 싶으면 전체 관리자에게 요청하면 돼요).
+      const canManage=USER.isAdmin||(USER.isAcademyAdmin&&!t.isAdmin&&!t.isAcademyAdmin&&String(t.id)!==String(USER.id));
+      if(canManage){
+        const btnRow=el('div');btnRow.style.cssText='display:flex;gap:8px;margin-top:8px';
+        const editBtn=el('button','btn ghost','✏️ 수정');editBtn.type='button';editBtn.style.cssText='padding:6px 14px;font-size:13px';
+        editBtn.onclick=(ev)=>{ev.stopPropagation();viewTeacherForm(t);};
+        const delBtn=el('button','btn ghost','🗑 삭제');delBtn.type='button';delBtn.style.cssText='padding:6px 14px;font-size:13px;color:#b91c1c;border-color:#b91c1c';
+        delBtn.onclick=async(ev)=>{
+          ev.stopPropagation();
+          if(!confirm((t.name||t.id)+' 선생님 계정을 삭제할까요? 이 작업은 되돌릴 수 없어요.'))return;
+          delBtn.disabled=true;delBtn.textContent='삭제 중…';
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'deleteTeacher',id:t.id,role:'teacher',requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||''})});
+            let data=null;try{data=await res.json();}catch(e){}
+            if(data&&data.ok===false)throw new Error(data.error||'삭제 실패');
+            viewTeacherManage();
+          }catch(e){
+            delBtn.disabled=false;delBtn.textContent='🗑 삭제';
+            alert('삭제 중 문제가 생겼어요: '+String(e.message||e));
+          }
+        };
+        btnRow.appendChild(editBtn);btnRow.appendChild(delBtn);
+        row.appendChild(btnRow);
+      }
+      box.appendChild(row);
+    });
+  })();
+});}
+function viewTeacherForm(existing){setWide(false);mountView(w=>{
+  const isEdit=!!existing;
+  const bk=el('button','backbtn','◀ 선생님 명단으로');bk.onclick=viewTeacherManage;w.appendChild(bk);
+  w.appendChild(el('h1','title',isEdit?'✏️ 선생님 정보 수정':'+ 새 선생님 추가'));
+  w.appendChild(el('div','hint',isEdit?'아이디를 바꾸면 그 선생님은 새 아이디로 로그인해야 해요.':'아이디·비밀번호·이름은 꼭 채워주세요.'));
+  const lockAcademy=!USER.isAdmin&&USER.isAcademyAdmin; // 학원별 관리자는 자기 학원으로 고정.
+  const form=el('div');form.style.cssText='display:flex;flex-direction:column;gap:14px;margin-top:16px';
+  const mkText=(label,key,ph,val,disabled)=>{
+    const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:6px';
+    wrap.appendChild(el('div','hint',label));
+    const inp=el('input','in');inp.type='text';inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
+    if(ph)inp.placeholder=ph;
+    if(val!=null)inp.value=val;
+    if(disabled){inp.disabled=true;inp.style.background='#f2f2f0';}
+    wrap.appendChild(inp);form.appendChild(wrap);
+    return inp;
+  };
+  const idInp=mkText('아이디','id','예) teacher01',existing&&existing.id);
+  const pwInp=mkText('비밀번호','pw','예) 1234',existing&&existing.pw);
+  const nameInp=mkText('이름','name','예) 김선생',existing&&existing.name);
+  const academyInp=mkText('학원','academy','예) 아이콘 학원 (한 학원만 쓰면 비워둬도 돼요)',lockAcademy?(USER.academy||''):(existing&&existing.academy),lockAcademy);
+  let adminSel=null,academyAdminSel=null;
+  // 관리자 권한(전체/학원별) 지정은 전체 관리자만 할 수 있어요 — 학원별 관리자 화면에는
+  // 이 체크박스 자체가 안 보여서, 새로 만드는 계정은 항상 "일반 선생님"이에요.
+  if(USER.isAdmin){
+    const roleWrap=el('div');roleWrap.style.cssText='display:flex;flex-direction:column;gap:8px';
+    roleWrap.appendChild(el('div','hint','관리자 권한'));
+    const mkCheck=(label,checked)=>{
+      const row=el('label');row.style.cssText='display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer';
+      const cb=el('input');cb.type='checkbox';cb.checked=!!checked;
+      row.appendChild(cb);row.appendChild(document.createTextNode(label));
+      roleWrap.appendChild(row);
+      return cb;
+    };
+    adminSel=mkCheck('전체 관리자로 지정 (모든 학원을 볼 수 있어요)',existing&&existing.isAdmin);
+    academyAdminSel=mkCheck('학원 관리자로 지정 (자기 학원의 학생·선생님 계정을 관리할 수 있어요)',existing&&existing.isAcademyAdmin);
+    form.appendChild(roleWrap);
+  }
+  w.appendChild(form);
+  const msg=el('div','fx');msg.style.marginTop='10px';
+  const btnRow=el('div');btnRow.style.cssText='display:flex;gap:10px;margin-top:16px';
+  const saveBtn=el('button','btn green',isEdit?'수정 저장하기':'추가하기');saveBtn.type='button';
+  const back=el('button','btn ghost','← 취소');back.type='button';back.onclick=()=>viewTeacherManage();
+  btnRow.appendChild(saveBtn);btnRow.appendChild(back);
+  w.appendChild(btnRow);
+  w.appendChild(msg);
+  saveBtn.onclick=async()=>{
+    const payload={
+      action:'saveTeacher',role:'teacher',
+      requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||'',
+      id:idInp.value.trim(),pw:pwInp.value.trim(),name:nameInp.value.trim(),
+      academy:lockAcademy?(USER.academy||''):academyInp.value.trim(),
+      isAdmin:adminSel?adminSel.checked:false,
+      isAcademyAdmin:academyAdminSel?academyAdminSel.checked:false
+    };
+    if(isEdit)payload.originalId=existing.id;
+    if(!payload.id){msg.className='fx no';msg.textContent='아이디를 입력해주세요.';return;}
+    if(!payload.pw){msg.className='fx no';msg.textContent='비밀번호를 입력해주세요.';return;}
+    if(!payload.name){msg.className='fx no';msg.textContent='이름을 입력해주세요.';return;}
+    saveBtn.disabled=true;msg.className='fx';msg.textContent='저장 중…';
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+      let data=null;try{data=await res.json();}catch(e){}
+      if(data&&data.ok===false)throw new Error(data.error||'저장 실패');
+      viewTeacherManage();
     }catch(e){
       msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요: '+String(e.message||e);
       saveBtn.disabled=false;
@@ -5693,10 +5863,10 @@ document.addEventListener('keydown',e=>{if(document.getElementById('exprModal'))
   if(e.key==='Enter'){const s=slides[idx];if(s&&s._box&&s._box._enterKey){e.preventDefault();s._box._enterKey();}return;}
   if(e.key==='ArrowRight')deckShow(idx+1);else if(e.key==='ArrowLeft')deckShow(idx-1);});
 homeBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;if(USER.role==='teacher')viewTeacherHome();else viewHome();};
-logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false};clearSession();clearTeacherNav();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';try{fbAuth.signOut();}catch(e){}viewLogin();};
+logoutBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isAcademyAdmin:false,isTestAccount:false};clearSession();clearTeacherNav();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';try{fbAuth.signOut();}catch(e){}viewLogin();};
 
 /* ================= DRILL RUNNER ================= */
-function runDrill(P){setWide(false);deckInit();
+function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
   const drillStart=Date.now();setStudyTimer(drillStart,'⏱ 학습 시간');
   const RES={quiz:{ok:0,tot:P.quiz.length},arrange:{ok:0,tot:P.arrange.length},compose:{ok:0,tot:P.compose.length},wrong:[],all:[],taskDone:false,taskText:'',startTime:drillStart,finishTime:null};
   // "조건 영작(Task)" 글쓰기 칸도 다른 글쓰기 화면들처럼 임시저장이 되도록, 제출할 때 쓰는 chapter/point(P.id/P.title)와
@@ -5832,14 +6002,69 @@ function runDrill(P){setWide(false);deckInit();
         ta.value=found.obj.draft;checkConds();bannerSlot.appendChild(draftBanner(found.savedAt));
       }
     })();
+    // 같은 챕터의 다른 유닛으로, 목록 화면을 거치지 않고 바로 넘나들 수 있게 "이전/다음 문제"
+    // 버튼을 붙여요(완료한 유닛을 눌렀을 때 이 화면으로 바로 들어오는 review 모드에서 특히 유용해요).
+    if(opts.chapterPoints&&opts.chapterPoints.length>1&&opts.pointIndex!=null&&opts.pointIndex>=0){
+      const pts=opts.chapterPoints,curI=opts.pointIndex;
+      const prevPt=pts[curI-1],nextPt=pts[curI+1];
+      if(prevPt||nextPt){
+        const navRow=el('div');navRow.style.cssText='margin-top:14px;display:flex;gap:8px;flex-wrap:wrap';
+        if(prevPt){
+          const pb=el('button','btn ghost','◀ 이전 문제: '+prevPt.title);pb.type='button';pb.style.cssText='padding:6px 12px;font-size:12.5px';
+          pb.onclick=()=>{const PP=loadProg();runDrill(prevPt,{review:!!PP[prevPt.id],chapterPoints:pts,pointIndex:curI-1});};
+          navRow.appendChild(pb);
+        }
+        if(nextPt){
+          const nb2=el('button','btn ghost','다음 문제: '+nextPt.title+' ▶');nb2.type='button';nb2.style.cssText='padding:6px 12px;font-size:12.5px';
+          nb2.onclick=()=>{const PP=loadProg();runDrill(nextPt,{review:!!PP[nextPt.id],chapterPoints:pts,pointIndex:curI+1});};
+          navRow.appendChild(nb2);
+        }
+        b.appendChild(navRow);
+      }
+    }
   },{collect(){},focus:'textarea'});
   // 레포트 + 제출
   slideAdd(b=>{buildReport(b,P,RES,()=>{
     // 제출을 완료하면(다음 번에 이 유닛을 다시 열었을 때 방금 끝낸 이전 회차 진행 상황이 남아있지 않도록)
     // 진행 상황 임시저장 기록을 비워둬요.
     saveDraftNow(PROGRESS_CHAPTER,PROGRESS_POINT,{quizCorrect:[],arrangeCorrect:[],composeCorrect:[]});
-  });},{onEnter(){if(!RES.finishTime){RES.finishTime=Date.now();}freezeStudyTimer();}});
+  },opts.review);},{onEnter(){if(!RES.finishTime){RES.finishTime=Date.now();}freezeStudyTimer();}});
   deckStart();
+  if(opts.review){
+    // 이미 제출을 마친 유닛을 다시 눌렀을 때예요 — 퀴즈·배열·영작을 처음부터 다시 풀게 하지 않고,
+    // 서버에 저장된 마지막 제출물을 그대로 불러와서 "조건 영작" 글쓰기 화면으로 바로 건너뛰어요.
+    // (redoAnchor 슬라이드는 한 번도 거치지 않으니 buildRedo가 실행되지 않아서, 슬라이드 배열에
+    // 오답 다시풀기 문항이 끼어들지 않아요 — 그래서 badge.purple로 찾은 위치 바로 다음이 항상
+    // "조건 영작" 슬라이드예요.)
+    (async()=>{
+      let sub=null;
+      try{
+        const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+        const data=await res.json();
+        const subs=(data&&data.ok)?(data.submissions||[]):[];
+        const matches=subs.filter(s=>s.chapter===P.id&&s.point===P.title).sort((a,b)=>String(b.datetime||'').localeCompare(String(a.datetime||'')));
+        sub=matches[0]||null;
+      }catch(e){}
+      if(!sub)return; // 서버에서 못 찾으면 그냥 처음부터 푸는 화면(설명 슬라이드)에 남아있어요.
+      const parseFrac=str=>{const m=String(str||'').match(/(\d+)\s*\/\s*(\d+)/);return m?{ok:+m[1],tot:+m[2]}:null;};
+      const qf=parseFrac(sub.quiz),af=parseFrac(sub.arrange),cf=parseFrac(sub.compose);
+      if(qf)RES.quiz=qf;if(af)RES.arrange=af;if(cf)RES.compose=cf;
+      RES.taskDone=sub.task==='완료';RES.taskText=sub.taskText||'';
+      try{RES.all=JSON.parse(sub.wrongReport||'[]');RES.wrong=RES.all.filter(x=>x&&x.correct===false);}catch(e){}
+      const anchorIdx=slides.findIndex(s=>s._box&&s._box.querySelector('.badge.purple'));
+      const taskIdx=anchorIdx>=0?anchorIdx+1:-1;
+      if(taskIdx<0||taskIdx>=slides.length)return;
+      const cur=slides[idx];if(cur)cur.classList.remove('active');
+      idx=taskIdx;const s=slides[idx];s.classList.add('active');
+      prog.style.width=(idx/(slides.length-1||1)*100)+'%';counter.innerHTML=`<b>${idx+1}</b> / ${slides.length}`;
+      prevB.disabled=idx===0;nextB.disabled=(idx===slides.length-1)||(!!s._lock&&s._lock());
+      if(s._onEnter)try{s._onEnter();}catch(e){}
+      if(s._focusSel){const f=s.querySelector(s._focusSel);if(f)setTimeout(()=>f.focus(),60);}
+      const taskTa=s.querySelector('textarea.in');
+      if(taskTa&&!taskTa.value.trim()&&RES.taskText){taskTa.value=RES.taskText;taskTa.dispatchEvent(new Event('input'));}
+    })();
+    return;
+  }
   // 이전에 풀다 만 진행 상황이 있으면, 이미 푼 문제는 다시 안 보여주고 이어서 풀 수 있는 위치로 바로 이동해요.
   // 화면은 이미 위 deckStart()로 즉시 그려졌고, 이 조회는 그 뒤에서 조용히 진행돼요(화면을 막지 않음).
   (async()=>{
@@ -5906,7 +6131,7 @@ function calcScore(P,RES){
 }
 function maxTaskBonus(){return 0;}
 
-function buildReport(b,P,RES,onSubmitted){
+function buildReport(b,P,RES,onSubmitted,reviewMode){
   b.innerHTML='';b.appendChild(el('span','badge green','성적 레포트'));
   b.appendChild(el('h1','title','오늘의 학습 결과'));
   b._onShow=()=>{};
@@ -5926,13 +6151,13 @@ function buildReport(b,P,RES,onSubmitted){
     b.appendChild(rec.el);
     // submit
     const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';
-    const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','결과 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
-    const msg=el('div','rep hint','제출하면 관리자(선생님)가 진도와 점수를 확인할 수 있어요.');b.appendChild(msg);
+    const sub=el('button','btn green',reviewMode?'✏️ 수정 완료':'선생님께 제출');const dl=el('button','btn ghost','결과 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
+    const msg=el('div','rep hint',reviewMode?'수정한 내용으로 다시 저장돼요 — 이전 AI 첨삭은 지워지고, 새 내용으로 새 첨삭이 만들어져요.':'제출하면 관리자(선생님)가 진도와 점수를 확인할 수 있어요.');b.appendChild(msg);
     const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());
       const lv=LEVELS.find(l=>l.id===curLevel);
       const studyTimeStr=fmtDur((RES.finishTime||Date.now())-RES.startTime);
       const prog=`퀴즈 ${q.ok}/${q.tot} · 배열 ${ar.ok}/${ar.tot} · 영작 ${co.ok}/${co.tot} · 오답 ${RES.wrong.length} · 조건영작 ${RES.taskDone?'완료':'미완료'} · 학습시간 ${studyTimeStr}`;
-      const payload={book:lv.book,chapter:P.id,point:P.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:genSubId(),datetime:dt,
+      const payload={book:lv.book,chapter:P.id,point:P.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId(P.id,P.title),datetime:dt,
         quiz:q.ok+'/'+q.tot,arrange:ar.ok+'/'+ar.tot,compose:co.ok+'/'+co.tot,task:RES.taskDone?'완료':'미완료',
         total:got+'/'+tot,score:score,grade:gr,progress:prog,taskText:RES.taskText||'',studyTime:studyTimeStr,
         wrongReport:JSON.stringify(RES.all||[])};
@@ -5941,11 +6166,11 @@ function buildReport(b,P,RES,onSubmitted){
         '총점 '+score+'/100 ('+gr+')','','[조건영작]',RES.taskText||'(작성 없음)'].join('\n');
       return{payload,txt};};
     dl.onclick=()=>{const {txt}=build();const blob=new Blob(['\ufeff'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='결과_'+USER.name+'_'+P.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
-    sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
+    sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent=reviewMode?'수정 중…':'제출 중…';let sent=false;
       const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
       if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;triggerAiFeedbackNow(payload.subId,payload.academy);}catch(e){}}
       if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_'+USER.name+'_'+P.id+'.json';document.body.appendChild(a);a.click();a.remove();}
-      saveDone(P.id,payload.progress);sub.disabled=false;sub.textContent=sent?'제출 완료!':'제출 완료 (파일 저장됨)';
+      saveDone(P.id,payload.progress);sub.disabled=false;sub.textContent=sent?(reviewMode?'수정 완료!':'제출 완료!'):'제출 완료 (파일 저장됨)';
       msg.innerHTML=sent?'관리자에게 전송되었어요. 홈에서 진도가 갱신돼요.':'서버 주소가 아직 없어 파일로 저장했어요. 이 파일을 선생님께 내면 됩니다. (진도는 저장됨)';
       if(onSubmitted)try{onSubmitted();}catch(e){}
       const hb=el('button','btn blue','← 홈으로');hb.style.marginTop='10px';hb.onclick=()=>{nav.classList.remove('on');viewHome();};b.appendChild(hb);};
@@ -6251,7 +6476,7 @@ function runParagraph(topic){setWide(true);deckInit();
       const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];
         const breakdown=Object.values(g.R).map(r=>r.label+' '+r.score+'/'+r.max).join(' · ');
         const prepStr=fmtDur(prepMs),writeStr=fmtDur(writeMs);
-        const payload={book:lv.book,chapter:'Paragraph Writing',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:genSubId(),datetime:dt,quiz:'',arrange:'',compose:'',task:'Paragraph 제출',final:ST.final||ST.draft,total:g.total+'/100',score:g.total,grade:g.grade,rubric:breakdown,prepTime:prepStr,writeTime:writeStr,progress:'Paragraph '+topic.title+' 완료 · '+g.total+'점('+g.grade+') · 글감학습 '+prepStr+' · 글쓰기 '+writeStr};
+        const payload={book:lv.book,chapter:'Paragraph Writing',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Paragraph Writing',topic.title),datetime:dt,quiz:'',arrange:'',compose:'',task:'Paragraph 제출',final:ST.final||ST.draft,total:g.total+'/100',score:g.total,grade:g.grade,rubric:breakdown,prepTime:prepStr,writeTime:writeStr,progress:'Paragraph '+topic.title+' 완료 · '+g.total+'점('+g.grade+') · 글감학습 '+prepStr+' · 글쓰기 '+writeStr};
         const txt=['English Writing Lab · Paragraph Writing (Hamburger)','주제: '+topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'글감 학습 시간: '+prepStr,'브레인스토밍~글쓰기 시간: '+writeStr,'','[완성본]',ST.final||ST.draft||'(작성 없음)','','── 자동 채점 ──','총점 '+g.total+'/100 ('+g.grade+')',breakdown].join('\n');return{payload,txt};};
       dl.onclick=()=>{const {txt}=build();const blob=new Blob(['\ufeff'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='글_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
       sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
@@ -6378,7 +6603,7 @@ function runArticle(topic){setWide(true);deckInit();
         const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];
         const studyTimeStr=fmtDur(studyMs);
         const prog=`기사요약 조건 ${okConds}/${totalConds} · 학습시간 ${studyTimeStr}`;
-        const payload={book:lv.book,chapter:'Article Reading',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:genSubId(),datetime:dt,
+        const payload={book:lv.book,chapter:'Article Reading',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Article Reading',topic.title),datetime:dt,
           quiz:'',arrange:'',compose:'',task:okConds+'/'+totalConds,final:taskText,total:okConds+'/'+totalConds,score:score,grade:gr,progress:prog,studyTime:studyTimeStr};
         const txt=['English Writing Lab · Article Reading',topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'학습 시간: '+studyTimeStr,'',
           '[요약문]',taskText||'(작성 없음)','','총점 '+score+'/100 ('+gr+') · 조건 '+okConds+'/'+totalConds].join('\n');
@@ -6621,7 +6846,7 @@ function runExam(topic){deckInit();
         // "고쳐 쓴 최종 글"과 함께 볼 수 있게 해요. 빈 값만 있으면(가지를 하나도 안 채웠으면) 아예 안 보내요.
         const mmFilled=Object.keys(mmNotes).some(k=>String(mmNotes[k]||'').trim());
         const gpFilled=Object.keys(gpNotes).some(k=>String(gpNotes[k]||'').trim());
-        const payload={book:lv.book,chapter:'Performance Assessment',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:genSubId(),datetime:dt,
+        const payload={book:lv.book,chapter:'Performance Assessment',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Performance Assessment',topic.title),datetime:dt,
           quiz:'',arrange:'',compose:'',task:okConds+'/'+totalConds,final:taskText,total:okConds+'/'+totalConds,score:score,grade:gr,progress:prog,studyTime:studyTimeStr,
           mindmapNotes:mmFilled?JSON.stringify(mmNotes):'',grammarPractice:gpFilled?JSON.stringify(gpNotes):''};
         const txt=['English Writing Lab · 수행평가 대비',topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'학습 시간: '+studyTimeStr,'',
@@ -7106,7 +7331,7 @@ function runStory(topic){setWide(true);deckInit();
       const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());
         const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];const studyTimeStr=fmtDur(studyMs);
         const prog=`체크리스트 ${okCount}/${total} · 학습시간 ${studyTimeStr}`;
-        const payload={book:lv.book,chapter:'Story Writing',point:topic.title||topic.id,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:genSubId(),datetime:dt,
+        const payload={book:lv.book,chapter:'Story Writing',point:topic.title||topic.id,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Story Writing',topic.title||topic.id),datetime:dt,
           quiz:'',arrange:'',compose:'',task:okCount+'/'+total,final:fullText,total:okCount+'/'+total,score:score,grade:gr,progress:prog,studyTime:studyTimeStr};
         const txt=['English Writing Lab · Story Writing',topic.title||topic.id,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'학습 시간: '+studyTimeStr,'',
           '[작성한 이야기]',fullText||'(작성 없음)','','총점 '+score+'/100 ('+gr+') · 체크 '+okCount+'/'+total].join('\n');
@@ -7250,7 +7475,7 @@ function stopRealtimeContent(){
   }
   const sess=loadSession();
   if(sess&&sess.id){
-    USER=Object.assign({id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isTestAccount:false},sess);
+    USER=Object.assign({id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isAcademyAdmin:false,isTestAccount:false},sess);
     // 새로고침 등으로 로그인 상태가 복원될 때도, 캐시에 저장된 반→레벨 매핑으로 바로 그 학생의 레벨 홈으로 맞춰줘요.
     if(USER.role==='student'){
       const cached=loadRosterCache();
