@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-18p';
+const APP_VERSION='2026-09-18r';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1503,7 +1503,11 @@ function addAiCondCheckButton(container,ul,getText){
       const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'checkConditionsAI',studentId:USER.id,text,conditions:labels})});
       let data=null;try{data=await res.json();}catch(e){}
       if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 조건 확인 실패');
-      items.forEach((li,i)=>{const ok=!!data.results[i];li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';});
+      // ⚠️ 서버 응답은 {result:{results:[{condition,met,note}, ...]}} 형태인데, 예전 코드가
+      // data.results[i](최상위·boolean 취급)를 그대로 읽어서 매번 undefined 배열을 인덱싱하다가
+      // 그대로 오류가 나버렸어요("체크 안 되고 오류남"의 원인). result.results[i].met을 읽도록 고쳤어요.
+      const results=(data.result&&Array.isArray(data.result.results))?data.result.results:[];
+      items.forEach((li,i)=>{const r=results[i];const ok=!!(r&&r.met);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';});
       aiMsg.className='fx ok';aiMsg.textContent='✅ AI가 조건을 다시 확인했어요.';
     }catch(e){
       aiMsg.className='fx no';aiMsg.textContent=String(e.message||e);
@@ -1993,10 +1997,19 @@ function buildWordLookupBody(body){
       const data=await res.json();
       if(!data.ok)throw new Error(data.error||'조회 실패');
       const r=data.result||{};
-      resultBox.innerHTML=
-        '<div style="font-size:18px;font-weight:700">'+escH(r.word||word)+(r.partOfSpeech?' <span style="font-size:13px;color:#888;font-weight:400">('+escH(r.partOfSpeech)+')</span>':'')+'</div>'+
-        '<div style="margin-top:6px">'+escH(r.meaningKo||'')+'</div>'+
-        (r.exampleEn?'<div style="margin-top:10px;padding:10px;background:#f6f5fb;border-radius:8px"><div>'+escH(r.exampleEn)+'</div><div style="color:#888;margin-top:4px">'+escH(r.exampleKo||'')+'</div></div>':'');
+      // ⚠️ 한국어로 검색해도(예: "사과") 각 항목 제목에는 항상 영어 단어/숙어(wordEn)가 나오고, 그
+      // 아래 한국어 뜻(meaningKo)이 나와요 — 예전엔 wordEn 필드가 없어서 한국어로 검색하면 한국어
+      // 단어가 그대로 제목에 나오고, 정작 찾고 싶었던 영어 표현은 안 나오던 문제가 있었어요.
+      // 한국어 뜻 하나에 영어 단어가 여러 개 대응될 수 있어서(예: "타다" → ride/burn/board), 서버가
+      // entries 배열로 여러 개를 내려주면 그걸 전부 카드로 나열해요(옛 응답 형식이면 1개만 있어요).
+      const entries=Array.isArray(r.entries)&&r.entries.length?r.entries:[r];
+      resultBox.innerHTML=entries.map((e,i)=>
+        '<div style="'+(i>0?'margin-top:14px;padding-top:14px;border-top:1px solid rgba(0,0,0,.08)':'')+'">'+
+        '<div style="font-size:18px;font-weight:700">'+escH(e.wordEn||e.word||word)+(e.partOfSpeech?' <span style="font-size:13px;color:#888;font-weight:400">('+escH(e.partOfSpeech)+')</span>':'')+'</div>'+
+        '<div style="margin-top:6px">'+escH(e.meaningKo||'')+'</div>'+
+        (e.exampleEn?'<div style="margin-top:10px;padding:10px;background:#f6f5fb;border-radius:8px"><div>'+escH(e.exampleEn)+'</div><div style="color:#888;margin-top:4px">'+escH(e.exampleKo||'')+'</div></div>':'')+
+        '</div>'
+      ).join('');
     }catch(e){
       resultBox.innerHTML='<div class="fx no">'+escH(e.message||'뜻을 가져오지 못했어요. 다시 시도해주세요.')+'</div>';
     }
@@ -3365,10 +3378,20 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
           const key=norm(e.correct);
           const wrongKey=norm(e.wrong);
           if(!e.correct||!key)return;
-          // wrongKey가 있으면 그걸로, 없으면(옛날 데이터 등) 고친 표현 자체로 묶어요.
-          const groupKey=wrongKey||('__nowrong__'+key);
-          if(!wrongGroups.has(groupKey))wrongGroups.set(groupKey,{wrongKey,corrects:[]});
-          const g=wrongGroups.get(groupKey);
+          // ⚠️ Claude/GPT 중 하나는 "틀린 표현(wrong)"까지 알려주고 다른 하나는 안 알려주는 경우
+          // (또는 같은 문장에 두 첨삭이 조금씩 다른 wrong 텍스트를 줄 때)가 있는데, 예전엔 이럴 때
+          // "고친 표현(correct)"이 완전히 같은데도 서로 다른 groupKey로 갈라져서 체크 목록에
+          // 사실상 같은 조건이 두 번(중복으로) 뜨는 문제가 있었어요("틀린 분야가 여러 개다 보니
+          // 체크가 중복되거나 꼬여있다"). 그래서 새 그룹을 만들기 전에, 이미 같은 고친 표현(correct)을
+          // 갖고 있는 기존 그룹이 있는지 먼저 찾아서 있으면 그 그룹에 합쳐요.
+          let g=null;
+          for(const cand of wrongGroups.values()){ if(cand.corrects.some(c=>norm(c)===key)){ g=cand; break; } }
+          if(!g){
+            const groupKey=wrongKey||('__nowrong__'+key);
+            if(!wrongGroups.has(groupKey))wrongGroups.set(groupKey,{wrongKey,corrects:[]});
+            g=wrongGroups.get(groupKey);
+          }
+          if(wrongKey&&!g.wrongKey)g.wrongKey=wrongKey;
           if(!g.corrects.some(c=>norm(c)===key))g.corrects.push(e.correct);
         });
       });
