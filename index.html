@@ -215,11 +215,16 @@
   .wleft{flex:1 1 55%;min-width:0}.wright{flex:1 1 45%;position:sticky;top:0}
   /* Re-Writing 화면 전용 3분할: 왼쪽(고쳐진 원문 참고자료) · 가운데(다시쓰기, 더 넓게) · 오른쪽(조건 확인) */
   .rewriter{display:flex;gap:18px;align-items:stretch}
-  .rw-left{flex:0 1 35%;min-width:0;display:flex;flex-direction:column}
-  .rw-left-scroll{flex:1;padding-right:4px}
+  /* ⚠️ 예전엔 왼쪽(첨삭 참고자료)·오른쪽(조건 체크리스트)이 자기만의 스크롤 영역이 없어서, 셋 중
+     어디를 스크롤해도 사실상 페이지 전체가 같이 움직이는 것처럼 보였어요(길어지면 서로 밀려나거나
+     같이 스크롤됨). 왼쪽·오른쪽 칸을 화면 높이에 맞춰 고정(sticky)하고 그 안에서만 세로 스크롤이
+     생기게 해서, 가운데 다시쓰기 칸은 그대로 둔 채 왼쪽 참고자료와 오른쪽 조건 목록이 각자 따로
+     스크롤되게 했어요. */
+  .rw-left{flex:0 1 35%;min-width:0;display:flex;flex-direction:column;position:sticky;top:0;align-self:flex-start;max-height:100vh}
+  .rw-left-scroll{flex:1;padding-right:4px;overflow-y:auto;min-height:0}
   .rw-mid{flex:1 1 41%;min-width:0;position:sticky;top:0;display:flex;flex-direction:column;align-self:flex-start}
-  .rw-right{flex:0 1 24%;min-width:220px;position:sticky;top:0;align-self:flex-start}
-  @media(max-width:1000px){.rewriter{flex-direction:column}.rw-left,.rw-mid,.rw-right{width:100%;flex-basis:auto;position:static}.rw-left{display:block}}
+  .rw-right{flex:0 1 24%;min-width:220px;position:sticky;top:0;align-self:flex-start;max-height:100vh;overflow-y:auto}
+  @media(max-width:1000px){.rewriter{flex-direction:column}.rw-left,.rw-mid,.rw-right{width:100%;flex-basis:auto;position:static;max-height:none;overflow-y:visible}.rw-left{display:block}.rw-left-scroll{overflow-y:visible}}
   .slot{margin:9px 0}.slot .sl{font-size:12.5px;font-weight:700;color:#4a4a6a;margin-bottom:3px;display:flex;align-items:center;gap:6px}
   .slot .tag{display:inline-block;width:19px;height:19px;border-radius:50%;border:1.5px solid var(--line-2);text-align:center;line-height:16px;font-size:11px;font-weight:800;color:var(--muted);flex:0 0 auto}
   .slot.ok .tag{background:var(--green);border-color:var(--green);color:#fff}
@@ -254,6 +259,14 @@
   #counter{font-size:13.5px;font-weight:700;color:var(--muted)}#counter b{color:var(--navy)}
   .study-timer{font-size:11px;font-weight:800;color:var(--accent-2);letter-spacing:.02em;min-height:14px}
   @media(max-width:820px){.writer{flex-direction:column}.wright{position:static;width:100%}}
+  /* 글쓰기 화면 왼쪽에 기본으로 떠 있는 단어 뜻 찾기 패널(Re-Writing 제외) 전용 2단 레이아웃이에요.
+     .writer/.wleft/.wright는 이미 "오른쪽(짧은 요약)이 고정, 왼쪽이 스크롤"용으로 쓰고 있어서
+     그대로 재사용하면 반대로 걸려버려요 — 사전(짧음)은 왼쪽에 고정, 글쓰기 칸(길어질 수 있음)은
+     오른쪽에서 페이지와 같이 자연스럽게 스크롤되도록 별도 클래스를 둬요. */
+  .dictwrap{display:flex;gap:18px;align-items:flex-start}
+  .dictleft{flex:0 0 300px;position:sticky;top:0}
+  .dictright{flex:1;min-width:0}
+  @media(max-width:900px){.dictwrap{flex-direction:column}.dictleft{position:static;width:100%;flex-basis:auto}}
   /* hamburger organizer */
   .hb{max-width:600px;margin:10px auto}
   .hb-layer{padding:13px 20px;margin:6px 0;border-radius:16px;box-shadow:var(--shadow-sm)}
@@ -363,7 +376,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-18r';
+const APP_VERSION='2026-09-18u';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1977,7 +1990,8 @@ function escH(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,
  *  허점이 있어서, 서버(lookupWord)에서 AI가 "사전 표제어(단어·숙어)인지 vs 학생이 지어낸 문장인지"를
  *  직접 판단해서 후자면 거절해요(한국어 검색도 동일하게 판단해요). 여기선 통짜 문단 붙여넣기 같은
  *  극단적인 경우만 미리 걸러요. */
-function buildWordLookupBody(body){
+function buildWordLookupBody(body,opts){
+  opts=opts||{};
   const wrap=el('div');
   wrap.appendChild(el('div','rep hint','모르는 단어나 숙어를 입력해서 뜻을 찾아보세요. (직접 지어낸 문장은 AI가 걸러서 거절할 수 있어요 — 문장 번역기가 아니에요.)'));
   const row=el('div');row.style.cssText='display:flex;gap:8px;margin-top:10px';
@@ -2017,12 +2031,26 @@ function buildWordLookupBody(body){
   };
   btn.onclick=doLookup;
   input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doLookup();}});
-  setTimeout(()=>input.focus(),50);
+  // ⚠️ 모달로 열릴 때(버튼을 눌러서 여는 경우)는 바로 타이핑할 수 있게 자동 포커스가 편하지만,
+  // 글쓰기 화면 왼쪽에 항상 떠 있는 패널로 쓸 때(opts.autoFocus===false) 화면이 뜨자마자 이 입력
+  // 칸으로 포커스를 뺏어가면 학생이 정작 쓰려던 글쓰기 칸에 커서가 안 가 있게 되니 그때는 끄고 써요.
+  if(opts.autoFocus!==false)setTimeout(()=>input.focus(),50);
+  return {input,doLookup};
 }
 function makeDictBtn(){
   const btn=el('button','btn ghost','📖 단어 뜻 찾기');btn.type='button';
   btn.onclick=()=>openGenericModal('단어 뜻 찾기',buildWordLookupBody);
   return btn;
+}
+/** 글쓰기 화면 왼쪽에 버튼 없이 기본으로 떠 있는 사전 패널이에요(Re-Writing 제외 — Re-Writing은
+ *  이미 왼쪽이 첨삭 참고자료 자리라 따로 안 둬요). buildWordLookupBody와 같은 기능을 그대로 쓰되,
+ *  모달이 아니라 카드 하나로 화면에 바로 그려요. */
+function buildDictPanel(){
+  const panel=el('div');
+  panel.style.cssText='background:#faf9fb;border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-bottom:14px';
+  panel.appendChild(el('div','fl','📖 단어 뜻 찾기'));
+  buildWordLookupBody(panel,{autoFocus:false});
+  return panel;
 }
 /** 예전에 저장된 이미지가 'drive.google.com/uc?export=view&id=...' 형식이면, 구글이 최근 이 방식의
  *  외부 사이트 삽입(hotlink)을 자주 막아서 <img> 태그 안에서 깨진 이미지로 나와요. 화면에 그릴 때마다
@@ -2532,9 +2560,9 @@ function printSubmissionReport(s,studentName,studentId,academyName,siblings){
   // Re-Writing 제출물이면, 이 글 자체엔 대개 첨삭(틀린 부분)이 안 남아있으니 — 같은 제목(point/chapter)의
   // 가장 최근 원본 제출물을 siblings에서 찾아서 "처음 쓴 글과 지적된 부분"을 위에 함께 보여줘요.
   let original=null;
-  if(s.type==='Re-Writing'&&siblings&&siblings.length){
+  if(submissionTypeLabel(s)==='Re-Writing'&&siblings&&siblings.length){
     const key=s.point||s.chapter||'';
-    const cands=siblings.filter(x=>x!==s&&x.type!=='Re-Writing'&&(x.point||x.chapter||'')===key);
+    const cands=siblings.filter(x=>x!==s&&submissionTypeLabel(x)!=='Re-Writing'&&(x.point||x.chapter||'')===key);
     cands.sort((a,b)=>String(a.datetime||'')<String(b.datetime||'')?1:-1);
     original=cands[0]||null;
   }
@@ -2581,7 +2609,7 @@ function printSubmissionReport(s,studentName,studentId,academyName,siblings){
       '<div class="meta-chip"><b>이름</b>'+escH(studentName||'')+'</div>'+
       '<div class="meta-chip"><b>아이디</b>'+escH(studentId||'')+'</div>'+
       (academyName?('<div class="meta-chip"><b>학원</b>'+escH(academyName)+'</div>'):'')+
-      '<div class="meta-chip"><b>유형</b>'+escH(s.type||'')+'</div>'+
+      '<div class="meta-chip"><b>유형</b>'+escH(submissionTypeLabel(s))+'</div>'+
       '<div class="meta-chip"><b>주제/포인트</b>'+escH(s.point||s.chapter||'')+'</div>'+
       '<div class="meta-chip"><b>제출일시</b>'+escH(s.datetime||'')+'</div>'+
       '<div class="meta-chip score"><b>점수</b>'+escH(String(s.total||'-'))+(s.grade?(' · '+escH(s.grade)+'등급'):'')+'</div>'+
@@ -2806,8 +2834,8 @@ function computeRewritePairs(subs){
     });
     return m;
   };
-  const originals=latestByPoint((subs||[]).filter(s=>s.type!=='Re-Writing'));
-  const rewrites=latestByPoint((subs||[]).filter(s=>s.type==='Re-Writing'));
+  const originals=latestByPoint((subs||[]).filter(s=>submissionTypeLabel(s)!=='Re-Writing'));
+  const rewrites=latestByPoint((subs||[]).filter(s=>submissionTypeLabel(s)==='Re-Writing'));
   const pairs=Object.keys(originals).filter(k=>rewrites[k]).map(k=>({point:k,original:originals[k],rewrite:rewrites[k]}));
   pairs.sort((a,b)=>String(a.original.datetime||'')<String(b.original.datetime||'')?-1:1);
   return pairs;
@@ -2885,7 +2913,7 @@ function printStudentRewriteReport(preview,selectedPoints){
     const rewriteHtml=rewriteSents.length?rewriteSents.map((s)=>'<p>'+escH(s)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
     const scoreLabel=(o.total!=null&&String(o.total).trim()!==''&&String(o.total)!=='-')?(' &nbsp;·&nbsp; 점수 '+escH(String(o.total))+(o.grade?(' ('+escH(o.grade)+'등급)'):'')):'';
     return '<section class="piece'+(pi>0?' pagebreak':'')+'">'+
-      '<h2>'+(pi+1)+'. '+escH(p.point)+' <span class="tag">'+escH(o.type||'')+'</span></h2>'+
+      '<h2>'+(pi+1)+'. '+escH(p.point)+' <span class="tag">'+escH(submissionTypeLabel(o))+'</span></h2>'+
       '<div class="dates">원본 제출 '+escH(o.datetime||'')+' &nbsp;→&nbsp; Re-Writing 제출 '+escH(r.datetime||'')+(errCount?(' &nbsp;·&nbsp; 지적된 부분 '+errCount+'곳'):'')+scoreLabel+'</div>'+
       rubricSectionHtml(parseRubricEval(o.rubric)||autoComputeRubric(o),p.point,(preview&&preview.studentName)||'')+
       '<div class="compare">'+
@@ -3094,7 +3122,7 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
     subs.forEach(s=>{
       const card=el('div');
       card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-bottom:14px;background:#fff';
-      card.innerHTML='<div style="font-weight:800">'+(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+(s.type||'')+' · '+(s.datetime||'')+')</span></div>'+
+      card.innerHTML='<div style="font-weight:800">'+(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+submissionTypeLabel(s)+' · '+(s.datetime||'')+')</span></div>'+
         '<div style="margin-top:6px;color:#6b7684;font-size:13px">점수: '+(s.total||'-')+(s.grade?(' · '+s.grade+'등급'):'')+'</div>';
       const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
       printBtn.onclick=()=>printSubmissionReport(s,USER.name,USER.id,USER.academy,subs);
@@ -3113,7 +3141,7 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
       // 아니에요 — Re-Writing은 이미 첨삭받은 뒤에 고쳐 쓰는 전용 기능이라 여기서 또 다룰 필요가 없어요).
       const EDITABLE_TYPES=['글쓰기','기사요약','수행평가'];
       const noFeedbackYet=!(fb.overall)&&!(aifb.overall||Object.keys(aifb.sentences||{}).length)&&!(aifbGpt.overall||Object.keys(aifbGpt.sentences||{}).length);
-      const canEdit=!!(s.subId&&s.text&&EDITABLE_TYPES.indexOf(s.type)>-1&&noFeedbackYet);
+      const canEdit=!!(s.subId&&s.text&&EDITABLE_TYPES.indexOf(submissionTypeLabel(s))>-1&&noFeedbackYet);
       const viewBox=el('div');
       const renderReadOnly=()=>{
         editingOpen=false;
@@ -3231,31 +3259,31 @@ function viewRewriteList(){setWide(true);mountView(w=>{
       if(data&&data.ok)subs=data.submissions||[];
     }catch(e){}
     loading.remove();
-    const eligibleAll=subs.filter(s=>s.type!=='Re-Writing'&&s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
+    const eligibleAll=subs.filter(s=>submissionTypeLabel(s)!=='Re-Writing'&&s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
     // 같은 컨텐츠(같은 종류+챕터+제목)를 여러 번 제출한 경우(더블클릭 등으로 거의 동시에 두 번
     // 저장된 옛날 기록 포함) 다시쓰기 목록엔 그때마다 한 줄씩 다 나와서 똑같은 카드가 여러 개
     // 보였어요. 어차피 학생 입장에선 "이 컨텐츠, 다시 써보기"가 목적이라 가장 최근 제출물 하나만
     // 보여주면 충분해서, 종류+챕터+제목이 같으면 최신 것만 남겨요.
     const eligibleByKey=new Map();
     eligibleAll.forEach(s=>{
-      const key=(s.type||'')+'|'+(s.chapter||'')+'|'+(s.point||'');
+      const key=submissionTypeLabel(s)+'|'+(s.chapter||'')+'|'+(s.point||'');
       const prev=eligibleByKey.get(key);
       if(!prev||String(s.datetime||'')>String(prev.datetime||''))eligibleByKey.set(key,s);
     });
     const eligible=Array.from(eligibleByKey.values());
     if(!eligible.length){filterWrap.style.display='none';box.appendChild(el('div','hint','아직 다시 써볼 수 있는 글이 없어요. AI 첨삭이 완료된 제출물이 있어야 다시쓰기를 할 수 있어요.'));return;}
     // 실제로 그 학생 글에 있는 컨텐츠 종류만 드롭다운에 보여줘요 (전체 종류를 다 보여주면 선택해도 텅 비는 경우가 생겨서).
-    const presentTypes=new Set(eligible.map(s=>s.type||''));
+    const presentTypes=new Set(eligible.map(s=>submissionTypeLabel(s)));
     EXAM_TYPE_OPTS.filter(([v])=>v===''||presentTypes.has(v)).forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;typeSel.appendChild(o);});
     const renderList=()=>{
       box.innerHTML='';
       const wanted=typeSel.value;
-      const filtered=wanted?eligible.filter(s=>s.type===wanted):eligible;
+      const filtered=wanted?eligible.filter(s=>submissionTypeLabel(s)===wanted):eligible;
       if(!filtered.length){box.appendChild(el('div','hint','해당 종류로 다시 써볼 수 있는 글이 없어요.'));return;}
       filtered.forEach(s=>{
         const card=el('button','btn ghost');
         card.type='button';card.style.cssText='display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;border-radius:12px';
-        card.innerHTML='<div style="font-weight:800">'+escH(s.type||'')+' - '+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+escH(s.datetime||'')+')</span></div>'+
+        card.innerHTML='<div style="font-weight:800">'+escH(submissionTypeLabel(s))+' - '+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+escH(s.datetime||'')+')</span></div>'+
           '<div style="margin-top:4px;color:#6b7684;font-size:13px">이 글을 다시 써보기 →</div>';
         card.onclick=()=>viewRewriteWrite(s);
         box.appendChild(card);
@@ -3375,24 +3403,34 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
       [aiObj,aiGptObj].forEach(entry=>{
         if(!entry||!Array.isArray(entry.errors))return;
         entry.errors.forEach(e=>{
-          const key=norm(e.correct);
           const wrongKey=norm(e.wrong);
-          if(!e.correct||!key)return;
-          // ⚠️ Claude/GPT 중 하나는 "틀린 표현(wrong)"까지 알려주고 다른 하나는 안 알려주는 경우
-          // (또는 같은 문장에 두 첨삭이 조금씩 다른 wrong 텍스트를 줄 때)가 있는데, 예전엔 이럴 때
-          // "고친 표현(correct)"이 완전히 같은데도 서로 다른 groupKey로 갈라져서 체크 목록에
-          // 사실상 같은 조건이 두 번(중복으로) 뜨는 문제가 있었어요("틀린 분야가 여러 개다 보니
-          // 체크가 중복되거나 꼬여있다"). 그래서 새 그룹을 만들기 전에, 이미 같은 고친 표현(correct)을
-          // 갖고 있는 기존 그룹이 있는지 먼저 찾아서 있으면 그 그룹에 합쳐요.
-          let g=null;
-          for(const cand of wrongGroups.values()){ if(cand.corrects.some(c=>norm(c)===key)){ g=cand; break; } }
-          if(!g){
-            const groupKey=wrongKey||('__nowrong__'+key);
-            if(!wrongGroups.has(groupKey))wrongGroups.set(groupKey,{wrongKey,corrects:[]});
-            g=wrongGroups.get(groupKey);
-          }
-          if(wrongKey&&!g.wrongKey)g.wrongKey=wrongKey;
-          if(!g.corrects.some(c=>norm(c)===key))g.corrects.push(e.correct);
+          if(!e.correct)return;
+          // ⚠️ AI가 고친 표현을 하나가 아니라 "A / B"처럼 두 개 이상을 한 correct 문자열에 같이
+          // 담아서 줄 때가 있어요(둘 다 맞는 표현이라는 뜻). 예전엔 이 "A / B" 전체를 통째로 하나의
+          // 정답 문구로 취급해서, 학생이 그 중 하나(A만, 또는 B만)를 써도 "A / B"라는 문자열 그대로는
+          // 안 써졌으니 계속 미통과(✕)로 떴어요. 그래서 "/" 로 나눠서 각각을 별도 후보로 다뤄요 —
+          // 이러면 아래 test()가 "그중 아무거나 하나"만 확인하면 되니까 하나만 써도 통과돼요.
+          const altCorrects=String(e.correct).split('/').map(x=>x.trim()).filter(Boolean);
+          if(!altCorrects.length)return;
+          altCorrects.forEach(altCorrect=>{
+            const key=norm(altCorrect);
+            if(!key)return;
+            // ⚠️ Claude/GPT 중 하나는 "틀린 표현(wrong)"까지 알려주고 다른 하나는 안 알려주는 경우
+            // (또는 같은 문장에 두 첨삭이 조금씩 다른 wrong 텍스트를 줄 때)가 있는데, 예전엔 이럴 때
+            // "고친 표현(correct)"이 완전히 같은데도 서로 다른 groupKey로 갈라져서 체크 목록에
+            // 사실상 같은 조건이 두 번(중복으로) 뜨는 문제가 있었어요("틀린 분야가 여러 개다 보니
+            // 체크가 중복되거나 꼬여있다"). 그래서 새 그룹을 만들기 전에, 이미 같은 고친 표현을
+            // 갖고 있는 기존 그룹이 있는지 먼저 찾아서 있으면 그 그룹에 합쳐요.
+            let g=null;
+            for(const cand of wrongGroups.values()){ if(cand.corrects.some(c=>norm(c)===key)){ g=cand; break; } }
+            if(!g){
+              const groupKey=wrongKey||('__nowrong__'+key);
+              if(!wrongGroups.has(groupKey))wrongGroups.set(groupKey,{wrongKey,corrects:[]});
+              g=wrongGroups.get(groupKey);
+            }
+            if(wrongKey&&!g.wrongKey)g.wrongKey=wrongKey;
+            if(!g.corrects.some(c=>norm(c)===key))g.corrects.push(altCorrect);
+          });
         });
       });
       if(!hasErrors&&!c){ plainBuf.push(sent); return; }
@@ -3468,7 +3506,23 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
 
 /* ================= 교사 대시보드 ================= */
 function uniqSorted(arr){return Array.from(new Set(arr.filter(v=>v!=null&&v!=='').map(v=>String(v)))).sort((a,b)=>a.localeCompare(b,'ko'));}
-const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기','글쓰기'],['기사요약','기사요약'],['수행평가','수행평가'],['Re-Writing','Re-Writing']];
+const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기','글쓰기'],['기사요약','기사요약'],['수행평가','수행평가'],['Story Writing','Story Writing'],['Re-Writing','Re-Writing']];
+/** ⚠️ 예전 Apps Script 시절 제출물엔 "유형(종류)"이 s.type 필드에 저장돼 있었는데, 지금
+ *  시스템(Firebase)의 새 제출물은 이 필드를 아예 안 채워요(대신 chapter로 구분해요) — 그래서
+ *  "영역" 칸이 첨삭관리·리포트·내 제출 내역 등 여러 화면에서 전부 '-'(빈 칸)으로 나오고, "제출한
+ *  글 수정하기"(첨삭 전 수정) 같은 type 값에 의존하던 기능도 전부 조용히 막혀 있었어요. s.type이
+ *  있으면(옛날 마이그레이션 데이터) 그대로 쓰고, 없으면 chapter로 판단해서 채워줘요. */
+function submissionTypeLabel(s){
+  if(s&&s.type)return s.type;
+  const chapter=String((s&&s.chapter)||'');
+  if(!chapter)return '';
+  if(chapter==='Rewriting')return 'Re-Writing';
+  if(chapter==='Paragraph Writing')return '글쓰기';
+  if(chapter==='Article Reading')return '기사요약';
+  if(chapter==='Performance Assessment')return '수행평가';
+  if(chapter==='Story Writing')return 'Story Writing';
+  return '문법드릴';
+}
 function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
   const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap';
   titleRow.appendChild(el('h1','title',USER.name+' 선생님'+(USER.isAdmin?' · 전체 학원 관리자':(USER.academy?' · '+USER.academy:''))));
@@ -3677,7 +3731,7 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
     const render=()=>{
       Array.from(box.children).slice(1).forEach(c=>c.remove());
       const fa=fAcademy?fAcademy.sel.value:'',fs=fSchool.sel.value,fg=fGrade.sel.value,fc=fCls.sel.value,ft=fType.sel.value;
-      const filtered=all.filter(s=>(!fa||s.academy===fa)&&(!fs||s.school===fs)&&(!fg||s.schoolGrade===fg)&&(!fc||s.cls===fc)&&(!ft||s.type===ft));
+      const filtered=all.filter(s=>(!fa||s.academy===fa)&&(!fs||s.school===fs)&&(!fg||s.schoolGrade===fg)&&(!fc||s.cls===fc)&&(!ft||submissionTypeLabel(s)===ft));
       const counts={};
       filtered.forEach(s=>{
         if(!s.id)return;
@@ -3762,7 +3816,7 @@ function viewGradingManage(opts){setWide(true);mountView(w=>{
       const fa=fAcademy?fAcademy.sel.value:'',ft=fType.sel.value,fst=fStatus.sel.value,fte=fTeacher.sel.value,ff=fFrom.inp.value,ftt=fTo.inp.value;
       let filtered=all.filter(s=>{
         if(fa&&s.academy!==fa)return false;
-        if(ft&&s.type!==ft)return false;
+        if(ft&&submissionTypeLabel(s)!==ft)return false;
         const done=hasFeedback(s);
         if(fst==='pending'&&done)return false;
         if(fst==='done'&&!done)return false;
@@ -3794,7 +3848,7 @@ function viewGradingManage(opts){setWide(true);mountView(w=>{
         tr.appendChild(td('<span style="font-weight:800;color:'+(done?'#059669':'#c2412f')+'">'+(done?'첨삭완료':'첨삭대상')+'</span>'));
         if(USER.isAdmin)tr.appendChild(td(escH(s.academy||'-')));
         tr.appendChild(td('<b>'+escH(s.name||s.id||'')+'</b><div style="color:#6b7684;font-size:11.5px">('+escH(s.id||'')+')</div>'));
-        tr.appendChild(td(escH(s.type||'-')));
+        tr.appendChild(td(escH(submissionTypeLabel(s)||'-')));
         tr.appendChild(td(escH(s.point||s.chapter||'-')));
         tr.appendChild(td(escH([s.school,s.schoolGrade&&(s.schoolGrade+'학년'),s.cls].filter(Boolean).join(' · ')||'-')));
         const teacherTd=el('td');teacherTd.style.cssText='padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);vertical-align:top';
@@ -4011,7 +4065,7 @@ function viewReportStudentSubmissions(studentId,studentName,subs,backFn){setWide
     const row=el('div');
     row.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(0,0,0,.06)';
     const info=el('div');
-    info.innerHTML='<div style="font-weight:700">'+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:12.5px">('+escH(s.type||'')+')</span></div>'+
+    info.innerHTML='<div style="font-weight:700">'+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:12.5px">('+escH(submissionTypeLabel(s))+')</span></div>'+
       '<div style="color:#6b7684;font-size:12.5px;margin-top:2px">'+escH(s.datetime||'')+(s.total!=null&&String(s.total).trim()!==''&&String(s.total)!=='-'?(' · 점수 '+escH(String(s.total))+(s.grade?(' ('+escH(s.grade)+'등급)'):'')):'')+'</div>';
     row.appendChild(info);
     const rptBtn=el('button','btn blue','🖨 리포트');rptBtn.type='button';rptBtn.style.cssText='padding:6px 14px;font-size:12.5px;white-space:nowrap;flex:0 0 auto';
@@ -5737,7 +5791,7 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
   setWide(true);mountView(w=>{
   const bk=el('button','backbtn',backFn?'◀ 뒤로':'◀ 제출 목록');bk.onclick=backFn||(()=>viewTeacherStudent(studentId,studentName));w.appendChild(bk);
   w.appendChild(el('h1','title',studentName+' · '+(s.point||s.chapter||'')));
-  w.appendChild(el('div','hint','('+(s.type||'')+' · '+(s.datetime||'')+')'));
+  w.appendChild(el('div','hint','('+submissionTypeLabel(s)+' · '+(s.datetime||'')+')'));
   // 같은 컨텐츠를 여러 번 제출한 경우, 지금 보는 것 말고 다른 제출물도 눌러서 볼 수 있게
   // "이전 제출 보기" 토글을 보여줘요. (siblings는 최신순으로 정렬돼 있어요.)
   if(siblings&&siblings.length>1){
@@ -5748,7 +5802,7 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
     others.forEach(o=>{
       const row=el('button','btn ghost');row.type='button';
       row.style.cssText='display:block;width:100%;text-align:left;padding:10px 14px;margin-bottom:8px;border-radius:10px';
-      row.innerHTML='<div style="font-weight:700">'+escH(o.datetime||'')+(o.type?(' <span style="font-weight:800;color:'+(o.type==='Re-Writing'?'#059669':'#4338ca')+'">· '+escH(o.type)+'</span>'):'')+'</div>'+
+      row.innerHTML='<div style="font-weight:700">'+escH(o.datetime||'')+(submissionTypeLabel(o)?(' <span style="font-weight:800;color:'+(submissionTypeLabel(o)==='Re-Writing'?'#059669':'#4338ca')+'">· '+escH(submissionTypeLabel(o))+'</span>'):'')+'</div>'+
         '<div style="margin-top:2px;color:#6b7684;font-size:13px">점수: '+escH(String(o.total||'-'))+(o.grade?(' · '+escH(o.grade)+'등급'):'')+(o.feedback?' · 첨삭 있음':'')+'</div>';
       row.onclick=()=>viewTeacherSubmissionDetail(o,studentId,studentName,siblings,backFn);
       listWrap.appendChild(row);
@@ -5765,14 +5819,14 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
       // 원본 글(Re-Writing 자체가 아니고, 첨삭을 받아서 다시 쓸 수 있는 글)이면, 같은 컨텐츠의 다른
       // 제출물(siblings — teacherPreviewSubsFor가 Re-Writing도 같은 제목으로 이미 함께 묶어줘요) 중에
       // type이 'Re-Writing'인 게 있는지 확인해서, 그 학생이 이 글로 다시쓰기를 했는지 배지로 바로 보여줘요.
-      if(s.type!=='Re-Writing'){
+      if(submissionTypeLabel(s)!=='Re-Writing'){
         const rewriteEligible=!!(s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
-        const rewriteDone=(siblings||[]).some(x=>x.type==='Re-Writing');
+        const rewriteDone=(siblings||[]).some(x=>submissionTypeLabel(x)==='Re-Writing');
         if(rewriteEligible||rewriteDone){
           // 예전엔 이 배지가 그냥 글자만 있는 <div>라서, "Re-Writing 완료함"이라고는 뜨는데 정작 그
           // 다시 쓴 글이 어디 있는지 갈 방법이 없었어요(직접 "🕓 이전 제출 보기"를 펼쳐서 찾아야 했어요).
           // 완료된 경우엔 눌러서 바로 그 Re-Writing 제출물 상세로 이동하게 버튼으로 바꿨어요.
-          const rewriteSubs=(siblings||[]).filter(x=>x.type==='Re-Writing').sort((a,b)=>String(b.datetime||'').localeCompare(String(a.datetime||'')));
+          const rewriteSubs=(siblings||[]).filter(x=>submissionTypeLabel(x)==='Re-Writing').sort((a,b)=>String(b.datetime||'').localeCompare(String(a.datetime||'')));
           const rwBadge=el(rewriteDone?'button':'div');
           if(rewriteDone)rwBadge.type='button';
           rwBadge.style.cssText='margin-top:8px;display:inline-block;padding:4px 12px;border-radius:999px;font-size:12.5px;font-weight:700;border:none;'+
@@ -5837,14 +5891,14 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
       const aifb=parseAiFeedback(s.aiFeedback);
       const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
       const sentInputs=[];
-      if(s.type==='Re-Writing'){
+      if(submissionTypeLabel(s)==='Re-Writing'){
         // Re-Writing 제출물 자체엔 보통 첨삭(틀린 부분)이 안 남아있어요 — 그 첨삭은 원본 글에 달려있어요.
         // 그래서 여긴 "문장별 코멘트 남기기" 편집 UI 대신, 인쇄 리포트(printSubmissionReport)와 똑같은
         // "처음 쓴 글(지적된 부분) → 고쳐 쓴 최종 글" 비교 레이아웃을 화면에도 그대로 보여줘요.
         let original=null;
         if(siblings&&siblings.length){
           const key=s.point||s.chapter||'';
-          const cands=siblings.filter(x=>x!==s&&x.type!=='Re-Writing'&&(x.point||x.chapter||'')===key);
+          const cands=siblings.filter(x=>x!==s&&submissionTypeLabel(x)!=='Re-Writing'&&(x.point||x.chapter||'')===key);
           cands.sort((a,b)=>String(a.datetime||'')<String(b.datetime||'')?1:-1);
           original=cands[0]||null;
         }
@@ -6181,8 +6235,9 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
     b.appendChild(el('h1','title','조건에 맞게 글쓰기'));
     const bannerSlot=el('div');b.appendChild(bannerSlot);
     b.appendChild(el('div','lead',autoFormatPrompt(P.task.prompt)));
-    b.appendChild(makeDictBtn());
-    const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';b.appendChild(ta);
+    const dictWrap=el('div','dictwrap');const dictLeft=el('div','dictleft');const right=el('div','dictright');
+    dictLeft.appendChild(buildDictPanel());dictWrap.appendChild(dictLeft);dictWrap.appendChild(right);b.appendChild(dictWrap);
+    const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';right.appendChild(ta);
     // "조건 영작"은 개별 문법 포인트마다 다른 조건(문법 사용 등) 말고도, Pattern Drill 전체에 공통으로
     // 적용되는 최소 분량 조건(전체 단어 수·전체 문장 수)이 항상 함께 붙어요 — 선생님이 매번 "과제 조건"에
     // 분량 조건을 직접 추가하지 않아도 자동으로 붙게요. 기준 숫자는 이 코드에 직접 넣지 않고, 스프레드시트
@@ -6194,13 +6249,13 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
       {label:'전체 단어 수 '+DRILL_MIN_WORDS+'단어 이상',test:t=>countWords(t)>=DRILL_MIN_WORDS},
       {label:'전체 문장 수 '+DRILL_MIN_SENTENCES+'개 이상',test:t=>sc(t)>=DRILL_MIN_SENTENCES}
     ]);
-    const ul=el('ul','conds');drillConds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});b.appendChild(ul);
-    const fx=el('div','fx');b.appendChild(fx);
-    addAiCondCheckButton(b,ul,()=>ta.value);
+    const ul=el('ul','conds');drillConds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});right.appendChild(ul);
+    const fx=el('div','fx');right.appendChild(fx);
+    addAiCondCheckButton(right,ul,()=>ta.value);
     const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
     const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
-    const saveMsg=el('span','fx');saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);b.appendChild(saveRow);
-    b.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 판단이 애매한 문법 조건은 "🤖 AI로 조건 확인하기"를 눌러 다시 확인할 수 있어요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요(입력하는 동안 자동으로도 저장돼요).'));
+    const saveMsg=el('span','fx');saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);right.appendChild(saveRow);
+    right.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 판단이 애매한 문법 조건은 "🤖 AI로 조건 확인하기"를 눌러 다시 확인할 수 있어요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요(입력하는 동안 자동으로도 저장돼요).'));
     const checkConds=()=>{let all=true;ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';if(!ok)all=false;});
       RES.taskDone=all;RES.taskText=ta.value;
       if(!ta.value.trim()){fx.className='fx';fx.textContent='';}
@@ -6609,10 +6664,12 @@ function runParagraph(topic){setWide(true);deckInit();
     b.appendChild(el('div','hint','오른쪽 <b>내 아이디어</b>를 참고해서, 각 뒷받침을 <b>소개 → 설명</b> 순으로 이어 <b>10문장 이상</b>의 문단을 완성해요.'));
     const btnRow5=el('div');btnRow5.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px';
     const bankBtn=el('button','btn ghost','표현 은행 보기');bankBtn.type='button';bankBtn.onclick=()=>openExprModal(topic);btnRow5.appendChild(bankBtn);
-    btnRow5.appendChild(makeDictBtn());
     b.appendChild(btnRow5);
     const bannerSlot=el('div');b.appendChild(bannerSlot);
     const wrap=el('div','writer');const left=el('div','wleft');const right=el('div','wright');
+    // 이 화면은 이미 왼쪽(글쓰기)·오른쪽(브레인스토밍 참고자료) 2단이라, 사전은 버튼으로 따로 열지
+    // 않고 왼쪽 칸 맨 위에 기본으로 붙여요(Re-Writing 제외 요청에 따라 다른 글쓰기 화면들도 동일).
+    left.appendChild(buildDictPanel());
     const ta=el('textarea','in');ta.style.minHeight='260px';ta.placeholder=topic.sample[0].en+' First, ... It is because ...';left.appendChild(ta);
     draftTaRef=ta;
     const counter=el('div','hint');left.appendChild(counter);
@@ -6656,11 +6713,13 @@ function runParagraph(topic){setWide(true);deckInit();
     const checks=[['시제 일치 (Tense)','시제가 자연스럽게 이어지나요?'],['주어–동사 수 일치','He/She 뒤 동사, is/are 확인'],['관사·복수형','a/an/the, -s 확인'],['문장부호·대문자','첫 글자 대문자, 끝에 마침표(.)']];
     checks.forEach((c,i)=>{const ch=el('div','check','<span class="cb"></span><span>'+c[0]+'<small>'+c[1]+'</small></span>');ch.onclick=()=>{ch.classList.toggle('on');const on=ch.classList.contains('on');ch.querySelector('.cb').textContent=on?'✓':'';ST.proof=ST.proof||[];if(on&&!ST.proof.includes(i))ST.proof.push(i);if(!on)ST.proof=ST.proof.filter(x=>x!==i);};b.appendChild(ch);});
     const flags=el('div');flags.style.marginTop='10px';b.appendChild(flags);const fbtn=el('button','btn ghost','자동 점검');fbtn.style.marginTop='10px';b.appendChild(fbtn);
-    b.appendChild(el('div','fl','완성본 (고친 글)'));b.appendChild(makeDictBtn());const ta=el('textarea','in');ta.placeholder='교정한 완성본을 여기에 써요.';b.appendChild(ta);
+    const dictWrap=el('div','dictwrap');const dictLeft=el('div','dictleft');const finalRight=el('div','dictright');
+    dictLeft.appendChild(buildDictPanel());dictWrap.appendChild(dictLeft);dictWrap.appendChild(finalRight);b.appendChild(dictWrap);
+    finalRight.appendChild(el('div','fl','완성본 (고친 글)'));const ta=el('textarea','in');ta.placeholder='교정한 완성본을 여기에 써요.';finalRight.appendChild(ta);
     finalTaRef=ta;
     const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
     const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
-    const saveMsg=el('span','fx');finalSaveMsgRef=saveMsg;saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);b.appendChild(saveRow);
+    const saveMsg=el('span','fx');finalSaveMsgRef=saveMsg;saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);finalRight.appendChild(saveRow);
     const autoflag=()=>{const t=(ta.value.trim()||ST.draft||'');flags.innerHTML='';const issues=[];const parts=t.split(/(?<=[.?!])\s+/).map(x=>x.trim()).filter(Boolean);
       parts.forEach(p=>{if(p&&/^[a-z]/.test(p))issues.push('첫 글자 대문자로: “'+p.slice(0,22)+'…”');});
       if(/(^|[^A-Za-z])i([^A-Za-z]|$)/.test(t))issues.push("'i' 는 항상 대문자 I 로!");
@@ -6761,11 +6820,12 @@ function runArticle(topic){setWide(true);deckInit();
     leftCol.appendChild(el('div',null,'<b>📰 기사 본문</b>'));
     if(topic.source)leftCol.appendChild(el('div','hint',topic.source));
     const bodyRef=el('div');bodyRef.style.cssText='white-space:pre-line;line-height:1.8;margin-top:8px;font-size:14.5px';bodyRef.textContent=topic.body;leftCol.appendChild(bodyRef);
+    // 왼쪽 칸은 이미 기사 본문 자리라서, 사전은 버튼으로 따로 열지 않고 그 아래에 기본으로 붙여요.
+    const dictHolder=el('div');dictHolder.style.marginTop='16px';dictHolder.appendChild(buildDictPanel());leftCol.appendChild(dictHolder);
     const rightCol=el('div');rightCol.style.cssText='flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:10px';
     cols.appendChild(leftCol);cols.appendChild(rightCol);
     b.appendChild(cols);
     rightCol.appendChild(el('div','lead',autoFormatPrompt(topic.prompt)));
-    rightCol.appendChild(makeDictBtn());
     const bannerSlot=el('div');rightCol.appendChild(bannerSlot);
     const ta=el('textarea','in');ta.placeholder='여기에 영어로 요약을 써요.';rightCol.appendChild(ta);
     const copyWarn=el('div','fx no');copyWarn.style.cssText='display:none';rightCol.appendChild(copyWarn);
@@ -6952,14 +7012,14 @@ function runExam(topic){deckInit();
       evalBox.innerHTML='<b>📋 평가 영역</b>'+renderEvalAreas(topic.evalCriteria);
       left.appendChild(evalBox);
     }
-    const toolBtnRow=el('div');toolBtnRow.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
-    toolBtnRow.appendChild(makeDictBtn());
+    left.appendChild(buildDictPanel());
     if(frameItems.length){
+      const toolBtnRow=el('div');toolBtnRow.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
       const frameBtn=el('button','btn ghost','✏️ 글의 뼈대 잡기 보기');frameBtn.type='button';
       frameBtn.onclick=()=>openGenericModal('✏️ 글의 뼈대 잡기 — '+(topic.title||''),body=>buildFrameCardsInto(body));
       toolBtnRow.appendChild(frameBtn);
+      left.appendChild(toolBtnRow);
     }
-    left.appendChild(toolBtnRow);
     const bannerSlot=el('div');left.appendChild(bannerSlot);
     const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';left.appendChild(ta);
     const ul=el('ul','conds');topic.conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});left.appendChild(ul);
@@ -7377,7 +7437,7 @@ function runStory(topic){setWide(true);deckInit();
       };
       connBar.appendChild(cb);
     });
-    b.appendChild(makeDictBtn());
+    b.appendChild(buildDictPanel());
     b.appendChild(connBar);
     // 그림을 한 장씩 크게 보여주고 화살표(◀ ▶)로 넘겨가며 쓰도록 바꿨어요 — 그림이 작게 여러 장
     // 나열돼 있으면 잘려 보이기도 하고 한 번에 집중하기 어려워서예요. 그림은 자르지 않고(object-fit:contain)
