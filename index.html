@@ -363,7 +363,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-18l';
+const APP_VERSION='2026-09-18m';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3429,7 +3429,9 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
     const payload={book:'',chapter:'Rewriting',point:sub.point||sub.chapter||'',name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Rewriting',sub.point||sub.chapter||''),datetime:dt,
       final:ta.value,progress:'원본 제출: '+(sub.datetime||'')};
     let sent=false;
-    if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;triggerAiFeedbackNow(payload.subId,payload.academy);}catch(e){}}
+    // Re-Writing(다시 쓰기)은 이미 한 번 첨삭받은 글을 고쳐 쓰는 것뿐이라 AI 첨삭이 필요 없어요 —
+    // 그래서 다른 제출 화면들과 달리 triggerAiFeedbackNow를 부르지 않아요.
+    if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;}catch(e){}}
     subBtn.disabled=false;subBtn.textContent=sent?'제출 완료!':prev;
     if(sent){
       fx.className='fx ok';fx.textContent='제출했어요! 선생님이 다시 확인할 수 있어요.';
@@ -3809,20 +3811,39 @@ function viewGradingManage(opts){setWide(true);mountView(w=>{
  * (학생이 제출하면 서버가 자동으로 만들거나, 선생님이 "지금 생성하기"·"한번에 생성"으로
  * 직접 만든 것 전부 포함 — 결과적으로 aiFeedback/aiFeedbackGpt가 채워진 글이면 다 세요).
  * 컨텐츠 종류는 s.type 필드가 아니라(새 제출물엔 이 필드가 안 채워져 있어요) chapter 값으로
- * 구분해요 — Paragraph Writing/Article Reading/Performance Assessment/Story Writing/Rewriting은
- * 고정된 챕터 이름이고, 그 외(문법드릴은 유닛마다 챕터 값이 달라요)는 전부 문법드릴로 묶어요. */
+ * 구분해요 — Paragraph Writing/Article Reading/Performance Assessment/Story Writing은
+ * 고정된 챕터 이름이고, 그 외(문법드릴은 유닛마다 챕터 값이 달라요)는 전부 문법드릴로 묶어요.
+ * Re-Writing(다시 쓰기)은 AI 첨삭 자체가 없는 영역이라(이미 한 번 첨삭받은 글을 고쳐 쓰는
+ * 것뿐이라) 통계에서 아예 빼요 — render()의 scoped 필터에서 chapter==='Rewriting'을 걸러내요. */
 const AI_STATS_TYPE_DEFS=[
   {key:'drill',label:'문법드릴',test:s=>!['Rewriting','Paragraph Writing','Article Reading','Performance Assessment','Story Writing'].includes(String(s.chapter||''))},
   {key:'paragraph',label:'Paragraph Writing',test:s=>s.chapter==='Paragraph Writing'},
   {key:'article',label:'Article Reading',test:s=>s.chapter==='Article Reading'},
   {key:'performance',label:'Performance Assessment',test:s=>s.chapter==='Performance Assessment'},
-  {key:'story',label:'Story Writing',test:s=>s.chapter==='Story Writing'},
-  {key:'rewriting',label:'Re-Writing',test:s=>s.chapter==='Rewriting'}
+  {key:'story',label:'Story Writing',test:s=>s.chapter==='Story Writing'}
 ];
 function viewAiStats(){setWide(true);mountView(w=>{
   const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
   w.appendChild(el('h1','title','📊 첨삭 통계'));
-  w.appendChild(el('div','hint','실제로 AI 첨삭이 만들어진 글 수를 학원별·컨텐츠 종류별로 합쳐서 월 단위로 보여줘요(학생별로는 안 나눠요). 학생이 글 쓰는 중간에 누르는 "AI로 조건 확인하기"는 포함되지 않아요.'));
+  w.appendChild(el('div','hint','실제로 AI 첨삭이 만들어진 글 수를 학원별·컨텐츠 종류별로 합쳐서 월 단위로 보여줘요(학생별로는 안 나눠요). 학생이 글 쓰는 중간에 누르는 "AI로 조건 확인하기"는 포함되지 않아요. Re-Writing(다시 쓰기)은 AI 첨삭 대상이 아니라서 이 통계에도 포함되지 않아요.'));
+  // Re-Writing은 AI 첨삭 대상이 아닌데, 예전엔 실수로 첨삭이 만들어져 붙어있던 글들이 있을 수
+  // 있어요(그래서 예전엔 통계·첨삭관리 화면에 "첨삭완료"로 잘못 보였어요). 한 번 눌러서 그런
+  // 것들을 정리할 수 있게 버튼을 둬요 — 이미 깨끗하면 그냥 "지울 게 없다"고만 나와요.
+  const cleanupRow=el('div');cleanupRow.style.cssText='margin:8px 0 0';
+  const cleanupBtn=el('button','btn ghost','🧹 Re-Writing 잘못 붙은 첨삭 정리하기');cleanupBtn.type='button';cleanupBtn.style.cssText='padding:6px 12px;font-size:12.5px';
+  const cleanupMsg=el('span','fx');cleanupMsg.style.marginLeft='8px';
+  cleanupRow.appendChild(cleanupBtn);cleanupRow.appendChild(cleanupMsg);
+  w.appendChild(cleanupRow);
+  cleanupBtn.onclick=async()=>{
+    cleanupBtn.disabled=true;const prevLabel=cleanupBtn.textContent;cleanupBtn.textContent='정리하는 중…';cleanupMsg.className='fx';cleanupMsg.textContent='';
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'clearRewritingFeedback',academy:USER.isAdmin?'':(USER.academy||''),role:'teacher',requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||''})});
+      const data=await res.json();
+      if(data&&data.ok){cleanupMsg.className='fx ok';cleanupMsg.textContent=data.cleared>0?(data.cleared+'건 정리했어요.'):'지울 게 없어요(이미 깨끗해요).';}
+      else{cleanupMsg.className='fx no';cleanupMsg.textContent=(data&&data.error)||'정리하지 못했어요.';}
+    }catch(e){cleanupMsg.className='fx no';cleanupMsg.textContent='정리하지 못했어요. 인터넷 연결을 확인하세요.';}
+    cleanupBtn.disabled=false;cleanupBtn.textContent=prevLabel;
+  };
   const now=new Date();
   const navRow=el('div');navRow.style.cssText='display:flex;align-items:flex-end;gap:10px;margin:14px 0;flex-wrap:wrap';
   const prevBtn=el('button','btn ghost','◀');prevBtn.type='button';prevBtn.style.cssText='padding:6px 12px;height:36px';
@@ -3867,7 +3888,7 @@ function viewAiStats(){setWide(true);mountView(w=>{
       const y=Number(ySel.value),m=Number(mSel.value);
       const ym=y+'-'+String(m).padStart(2,'0');
       const wantAcademy=fAcademySel?fAcademySel.value:'';
-      const scoped=all.filter(s=>hasFeedback(s)&&String(s.datetime||'').slice(0,7)===ym&&(!wantAcademy||String(s.academy||'')===wantAcademy));
+      const scoped=all.filter(s=>hasFeedback(s)&&s.chapter!=='Rewriting'&&String(s.datetime||'').slice(0,7)===ym&&(!wantAcademy||String(s.academy||'')===wantAcademy));
       if(!scoped.length){tableWrap.appendChild(el('div','hint',y+'년 '+m+'월에는 AI 첨삭이 완료된 글이 없어요.'));return;}
       // 학생별로 한 줄씩 보여주는 게 아니라, 학원별로 컨텐츠 종류마다 몇 번 AI 첨삭을 썼는지만
       // 합쳐서 보여줘요(요청: "학원별로 콘텐츠별로 몇 회 사용했나만 보이는 거 — 애들별은 안 보여").
