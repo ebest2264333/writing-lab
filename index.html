@@ -376,7 +376,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-18v';
+const APP_VERSION='2026-09-21a';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3481,6 +3481,18 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
     addAiCondCheckButton(wright,rewriteUl,()=>ta.value);
   }
   const fx=el('div','fx');wmid.appendChild(fx);
+  // ⚠️ 다시 쓰기를 다 마친 뒤 소리 내어 읽고 녹음할 수 있게, 다시 쓴 글을 그대로 보여주는 읽기 전용
+  // 박스를 녹음 위젯 바로 위에 둬요 — 위쪽의 입력창(ta)은 계속 수정할 수 있는 칸이라 "이게 최종본이다"
+  // 라는 느낌이 약해서, 완성한 글만 따로 깔끔하게 보여줘야 아이들이 그걸 보면서 편하게 읽고 녹음할 수
+  // 있어요. 입력하는 동안 실시간으로 같이 업데이트돼요.
+  wmid.appendChild(el('div','fl','🔊 녹음할 때 아래 완성한 글을 보면서 읽어보세요'));
+  const readBox=el('div');readBox.style.cssText='margin-top:6px;padding:12px 14px;background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:10px;white-space:pre-wrap;line-height:1.7;font-size:14.5px;max-height:260px;overflow:auto';
+  wmid.appendChild(readBox);
+  const updateReadBox=()=>{readBox.textContent=ta.value.trim()||'(아직 작성한 내용이 없어요 — 위에서 먼저 다시 써보세요.)';};
+  ta.addEventListener('input',updateReadBox);
+  updateReadBox();
+  const rec=createRecorderWidget();
+  wmid.appendChild(rec.el);
   const subBtn=el('button','btn green','다시 쓴 글 제출하기');subBtn.type='button';subBtn.style.marginTop='10px';
   wmid.appendChild(subBtn);
   subBtn.onclick=async()=>{
@@ -3490,6 +3502,7 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
     const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());
     const payload={book:'',chapter:'Rewriting',point:sub.point||sub.chapter||'',name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Rewriting',sub.point||sub.chapter||''),datetime:dt,
       final:ta.value,progress:'원본 제출: '+(sub.datetime||'')};
+    const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
     let sent=false;
     // Re-Writing(다시 쓰기)은 이미 한 번 첨삭받은 글을 고쳐 쓰는 것뿐이라 AI 첨삭이 필요 없어요 —
     // 그래서 다른 제출 화면들과 달리 triggerAiFeedbackNow를 부르지 않아요.
@@ -6741,7 +6754,10 @@ function runParagraph(topic){setWide(true);deckInit();
   slides[slides.length-1]._collect=function(){this._box._save&&this._box._save();doAutosavePara();};
   // 8) 점수 + 제출
   slideAdd(b=>{b.appendChild(el('span','badge green','STEP 8 · Score & Submit'));b.appendChild(el('h1','title','자동 채점 결과'));
-    const rec=createRecorderWidget(); // 재진입해도 녹음 내용이 유지되도록 _paint() 밖(한 번만)에서 만들어요.
+    // ⚠️ 원래는 여기(Paragraph Writing = "글쓰기")에도 녹음 위젯이 있었는데, 선생님 요청으로
+    // 뺐어요(Re-Writing 화면에만 녹음이 있으면 돼요). rec.el을 안 붙이니 화면엔 안 보이지만,
+    // getAudio()는 항상 null을 주는 안전한 더미로 남겨둬서 아래 제출 코드는 그대로 둘 수 있어요.
+    const rec={el:null,getAudio:async()=>null};
     b._paint=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());const text=ST.final||ST.draft||'';const g=gradeHb(text,topic);ST.score=g;
       const hero=el('div','rep scorehero');hero.innerHTML='<div class="big">'+g.total+'<small>/100</small></div><div class="grade '+g.grade+'">'+g.grade+' 등급</div><div class="hint">'+g.band+'</div>';b.appendChild(hero);
       const prepMs=(brainstormStart||writeEnd||Date.now())-paraStart;const writeMs=(writeEnd||Date.now())-(brainstormStart||writeEnd||Date.now());
@@ -6750,7 +6766,6 @@ function runParagraph(topic){setWide(true);deckInit();
       const rt2=el('div','rrow');rt2.innerHTML='<span class="rl">브레인스토밍~글쓰기 시간</span><span class="rn">'+fmtDur(writeMs)+'</span>';timeRows.appendChild(rt2);
       b.appendChild(timeRows);
       const rows=el('div','rep');Object.values(g.R).forEach(r=>{const rr=el('div','rrow');rr.innerHTML='<span class="rl">'+r.label+'</span><span class="rn">'+r.score+' / '+r.max+'</span>';const bar=el('div','bar');const sp=el('span');sp.style.width=(r.score/r.max*100)+'%';bar.appendChild(sp);rr.appendChild(bar);rr.appendChild(el('div','rfb',r.fb));rows.appendChild(rr);});b.appendChild(rows);
-      b.appendChild(rec.el);
       const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','글 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
       const msg=el('div','rep hint','제출하면 관리자(선생님)가 글과 점수를 확인할 수 있어요.');b.appendChild(msg);
       const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];
