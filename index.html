@@ -386,7 +386,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-22f';
+const APP_VERSION='2026-09-22h';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1757,7 +1757,7 @@ function viewLogin(){setWide(false);mountView(w=>{
 function countReady(lv){let done=0,tot=0;const P=loadProg();
   LEVELS.find(l=>l.id===lv).chapters.forEach(c=>c.points.forEach(p=>{if(!p.soon){tot++;if(P[p.id])done++;}}));
   return {done,tot};}
-function viewHome(){setWide(false);mountView(w=>{
+function viewHome(){const _homeBody=w=>{
   if(TEACHER_PREVIEW){
     const bk=el('button','backbtn','◀ 학생 목록');bk.onclick=()=>{TEACHER_PREVIEW=null;viewTeacherHome();};w.appendChild(bk);
     const banner=el('div');banner.style.cssText='background:#eef0ff;border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:13.5px;color:#3730a3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
@@ -1840,7 +1840,13 @@ function viewHome(){setWide(false);mountView(w=>{
     const fbLink=el('button','btn ghost','📋 내 제출 내역 · 선생님 피드백 보기');fbLink.style.marginTop='18px';
     fbLink.onclick=()=>viewMyFeedback();w.appendChild(fbLink);
   }
-});}
+};
+  // 선생님이 학생 화면을 미리보기(TEACHER_PREVIEW)할 때는 다른 선생님 화면들처럼 왼쪽에 메뉴
+  // 사이드바가 계속 붙어있도록 teacherMount로 감싸요(예전엔 학생 화면 그대로라 사이드바가 사라지고,
+  // 다른 학생을 보려면 꼭 "◀ 학생 목록"으로 완전히 뒤로 나가야 했어요). 실제 학생 로그인일 때는
+  // 지금처럼 사이드바 없는 학생 화면 그대로 나가요.
+  if(TEACHER_PREVIEW){teacherMount(_homeBody);}else{setWide(false);mountView(_homeBody);}
+}
 
 /* ================= POINT MENU ================= */
 function viewPointMenu(){setWide(false);mountView(w=>{
@@ -3609,12 +3615,33 @@ function teacherMount(buildMain){
     // 같이 타요(메뉴 안에서만 따로 스크롤되는 게 아니라). "메뉴에서만 내리고 싶다"는 요청대로,
     // 메뉴 칸에 자기 높이(뷰포트 높이만큼)와 자기만의 스크롤(overflow-y:auto)을 줘서, 메뉴 위에서
     // 스크롤하면 메뉴 목록만 따로 스크롤되고 오른쪽 본문은 그대로 있게 했어요.
-    const sidebarCol=el('div');sidebarCol.style.cssText='flex:0 0 300px;min-width:260px;position:sticky;top:10px;max-height:calc(100vh - 20px);overflow-y:auto';
+    // ⚠️ max-height를 100vh 기준으로 계산했더니, 실제로 화면에 보이는 영역(.view)은 위쪽 헤더/여백
+    // 때문에 100vh보다 늘 더 작아서, 메뉴가 늘어나면(버튼이 추가되면) 그 차이만큼 아래가 화면 밖으로
+    // 밀려나 스크롤을 끝까지 내려도 안 보이는 문제가 있었어요("메뉴 늘어나면 스크롤바도 반영돼야
+    // 하는거 아냐?"). 그래서 100vh 대신, 이 화면이 실제로 차지하는 .view 요소의 실제 높이(clientHeight)를
+    // 기준으로 메뉴 칸 높이를 다시 계산해요 — 화면 크기가 바뀌거나 메뉴 내용이 늘어나도 항상 정확하게
+    // 맞도록 ResizeObserver로 계속 지켜봐요.
+    const sidebarCol=el('div');sidebarCol.style.cssText='flex:0 0 300px;min-width:260px;position:sticky;top:10px;overflow-y:auto';
     const mainCol=el('div');mainCol.style.cssText='flex:1;min-width:320px';
     layout.appendChild(sidebarCol);layout.appendChild(mainCol);
     w.appendChild(layout);
     buildTeacherMenuSidebar(sidebarCol);
     buildMain(mainCol);
+    function fitSidebarHeight(){
+      const viewEl=w.closest('.view')||w.parentElement;
+      const h=(viewEl&&viewEl.clientHeight)?viewEl.clientHeight:window.innerHeight;
+      sidebarCol.style.maxHeight=Math.max(200,h-20)+'px';
+    }
+    fitSidebarHeight();
+    if(typeof ResizeObserver!=='undefined'){
+      const viewEl=w.closest('.view')||w.parentElement;
+      const ro=new ResizeObserver(fitSidebarHeight);
+      if(viewEl)ro.observe(viewEl);
+      trackViewUnsub(()=>ro.disconnect());
+    }else{
+      window.addEventListener('resize',fitSidebarHeight);
+      trackViewUnsub(()=>window.removeEventListener('resize',fitSidebarHeight));
+    }
   });
 }
 function buildTeacherMenuSidebar(sidebarCol){
@@ -3632,6 +3659,11 @@ function buildTeacherMenuSidebar(sidebarCol){
   };
   const mkMenuBtn=(label,onclick)=>{const b=el('button','tmenu-item',label);b.type='button';b.onclick=onclick;return b;};
   const menuGroups=el('div','tmenu');
+  // 학생 글을 보는 중(TEACHER_PREVIEW)에도 사이드바가 계속 붙어있게 됐으니, 매번 "◀ 학생 목록"으로
+  // 완전히 뒤로 나가지 않고도 바로 다른 화면으로 갈 수 있게 맨 위에 "학생 목록(홈)" 메뉴를 추가했어요.
+  const homeGroup=mkMenuGroup('홈');
+  homeGroup.row.appendChild(mkMenuBtn('🏠 학생 목록',()=>{TEACHER_PREVIEW=null;viewTeacherHome();}));
+  menuGroups.appendChild(homeGroup.group);
   const contentGroup=mkMenuGroup('콘텐츠');
   contentGroup.row.appendChild(mkMenuBtn('🧩 컨텐츠 추가',()=>viewContentAdd()));
   contentGroup.row.appendChild(mkMenuBtn('🤖 AI 챗봇으로 만들기',()=>viewAiContentChatBot()));
@@ -3665,7 +3697,7 @@ function buildTeacherMenuSidebar(sidebarCol){
       const hasFeedback=submissionHasAnyFeedback;
       // 퀴즈만 풀고 조건 영작(text)은 안 쓴 Pattern Drill 제출물은 첨삭할 글이 없으니 이 배지
       // 개수에서도 빼요(첨삭관리 표와 같은 기준).
-      const cnt=all.filter(s=>String(s.assignedTeacherId||'')===String(USER.id)&&!hasFeedback(s)&&String(s.text||'').trim()).length;
+      const cnt=all.filter(s=>String(s.assignedTeacherId||'')===String(USER.id)&&!hasFeedback(s)&&String(s.text||'').trim()&&String(s.chapter||'')!=='Rewriting').length;
       if(cnt>0)myListBtn.textContent='📥 내 첨삭 목록 ('+cnt+')';
     }catch(e){}
   })();
@@ -3945,6 +3977,11 @@ function viewGradingManage(opts){teacherMount(w=>{
         // 없고 첨삭도 아직 없는 건 "첨삭할 게 아예 없는" 상태라 첨삭관리 표에서 아예 빼요 — 퀴즈만
         // 풀고 끝난 게 "첨삭대상"인 것처럼 잘못 보이던 문제를 막아줘요.
         if(!done&&!String(s.text||'').trim())return false;
+        // Re-Writing(다시 쓰기)은 이미 한 번 첨삭받은 글을 그대로 고쳐 쓰는 것뿐이라 AI 첨삭
+        // 대상이 아니에요(서버의 일괄 생성 로직도 이미 이걸 빼고 세요) — 그런데 여기 표에는 이
+        // 제외가 안 걸려있어서, Re-Writing 글이 실제로 쓴 글(text)이 있으니 "첨삭대상"으로 잘못
+        // 보였어요. "일괄 생성"은 없다고 나오는데 표에는 첨삭대상이 남아있던 불일치가 이거였어요.
+        if(String(s.chapter||'')==='Rewriting')return false;
         if(fst==='pending'&&done)return false;
         if(fst==='done'&&!done)return false;
         if(fte==='__unassigned__'&&s.assignedTeacherId)return false;
@@ -5911,7 +5948,7 @@ function restoreTeacherSubmissionDetail(studentId,studentName,subId){
 function viewTeacherContentSubmissions(title,matches,backFn){
   const back=backFn||viewHome;
   if(!matches||!matches.length){
-    setWide(false);mountView(w=>{
+    teacherMount(w=>{
       const bk=el('button','backbtn','◀ 뒤로');bk.onclick=back;w.appendChild(bk);
       w.appendChild(el('h1','title',title));
       w.appendChild(el('div','hint','아직 제출하지 않았어요.'));
@@ -5968,7 +6005,7 @@ function mountAiOverallBox(card,beforeNode,boxStyle,overallText,s,provider,fbObj
 }
 function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
   if(s&&s.subId&&studentId)saveTeacherNav(studentId,studentName,s.subId);
-  setWide(true);mountView(w=>{
+  teacherMount(w=>{
   const bk=el('button','backbtn',backFn?'◀ 뒤로':'◀ 제출 목록');bk.onclick=backFn||(()=>viewTeacherStudent(studentId,studentName));w.appendChild(bk);
   w.appendChild(el('h1','title',studentName+' · '+(s.point||s.chapter||'')));
   w.appendChild(el('div','hint','('+submissionTypeLabel(s)+' · '+(s.datetime||'')+')'));
