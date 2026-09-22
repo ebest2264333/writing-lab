@@ -386,7 +386,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-22a';
+const APP_VERSION='2026-09-22b';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3546,10 +3546,19 @@ function submissionTypeLabel(s){
   if(chapter==='Story Writing')return 'Story Writing';
   return '문법드릴';
 }
-function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
+function viewTeacherHome(){clearTeacherNav();setWide(true);mountView(w=>{
   const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap';
   titleRow.appendChild(el('h1','title',USER.name+' 선생님'+(USER.isAdmin?' · 전체 학원 관리자':(USER.academy?' · '+USER.academy:''))));
   w.appendChild(titleRow);
+  // 메뉴 카드가 화면 위쪽에 붙어서 아래로 쭉 스크롤해야 학생 목록이 보이던 걸, 메뉴는 왼쪽에
+  // 사이드바로 고정해두고 오른쪽에 학생 목록·필터가 더 넓게 나오도록 좌우 2단 레이아웃으로
+  // 바꿨어요(다른 학원관리 프로그램처럼 메뉴가 옆에 붙어있는 모양). setWide(true)로 페이지 폭도
+  // 넓혀서 오른쪽 영역이 좁아 보이지 않게 했어요.
+  const layout=el('div');layout.style.cssText='display:flex;gap:24px;align-items:flex-start;margin-top:14px;flex-wrap:wrap';
+  const sidebarCol=el('div');sidebarCol.style.cssText='flex:0 0 300px;min-width:260px;position:sticky;top:10px';
+  const mainCol=el('div');mainCol.style.cssText='flex:1;min-width:320px';
+  layout.appendChild(sidebarCol);layout.appendChild(mainCol);
+  w.appendChild(layout);
   // 메뉴 버튼이 하나씩 늘어나면서 뒤죽박죽 보이던 걸, 하는 일이 비슷한 것끼리 묶어서
   // "콘텐츠" / "제출·리포트" / "운영 관리(관리자 전용)" 세 그룹으로 나눠 보여줘요.
   // (다른 학원관리 프로그램의 사이드바 메뉴처럼) 그룹마다 카드로 감싸고, 그 안은 가로로 늘어놓던 걸
@@ -3701,13 +3710,13 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
     adminGroup.row.appendChild(mkMenuBtn('🧑‍🏫 선생님 계정 관리',()=>viewTeacherManage()));
     menuGroups.appendChild(adminGroup.group);
   }
-  w.appendChild(menuGroups);
-  w.appendChild(el('div','hint',USER.isAdmin?'모든 학원의 학생을 볼 수 있어요. 학원·학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.':'학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.'));
+  sidebarCol.appendChild(menuGroups);
+  mainCol.appendChild(el('div','hint',USER.isAdmin?'모든 학원의 학생을 볼 수 있어요. 학원·학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.':'학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.'));
   const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin:14px 0';
-  w.appendChild(filterBox);
+  mainCol.appendChild(filterBox);
   const box=el('div','chapter');box.appendChild(el('div','ch-h','학생 목록'));
   const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
-  w.appendChild(box);
+  mainCol.appendChild(box);
   const mkSelect=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:110px';
     const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
     const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
