@@ -386,7 +386,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-22b';
+const APP_VERSION='2026-09-22c';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -4736,20 +4736,32 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
           finally{ genBtnP.disabled=false; }
         };
         const aiFillBtn=el('button','btn ghost','✨ AI로 질문·단어 채우기');aiFillBtn.type='button';aiFillBtn.style.cssText='padding:6px 10px;font-size:12px';
+        // ⚠️ 이미 단어가 겹치거나(예: 다른 그림에서 쓴 "bucket"을 또 씀) 그림을 잘못 읽어서 엉뚱한
+        // 결과가 나왔을 때, "다시 시킬 수 있는 게 없다"는 요청으로 추가한 재생성 버튼이에요.
+        // 원래 "AI로 채우기" 버튼은 이미 값이 채워진 칸은 "그대로 두라"고 AI에게 보내서, 한 번
+        // 채워지고 나면 다시 눌러도 사실상 아무것도 안 바뀌었어요(재시도가 안 되는 버그나 다름없었어요).
+        // 이 버튼은 지금 채워진 값을 아예 AI에게 안 보내고(새로 만들라고), 결과가 오면 무조건
+        // 덮어써서 진짜로 "다시 생성"이 되게 해요.
+        const aiRedoBtn=el('button','btn ghost','🔄 다시 생성');aiRedoBtn.type='button';aiRedoBtn.style.cssText='padding:6px 10px;font-size:12px';
         const aiFillDifficultySel=el('select','in');aiFillDifficultySel.style.cssText='padding:4px 8px;font-size:11.5px;border-radius:8px';
         [['초3-4','난이도: 쉬움(초3-4)'],['초5-6','난이도: 초5-6'],['중등','난이도: 중등(더 어렵게)']].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;aiFillDifficultySel.appendChild(o);});
         aiFillDifficultySel.value='초5-6';
         const aiFillMsg=el('div','fx');
-        aiFillBtn.onclick=async()=>{
+        const runAiFillPic=async(force)=>{
+          if(force&&(p.questions||p.words||p.starter)&&!window.confirm('지금 있는 질문·단어·시작 문장을 지우고 새로 만들까요?'))return;
           const picFields=[
             {key:'questions',label:'질문 (영어, 한 줄에 하나, 예/아니오로 답할 수 없는 상상 질문 정확히 2개)',hint:'What is the boy going to do next?\nHow do you think the girl feels, and why?'},
             {key:'words',label:'단어 (영어|한글, 한 줄에 하나, 그림에 실제로 보이는 것만 3~5개)',hint:'banana|바나나\ndraw|그리다'},
             {key:'starter',label:'시작 문장 (선택, 영어 한 문장)',hint:'First, George draws a picture.'}
           ];
           const seed={};
-          if(p.questions&&p.questions.trim())seed.questions=p.questions.trim();
-          if(p.words&&p.words.trim())seed.words=p.words.trim();
-          if(p.starter&&p.starter.trim())seed.starter=p.starter.trim();
+          // force일 때는 지금 채워진 값을 seed로 안 보내요 — "이미 채워진 값(그대로 두기)"로 보이면
+          // AI가 새로 안 만들고 그대로 돌려주니까요. 대신 아래서 결과를 받으면 무조건 덮어써요.
+          if(!force){
+            if(p.questions&&p.questions.trim())seed.questions=p.questions.trim();
+            if(p.words&&p.words.trim())seed.words=p.words.trim();
+            if(p.starter&&p.starter.trim())seed.starter=p.starter.trim();
+          }
           const titleVal=(refs.title&&refs.title.value||'').trim();
           const introVal=(refs.intro&&refs.intro.value||'').trim();
           if(titleVal)seed.storyTitle=titleVal;
@@ -4771,7 +4783,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
           });
           if(otherWordsArr.length)seed.otherWords=otherWordsArr.join(', ');
           if(otherQuestionsArr.length)seed.otherQuestions=otherQuestionsArr.join(' / ');
-          aiFillBtn.disabled=true;aiFillMsg.className='fx';aiFillMsg.textContent='AI가 채우는 중…';
+          aiFillBtn.disabled=true;aiRedoBtn.disabled=true;aiFillMsg.className='fx';aiFillMsg.textContent=force?'다시 만드는 중…':'AI가 채우는 중…';
           try{
             const body={action:'generateContent',contentType:'story',seed,fields:picFields};
             // p._imgB64가 없어도(예: 저장했다가 다시 불러온 뒤라 임시 필드가 사라진 경우) p.url 자체가
@@ -4794,16 +4806,19 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
             const results=data.results||{};
             const picked=(results.claude&&results.claude.fields)||(results.gpt&&results.gpt.fields)||null;
             if(!picked||!Object.keys(picked).length){aiFillMsg.className='fx';aiFillMsg.textContent='채울 빈 칸이 없었어요.';return;}
-            if(picked.questions!==undefined&&!seed.questions)p.questions=picked.questions;
-            if(picked.words!==undefined&&!seed.words)p.words=picked.words;
-            if(picked.starter!==undefined&&!seed.starter)p.starter=picked.starter;
+            if(picked.questions!==undefined&&(force||!seed.questions))p.questions=picked.questions;
+            if(picked.words!==undefined&&(force||!seed.words))p.words=picked.words;
+            if(picked.starter!==undefined&&(force||!seed.starter))p.starter=picked.starter;
             renderStoryPics();refreshPreview();saveDraftLocal();
+            if(force){aiFillMsg.className='fx ok';aiFillMsg.textContent='새로 만들었어요! 그림·단어가 잘 맞는지 확인해보세요.';}
           }catch(e){
             aiFillMsg.className='fx no';aiFillMsg.textContent=String(e.message||e);
           }finally{
-            aiFillBtn.disabled=false;
+            aiFillBtn.disabled=false;aiRedoBtn.disabled=false;
           }
         };
+        aiFillBtn.onclick=()=>runAiFillPic(false);
+        aiRedoBtn.onclick=()=>runAiFillPic(true);
         row.appendChild(thumbCol);
         const fieldsCol=el('div');fieldsCol.style.cssText='flex:1 1 220px;display:flex;flex-direction:column;gap:8px;min-width:200px';
         const mkField=(labelText,ph,rows,val,onInput)=>{
@@ -4818,7 +4833,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
           return w2;
         };
         const aiFillRow=el('div');aiFillRow.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap';
-        aiFillRow.appendChild(aiFillBtn);aiFillRow.appendChild(aiFillDifficultySel);aiFillRow.appendChild(aiFillMsg);
+        aiFillRow.appendChild(aiFillBtn);aiFillRow.appendChild(aiRedoBtn);aiFillRow.appendChild(aiFillDifficultySel);aiFillRow.appendChild(aiFillMsg);
         fieldsCol.appendChild(aiFillRow);
         fieldsCol.appendChild(mkField('질문 (한 줄에 하나, 영어로, 예/아니오 질문 X, 상상 질문 2개 권장)','What is the boy going to do next?\nHow do you think the girl feels, and why?',2,p.questions,v=>p.questions=v));
         const wordsWrap=mkField('단어 (한 줄에 하나: en|ko)','banana|바나나\ndraw|그리다',3,p.words,v=>p.words=v);
