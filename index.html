@@ -176,6 +176,16 @@
   .btn{background:linear-gradient(120deg,var(--accent),var(--accent-2));color:#fff;border:none;border-radius:999px;padding:12px 24px;font-size:16px;font-weight:800;cursor:pointer;font-family:var(--sans);transition:transform .12s,box-shadow .12s;box-shadow:var(--shadow-sm)}
   .btn:hover{transform:translateY(-1px);box-shadow:var(--shadow-md)}
   .btn.blue{background:linear-gradient(120deg,var(--violet),var(--violet-2))}.btn.green{background:linear-gradient(120deg,var(--green),#1f8a5c)}.btn.ghost{background:var(--paper);color:var(--accent);border:1.5px solid var(--accent);box-shadow:none}
+  /* 선생님 홈 메뉴 — 예전엔 그룹마다 알약 모양 버튼이 가로로 늘어서 있어서(특히 버튼이 늘어날수록)
+     뒤죽박죽 보였어요. 다른 학원관리 프로그램의 사이드바 메뉴(세로로 한 줄씩, 아이콘+글자, 눌렀을 때만
+     은은하게 배경이 생기는 방식)처럼 정리해달라는 요청으로, 그룹(콘텐츠/제출·리포트/운영관리)은 그대로
+     유지하되 각 그룹 안 메뉴를 세로 목록으로 바꿨어요. */
+  .tmenu{display:flex;flex-direction:column;gap:14px;margin-top:14px;max-width:320px}
+  .tmenu-group{display:flex;flex-direction:column;background:#fff;border:1px solid #ecebe8;border-radius:14px;padding:8px;box-shadow:var(--shadow-sm)}
+  .tmenu-group-label{font-size:11.5px;font-weight:800;letter-spacing:.03em;color:var(--accent);padding:9px 12px 4px;text-transform:uppercase}
+  .tmenu-item{display:flex;align-items:center;gap:9px;padding:11px 12px;border-radius:10px;font-size:14.5px;font-weight:700;color:#3d3730;text-align:left;background:transparent;border:none;cursor:pointer;font-family:var(--sans);width:100%;white-space:nowrap}
+  .tmenu-item:hover{background:#f5f4f1}
+  .tmenu-item:active{background:var(--accent-soft)}
   .conds{list-style:none;padding:0;margin:14px 0 0}
   .conds li{font-size:15.5px;padding:7px 0 7px 30px;position:relative;color:var(--muted)}
   .conds li .mk{position:absolute;left:0;top:7px;width:20px;height:20px;border-radius:50%;border:1.5px solid var(--line-2);text-align:center;line-height:17px;font-size:12px;font-weight:800}
@@ -376,7 +386,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-21a';
+const APP_VERSION='2026-09-22a';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3542,20 +3552,18 @@ function viewTeacherHome(){clearTeacherNav();setWide(false);mountView(w=>{
   w.appendChild(titleRow);
   // 메뉴 버튼이 하나씩 늘어나면서 뒤죽박죽 보이던 걸, 하는 일이 비슷한 것끼리 묶어서
   // "콘텐츠" / "제출·리포트" / "운영 관리(관리자 전용)" 세 그룹으로 나눠 보여줘요.
-  // 그냥 회색 안내 문구만으로는 그룹 구분이 잘 안 보여서, 카드 형태(연한 배경+테두리)로 감싸서
-  // 한눈에 "여긴 한 묶음이다"가 보이게 했어요.
+  // (다른 학원관리 프로그램의 사이드바 메뉴처럼) 그룹마다 카드로 감싸고, 그 안은 가로로 늘어놓던 걸
+  // 세로 목록으로 정리해서, 메뉴가 늘어나도 한 줄씩 깔끔하게 보이게 했어요.
   const mkMenuGroup=(label)=>{
-    const group=el('div');
-    group.style.cssText='display:flex;flex-direction:column;gap:10px;background:#fafaf9;border:1px solid #ecebe8;border-radius:14px;padding:14px 16px';
-    const lb=el('div',null,label);
-    lb.style.cssText='font-size:12.5px;font-weight:800;letter-spacing:.02em;color:var(--accent)';
+    const group=el('div','tmenu-group');
+    const lb=el('div','tmenu-group-label',label);
     group.appendChild(lb);
-    const row=el('div');row.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
+    const row=el('div');row.style.cssText='display:flex;flex-direction:column';
     group.appendChild(row);
     return{group,row};
   };
-  const mkMenuBtn=(label,onclick)=>{const b=el('button','btn ghost',label);b.type='button';b.style.cssText='padding:10px 18px;font-size:14px;white-space:nowrap';b.onclick=onclick;return b;};
-  const menuGroups=el('div');menuGroups.style.cssText='display:flex;gap:14px;flex-wrap:wrap;margin-top:14px';
+  const mkMenuBtn=(label,onclick)=>{const b=el('button','tmenu-item',label);b.type='button';b.onclick=onclick;return b;};
+  const menuGroups=el('div','tmenu');
   const contentGroup=mkMenuGroup('콘텐츠');
   contentGroup.row.appendChild(mkMenuBtn('🧩 컨텐츠 추가',()=>viewContentAdd()));
   contentGroup.row.appendChild(mkMenuBtn('🤖 AI 챗봇으로 만들기',()=>viewAiContentChatBot()));
