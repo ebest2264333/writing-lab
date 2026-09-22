@@ -386,7 +386,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-22c';
+const APP_VERSION='2026-09-22d';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -501,6 +501,30 @@ function splitWordLines(raw){
     out.push(line);
   });
   return out;
+}
+/** 스토리라이팅 "AI로 질문·단어 채우기"에서, 프롬프트로 "색깔 형용사 붙이지 마"라고 시켜도 AI가
+ *  가끔 "green gloves"·"초록 장갑"처럼 색을 붙여서 줄 때가 있어요. 프롬프트만 믿지 않고, 받은 단어의
+ *  맨 앞 단어가 색깔이면 여기서 한 번 더 걸러내요(안전망). 또 색만 다르고 사물은 같은 단어("bucket"과
+ *  "green bucket")가 서로 다른 그림에서 중복으로 안 걸러지던 것도, 색을 떼고 나면 완전히 같은 문자열이
+ *  되어서 다른 그림의 단어 목록(otherWords)과 비교했을 때 더 잘 걸러져요. */
+const COLOR_WORDS_EN=['red','orange','yellow','green','blue','navy','purple','violet','pink','brown','black','white','gray','grey','gold','silver','dark','light'];
+const COLOR_WORDS_KO=['빨간','빨강','빨간색','주황','주황색','노란','노랑','노란색','초록','초록색','연두','연두색','파란','파랑','파란색','남색','보라','보라색','분홍','분홍색','갈색','검은','검정','검은색','하얀','하양','하얀색','흰','회색','은색','금색'];
+function stripColorAdj(text,colorList){
+  const t=String(text||'').trim();
+  if(!t)return t;
+  const parts=t.split(/\s+/);
+  if(parts.length>1&&colorList.indexOf(parts[0].toLowerCase())>-1){
+    const rest=parts.slice(1).join(' ');
+    if(rest)return rest;
+  }
+  return t;
+}
+function stripColorFromWordLine(line){
+  const w=parseWordLine(line);
+  const en=stripColorAdj(w.en,COLOR_WORDS_EN);
+  const ko=stripColorAdj(w.ko,COLOR_WORDS_KO);
+  const parts=[en,ko];if(w.img)parts.push(w.img);
+  return parts.join('|');
 }
 const sc=t=>(t||"").split(/[.?!\n]+/).map(x=>x.trim()).filter(Boolean).length;
 const fmtDur=ms=>{const s=Math.max(0,Math.round((ms||0)/1000));const m=Math.floor(s/60),r=s%60;return m>0?(m+'분 '+r+'초'):(r+'초');};
@@ -4751,7 +4775,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
           if(force&&(p.questions||p.words||p.starter)&&!window.confirm('지금 있는 질문·단어·시작 문장을 지우고 새로 만들까요?'))return;
           const picFields=[
             {key:'questions',label:'질문 (영어, 한 줄에 하나, 예/아니오로 답할 수 없는 상상 질문 정확히 2개)',hint:'What is the boy going to do next?\nHow do you think the girl feels, and why?'},
-            {key:'words',label:'단어 (영어|한글, 한 줄에 하나, 그림에 실제로 보이는 것만 3~5개)',hint:'banana|바나나\ndraw|그리다'},
+            {key:'words',label:'단어 (영어|한글, 한 줄에 하나, 그림에 실제로 보이는 것만 3~5개. ⚠️ "green gloves"·"yellow boots"처럼 색깔 형용사를 붙이지 말고 "gloves"·"boots"처럼 사물 이름(명사)만 — 그림 속 색은 학생이 직접 보고 알면 되니까 단어에는 색을 넣지 마)',hint:'banana|바나나\ndraw|그리다'},
             {key:'starter',label:'시작 문장 (선택, 영어 한 문장)',hint:'First, George draws a picture.'}
           ];
           const seed={};
@@ -4807,7 +4831,7 @@ function viewAddContentForm(type,editId){setWide(true);mountView(w=>{
             const picked=(results.claude&&results.claude.fields)||(results.gpt&&results.gpt.fields)||null;
             if(!picked||!Object.keys(picked).length){aiFillMsg.className='fx';aiFillMsg.textContent='채울 빈 칸이 없었어요.';return;}
             if(picked.questions!==undefined&&(force||!seed.questions))p.questions=picked.questions;
-            if(picked.words!==undefined&&(force||!seed.words))p.words=picked.words;
+            if(picked.words!==undefined&&(force||!seed.words))p.words=splitWordLines(picked.words).map(stripColorFromWordLine).join('\n');
             if(picked.starter!==undefined&&(force||!seed.starter))p.starter=picked.starter;
             renderStoryPics();refreshPreview();saveDraftLocal();
             if(force){aiFillMsg.className='fx ok';aiFillMsg.textContent='새로 만들었어요! 그림·단어가 잘 맞는지 확인해보세요.';}
