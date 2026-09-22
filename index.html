@@ -386,7 +386,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-22e';
+const APP_VERSION='2026-09-22f';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3570,6 +3570,24 @@ function submissionTypeLabel(s){
   if(chapter==='Story Writing')return 'Story Writing';
   return '문법드릴';
 }
+/** ⚠️ "AI 첨삭이 있다"를 확인하는 코드가 화면마다 따로따로 있었는데(첨삭관리 표 상태·"내 첨삭
+ *  목록" 배지 개수·첨삭 통계), 서버(handleBatchGenerateMissingFeedback)는 aiFeedback·aiFeedbackGpt·
+ *  aiFeedback_claude·aiFeedback_gpt 네 필드를 다 확인하는데 화면 쪽 코드 일부는 aiFeedback_claude·
+ *  aiFeedback_gpt를 빼먹고 두 필드만 봤어요. 그래서 옛날 형식(aiFeedback_claude 등)으로 저장된
+ *  글은 첨삭관리 표에는 "첨삭대상"(빨간색, 안 된 것처럼)으로 보이는데, "AI 첨삭 안 된 것들
+ *  한번에 생성"을 누르면 서버는 이미 있다고 판단해서 대상에서 빼버려 "밀린 게 없다"고 나오는
+ *  모순이 있었어요. 이제 한 곳(이 함수들)에서만 정의해서 다 같이 써요.
+ *  submissionHasAiFeedback: 오직 AI가 만든 첨삭(4개 필드)만 확인해요 — 첨삭 통계·일괄 생성 대상
+ *  판단처럼 "AI가 실제로 첨삭을 만들었는지"만 봐야 하는 곳에 써요.
+ *  submissionHasAnyFeedback: 위 4개 필드 + 선생님이 직접 남긴 수기 첨삭(feedback)까지 봐요 —
+ *  첨삭관리 표의 "첨삭완료/첨삭대상" 상태처럼 "이 글이 (AI든 사람이든) 첨삭을 받았는지"를
+ *  봐야 하는 곳에 써요. */
+function submissionHasAiFeedback(s){
+  return !!(s&&['aiFeedback','aiFeedbackGpt','aiFeedback_claude','aiFeedback_gpt'].some(k=>s[k]!=null&&String(s[k]).trim()!==''));
+}
+function submissionHasAnyFeedback(s){
+  return submissionHasAiFeedback(s)||!!(s&&s.feedback&&String(s.feedback).trim()!=='');
+}
 /** 선생님 화면 어디를 눌러 들어가도(첨삭관리·컨텐츠 추가·학생 명단 관리 등) 왼쪽 메뉴가 항상 그
  *  자리에 있으면 좋겠다는 요청으로 만든 공용 레이아웃이에요. 예전엔 이 메뉴가 "선생님 홈" 화면
  *  안에만 있어서, 메뉴에서 다른 화면으로 들어가면 메뉴 자체가 사라지고(그 화면은 보통 "◀ 뒤로"
@@ -3644,8 +3662,10 @@ function buildTeacherMenuSidebar(sidebarCol){
       const data=await res.json();
       let all=(data&&data.ok)?(data.submissions||[]):[];
       if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
-      const hasFeedback=s=>!!((s.aiFeedback&&String(s.aiFeedback).trim())||(s.aiFeedbackGpt&&String(s.aiFeedbackGpt).trim())||(s.feedback&&String(s.feedback).trim()));
-      const cnt=all.filter(s=>String(s.assignedTeacherId||'')===String(USER.id)&&!hasFeedback(s)).length;
+      const hasFeedback=submissionHasAnyFeedback;
+      // 퀴즈만 풀고 조건 영작(text)은 안 쓴 Pattern Drill 제출물은 첨삭할 글이 없으니 이 배지
+      // 개수에서도 빼요(첨삭관리 표와 같은 기준).
+      const cnt=all.filter(s=>String(s.assignedTeacherId||'')===String(USER.id)&&!hasFeedback(s)&&String(s.text||'').trim()).length;
       if(cnt>0)myListBtn.textContent='📥 내 첨삭 목록 ('+cnt+')';
     }catch(e){}
   })();
@@ -3749,6 +3769,32 @@ function buildTeacherMenuSidebar(sidebarCol){
     if(USER.isAdmin)adminGroup.row.appendChild(mkMenuBtn('🏷️ 레벨 관리',()=>viewLevelManage()));
     adminGroup.row.appendChild(mkMenuBtn('👥 학생 명단 관리',()=>viewStudentManage()));
     adminGroup.row.appendChild(mkMenuBtn('🧑‍🏫 선생님 계정 관리',()=>viewTeacherManage()));
+    // ⚠️ Pattern Drill(조건 영작)이 taskText가 아니라 text 필드로도 같이 저장되게 막 고쳤는데,
+    // 그 고침 전에 이미 저장된 예전 Pattern Drill 글들은 여전히 text가 비어있어요(그래서 첨삭관리
+    // 표에는 "쓴 글이 없는" 것처럼 보이거나, 반대로 실제로 쓴 글인데도 계속 "첨삭대상"으로만
+    // 보이고 AI 첨삭 생성 대상에는 안 잡히는 등 화면마다 다르게 보였어요). 한 번만 눌러서 예전
+    // 글들의 text를 taskText(또는 final)로 채워 넣는 복구 버튼이에요 — 전체 관리자만 보여요.
+    if(USER.isAdmin){
+      const fixMsg=el('div','fx');
+      const fixBtn=mkMenuBtn('🩹 옛 Pattern Drill 글 복구',async()=>{
+        fixBtn.disabled=true;fixMsg.className='fx';fixMsg.textContent='확인 중…';
+        try{
+          const dry=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'backfillSubmissionText',role:'teacher',dryRun:true})}).then(r=>r.json());
+          if(!dry||!dry.ok)throw new Error((dry&&dry.error)||'확인 실패');
+          if(!dry.count){fixMsg.className='fx';fixMsg.textContent='복구할 글이 없어요(이미 다 정상이에요).';fixBtn.disabled=false;return;}
+          if(!confirm(dry.count+'개의 예전 글에 text 필드를 채워 넣을게요. 계속할까요?')){fixMsg.textContent='';fixBtn.disabled=false;return;}
+          const real=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'backfillSubmissionText',role:'teacher',dryRun:false})}).then(r=>r.json());
+          if(!real||!real.ok)throw new Error((real&&real.error)||'복구 실패');
+          fixMsg.className='fx ok';fixMsg.textContent=real.count+'개 복구 완료! 첨삭관리·리포트 화면에서 확인해보세요.';
+        }catch(e){
+          fixMsg.className='fx no';fixMsg.textContent=String((e&&e.message)||e);
+        }finally{
+          fixBtn.disabled=false;
+        }
+      });
+      adminGroup.row.appendChild(fixBtn);
+      adminGroup.group.appendChild(fixMsg);
+    }
     menuGroups.appendChild(adminGroup.group);
   }
   sidebarCol.appendChild(menuGroups);
@@ -3884,7 +3930,7 @@ function viewGradingManage(opts){teacherMount(w=>{
     loading.remove();
     if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
     if(!all.length){tableWrap.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
-    const hasFeedback=s=>!!((s.aiFeedback&&String(s.aiFeedback).trim())||(s.aiFeedbackGpt&&String(s.aiFeedbackGpt).trim())||(s.feedback&&String(s.feedback).trim()));
+    const hasFeedback=submissionHasAnyFeedback;
     const parseDt=s=>{const raw=String(s.datetime||'').trim();if(!raw)return null;const d=new Date(raw.replace(' ','T'));return isNaN(d.getTime())?null:d;};
     const fmtElapsed=ms=>{if(ms==null)return '-';if(ms<0)ms=0;const t=Math.floor(ms/1000),dd=Math.floor(t/86400),h=Math.floor((t%86400)/3600),m=Math.floor((t%3600)/60),s2=t%60,z=x=>String(x).padStart(2,'0');return (dd>0?dd+'일 ':'')+z(h)+':'+z(m)+':'+z(s2);};
     const render=()=>{
@@ -3894,6 +3940,11 @@ function viewGradingManage(opts){teacherMount(w=>{
         if(fa&&s.academy!==fa)return false;
         if(ft&&submissionTypeLabel(s)!==ft)return false;
         const done=hasFeedback(s);
+        // 문법 드릴(Pattern Drill)은 퀴즈·단어배열·영작 연습만 하고 "조건 영작"은 안 쓴 채로도
+        // 제출될 수 있어요(개념 확인용 퀴즈일 뿐이라 첨삭할 글 자체가 없어요). 실제로 쓴 글(text)이
+        // 없고 첨삭도 아직 없는 건 "첨삭할 게 아예 없는" 상태라 첨삭관리 표에서 아예 빼요 — 퀴즈만
+        // 풀고 끝난 게 "첨삭대상"인 것처럼 잘못 보이던 문제를 막아줘요.
+        if(!done&&!String(s.text||'').trim())return false;
         if(fst==='pending'&&done)return false;
         if(fst==='done'&&!done)return false;
         if(fte==='__unassigned__'&&s.assignedTeacherId)return false;
@@ -4030,7 +4081,7 @@ function viewAiStats(){teacherMount(w=>{
     }catch(e){}
     if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
     loading.remove();
-    const hasFeedback=s=>!!((s.aiFeedback&&String(s.aiFeedback).trim())||(s.aiFeedbackGpt&&String(s.aiFeedbackGpt).trim()));
+    const hasFeedback=submissionHasAiFeedback;
     if(fAcademySel){
       const opt0=(label)=>{const o=el('option');o.value='';o.textContent=label;fAcademySel.appendChild(o);};
       opt0('학원 전체');
@@ -5637,9 +5688,27 @@ function viewTeacherManage(){teacherMount(w=>{
   titleRow.appendChild(addBtn);
   w.appendChild(titleRow);
   w.appendChild(el('div','hint',USER.isAdmin?'모든 학원의 선생님 계정을 관리할 수 있어요. 관리자 권한(전체/학원별)도 여기서 지정할 수 있어요.':'우리 학원('+(USER.academy||'')+') 선생님 계정만 보여요. 관리자 권한은 전체 관리자만 지정할 수 있어요.'));
+  // 선생님 수가 늘면서 "학원별로, 권한별로 좁혀서 보고 싶다"는 요청으로 필터를 추가했어요.
+  // 학원 드롭다운은 전체 관리자한테만 의미가 있어요(학원별 관리자는 애초에 자기 학원 계정만
+  // 보이니까요). 권한 드롭다운(전체 관리자/학원 관리자/선생님)은 누구나 쓸 수 있어요.
+  const filterBox=el('div');filterBox.style.cssText='display:none;gap:10px;flex-wrap:wrap;margin:14px 0';
+  w.appendChild(filterBox);
+  const mkSelect=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:130px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
+    return{wrap,sel};};
+  const fAcademy=USER.isAdmin?mkSelect('학원'):null;
+  const fRole=mkSelect('권한');
+  if(fAcademy)filterBox.appendChild(fAcademy.wrap);
+  filterBox.appendChild(fRole.wrap);
+  const opt0=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
+  opt0(fRole.sel,'권한 전체');
+  [['admin','전체 관리자'],['academyAdmin','학원 관리자'],['teacher','선생님']].forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;fRole.sel.appendChild(o);});
   const box=el('div');box.style.marginTop='14px';
   const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
   w.appendChild(box);
+  const roleLabel=t=>t.isAdmin?'전체 관리자':(t.isAcademyAdmin?'학원 관리자':'선생님');
+  const roleKey=t=>t.isAdmin?'admin':(t.isAcademyAdmin?'academyAdmin':'teacher');
   (async()=>{
     let teachers=[];
     // ⚠️ fetchRoster()는 한 번 받아오면 그 결과를 계속 재사용하는 캐시라(로그인 화면에서는 그게
@@ -5662,8 +5731,12 @@ function viewTeacherManage(){teacherMount(w=>{
     if(!USER.isAdmin&&USER.isAcademyAdmin)teachers=teachers.filter(t=>String(t.academy||'').trim()===String(USER.academy||'').trim());
     loading.remove();
     if(!teachers.length){box.appendChild(el('div','hint','등록된 선생님 계정이 없어요.'));return;}
-    const roleLabel=t=>t.isAdmin?'전체 관리자':(t.isAcademyAdmin?'학원 관리자':'선생님');
-    teachers.slice().sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko')).forEach(t=>{
+    if(fAcademy){
+      opt0(fAcademy.sel,'학원 전체');
+      uniqSorted(teachers.map(t=>t.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});
+    }
+    filterBox.style.display='flex';
+    const renderRow=(t)=>{
       const row=el('div','point');row.style.cursor='default';
       row.appendChild(el('div','dot','●'));
       const ctx=[t.academy,roleLabel(t)].filter(Boolean).join(' · ');
@@ -5694,8 +5767,17 @@ function viewTeacherManage(){teacherMount(w=>{
         btnRow.appendChild(editBtn);btnRow.appendChild(delBtn);
         row.appendChild(btnRow);
       }
-      box.appendChild(row);
-    });
+      return row;
+    };
+    const render=()=>{
+      Array.from(box.children).forEach(c=>c.remove());
+      const fa=fAcademy?fAcademy.sel.value:'',fr=fRole.sel.value;
+      const filtered=teachers.filter(t=>(!fa||String(t.academy||'')===fa)&&(!fr||roleKey(t)===fr));
+      if(!filtered.length){box.appendChild(el('div','hint','조건에 맞는 선생님 계정이 없어요.'));return;}
+      filtered.slice().sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko')).forEach(t=>box.appendChild(renderRow(t)));
+    };
+    (fAcademy?[fAcademy.sel,fRole.sel]:[fRole.sel]).forEach(sel=>sel.addEventListener('change',render));
+    render();
   })();
 });}
 function viewTeacherForm(existing){teacherMount(w=>{
