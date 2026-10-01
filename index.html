@@ -386,7 +386,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-09-24a';
+const APP_VERSION='2026-10-01a';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1451,6 +1451,24 @@ function toStoryTopic(g){
     minWords:Number(g.minWords||0)||0,
     targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||g.targetGrade||'',targetClass:g.targetClass||''};
 }
+/** 선생님이 Story Writing 제목 앞에 "[1-2]"처럼 번호를 붙여서 순서를 관리하고 계셔서, 그 번호
+ *  기준으로 정렬해요. 서버에서 받아오는 순서(등록한 순서)가 뒤섞여 있어도 이 번호대로 보이게 해요.
+ *  번호가 없는 제목은 번호 있는 것들 뒤로, 원래 순서 그대로 보여요. */
+function storyTitleSortKey(title){
+  const m=String(title||'').trim().match(/^\[(\d+)\s*-\s*(\d+)\]/);
+  if(m)return [0,Number(m[1]),Number(m[2])];
+  return [1,0,0];
+}
+function sortStoryList(list){
+  return list.map((item,i)=>({item,i})).sort((a,b)=>{
+    const ka=storyTitleSortKey(a.item.title||a.item.titleKo||a.item.id);
+    const kb=storyTitleSortKey(b.item.title||b.item.titleKo||b.item.id);
+    if(ka[0]!==kb[0])return ka[0]-kb[0];
+    if(ka[1]!==kb[1])return ka[1]-kb[1];
+    if(ka[2]!==kb[2])return ka[2]-kb[2];
+    return a.i-b.i;
+  }).map(x=>x.item);
+}
 const STORY={};
 function mergeStory(){
   // loadLiveContent()는 첫 접속 때뿐 아니라 선생님이 레벨/컨텐츠를 저장한 뒤에도(사이트를 새로고침
@@ -1464,6 +1482,7 @@ function mergeStory(){
     if(!g||!g.level)return;
     (STORY[g.level]=STORY[g.level]||[]).push(toStoryTopic(g));
   });
+  Object.keys(STORY).forEach(k=>{ STORY[k]=sortStoryList(STORY[k]); });
 }
 
 /* ================= app state ================= */
@@ -4621,6 +4640,9 @@ function viewContentEditList(type){teacherMount(w=>{
       const data=await res.json();
       if(data&&data.ok)items=data.items||[];
     }catch(e){}
+    // Story Writing은 제목 앞 "[1-2]" 번호로 순서를 관리하시니, 여기도 학생 화면과 똑같은 기준으로
+    // 정렬해서 보여줘요(번호 없는 다른 종류는 원래 순서 그대로예요 — storyTitleSortKey가 그냥 통과시켜요).
+    if(type==='story')items=sortStoryList(items);
     loading.remove();
     if(!items.length){box.appendChild(el('div','hint','아직 추가된 항목이 없어요.'));return;}
     items.forEach(item=>{
