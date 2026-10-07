@@ -386,7 +386,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-06b';
+const APP_VERSION='2026-10-07a';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -4051,7 +4051,7 @@ function viewTeacherHome(){clearTeacherNav();teacherMount(w=>{
 function viewGradingManage(opts){teacherMount(w=>{
   const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
   w.appendChild(el('h1','title','📋 첨삭관리'));
-  w.appendChild(el('div','hint','제출된 글을 한 줄씩 표로 보여줘요. 영역·상태·첨삭담당·제출일로 좁혀보고, 표 안에서 바로 담당 선생님을 지정할 수 있어요. 줄을 누르면 첨삭 화면으로 들어가요.'));
+  w.appendChild(el('div','hint','제출된 글을 한 줄씩 표로 보여줘요. 영역·상태·첨삭담당·학년·반·제출일로 좁혀보고, 표 안에서 바로 담당 선생님을 지정할 수 있어요. 줄을 누르면 첨삭 화면으로 들어가요.'));
   const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin:14px 0;align-items:flex-end';
   w.appendChild(filterBox);
   const mkSelect=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:110px';
@@ -4064,9 +4064,10 @@ function viewGradingManage(opts){teacherMount(w=>{
     return{wrap,inp};};
   const fAcademy=USER.isAdmin?mkSelect('학원'):null;
   const fType=mkSelect('영역'),fStatus=mkSelect('상태'),fTeacher=mkSelect('첨삭담당');
+  const fGrade=mkSelect('학년'),fCls=mkSelect('반');
   const fFrom=mkDateField('제출일(부터)'),fTo=mkDateField('제출일(까지)');
   if(fAcademy)filterBox.appendChild(fAcademy.wrap);
-  [fType,fStatus,fTeacher].forEach(f=>filterBox.appendChild(f.wrap));
+  [fType,fStatus,fTeacher,fGrade,fCls].forEach(f=>filterBox.appendChild(f.wrap));
   filterBox.appendChild(fFrom.wrap);filterBox.appendChild(fTo.wrap);
   const opt0=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
   EXAM_TYPE_OPTS.forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;fType.sel.appendChild(o);});
@@ -4093,14 +4094,36 @@ function viewGradingManage(opts){teacherMount(w=>{
     loading.remove();
     if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
     if(!all.length){tableWrap.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
+    // 학년·반 필터 — 선택지는 실제 제출물에 있는 값으로 채우고, 앞쪽 필터(학원→학년)를 고르면
+    // 그 범위 안에 있는 학년·반만 보여줘요(반 이름은 학년·학원마다 겹칠 수 있어서요).
+    const gradeLabel=v=>v?(/학년$/.test(v)?v:v+'학년'):'(학년 미입력)';
+    const fillGradeCls=()=>{
+      const curG=fGrade.sel.value,curC=fCls.sel.value;
+      const fa0=fAcademy?fAcademy.sel.value:'';
+      const inAcad=all.filter(s=>!fa0||s.academy===fa0);
+      fGrade.sel.innerHTML='';opt0(fGrade.sel,'전체');
+      const gs=Array.from(new Set(inAcad.map(s=>String(s.schoolGrade||'')))).sort((a,b)=>{if(!a)return 1;if(!b)return -1;return a.localeCompare(b,'ko',{numeric:true});});
+      gs.forEach(v=>{const o=el('option');o.value=v||'__none__';o.textContent=gradeLabel(v);fGrade.sel.appendChild(o);});
+      fGrade.sel.value=gs.some(v=>(v||'__none__')===curG)?curG:'';
+      const g1=fGrade.sel.value;
+      const inGrade=inAcad.filter(s=>!g1||(g1==='__none__'?!s.schoolGrade:String(s.schoolGrade||'')===g1));
+      fCls.sel.innerHTML='';opt0(fCls.sel,'전체');
+      const cs=Array.from(new Set(inGrade.map(s=>String(s.cls||'')))).sort((a,b)=>{if(!a)return 1;if(!b)return -1;return a.localeCompare(b,'ko',{numeric:true});});
+      cs.forEach(v=>{const o=el('option');o.value=v||'__none__';o.textContent=v||'(반 미입력)';fCls.sel.appendChild(o);});
+      fCls.sel.value=cs.some(v=>(v||'__none__')===curC)?curC:'';
+    };
+    fillGradeCls();
     const hasFeedback=submissionHasAnyFeedback;
     const parseDt=s=>{const raw=String(s.datetime||'').trim();if(!raw)return null;const d=new Date(raw.replace(' ','T'));return isNaN(d.getTime())?null:d;};
     const fmtElapsed=ms=>{if(ms==null)return '-';if(ms<0)ms=0;const t=Math.floor(ms/1000),dd=Math.floor(t/86400),h=Math.floor((t%86400)/3600),m=Math.floor((t%3600)/60),s2=t%60,z=x=>String(x).padStart(2,'0');return (dd>0?dd+'일 ':'')+z(h)+':'+z(m)+':'+z(s2);};
     const render=()=>{
       Array.from(tableWrap.children).forEach(c=>c.remove());
       const fa=fAcademy?fAcademy.sel.value:'',ft=fType.sel.value,fst=fStatus.sel.value,fte=fTeacher.sel.value,ff=fFrom.inp.value,ftt=fTo.inp.value;
+      const fg=fGrade.sel.value,fc=fCls.sel.value;
       let filtered=all.filter(s=>{
         if(fa&&s.academy!==fa)return false;
+        if(fg&&(fg==='__none__'?!!s.schoolGrade:String(s.schoolGrade||'')!==fg))return false;
+        if(fc&&(fc==='__none__'?!!s.cls:String(s.cls||'')!==fc))return false;
         if(ft&&submissionTypeLabel(s)!==ft)return false;
         const done=hasFeedback(s);
         // 문법 드릴(Pattern Drill)은 퀴즈·단어배열·영작 연습만 하고 "조건 영작"은 안 쓴 채로도
@@ -4172,7 +4195,10 @@ function viewGradingManage(opts){teacherMount(w=>{
       table.appendChild(tbody);
       tableWrap.appendChild(table);
     };
-    (fAcademy?[fAcademy.sel,fType.sel,fStatus.sel,fTeacher.sel]:[fType.sel,fStatus.sel,fTeacher.sel]).forEach(sel=>sel.addEventListener('change',render));
+    // 학원을 바꾸면 학년·반 선택지를, 학년을 바꾸면 반 선택지를 그 범위에 맞게 다시 채워요(render 전에 먼저).
+    if(fAcademy)fAcademy.sel.addEventListener('change',fillGradeCls);
+    fGrade.sel.addEventListener('change',fillGradeCls);
+    (fAcademy?[fAcademy.sel,fType.sel,fStatus.sel,fTeacher.sel,fGrade.sel,fCls.sel]:[fType.sel,fStatus.sel,fTeacher.sel,fGrade.sel,fCls.sel]).forEach(sel=>sel.addEventListener('change',render));
     [fFrom.inp,fTo.inp].forEach(inp=>inp.addEventListener('change',render));
     render();
   })();
