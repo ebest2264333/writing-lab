@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-07b';
+const APP_VERSION='2026-10-07e';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1451,7 +1451,12 @@ function matchAudience(target,val){
   const t=String(target||'').trim();
   if(!t)return true;
   const list=t.split(/[,，、]/).map(s=>s.trim()).filter(Boolean);
-  return list.includes(String(val||'').trim());
+  const v=String(val||'').trim();
+  if(list.includes(v))return true;
+  // 학년이 "중2"처럼 학교급이 붙어 저장돼도, 예전처럼 대상 학년을 숫자("2")로만 적어둔 콘텐츠가 계속 보이게
+  // 숫자 부분으로도 맞춰봐요(숫자만 적은 대상은 학교급 구분 없이 같은 숫자 학년 전체에 보여요).
+  const m=v.match(/^(?:초|중|고)(\d+)$/);
+  return !!(m&&list.includes(m[1]));
 }
 function visibleToUser(item){
   // 학생계정 탭에서 "테스트계정" 칸을 표시해둔 계정은, 학교/학년/반으로 공개 대상이 좁혀진 컨텐츠(예:
@@ -3692,6 +3697,22 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
 });}
 
 /* ================= 교사 대시보드 ================= */
+/* 학년을 "초1~초6 / 중1~중3 / 고1~고3"으로 보여줘요. 학생 정보엔 학년이 숫자(1~6)만 저장돼 있어서, 학교 이름의
+   끝글자(…초/초등학교, …중/중학교, …고/고등학교)로 학교급을 알아내요. 학교가 비어 있거나 판단이 안 되면 "N학년"
+   처럼 숫자만 보여줘요(이미 "초3"처럼 적혀 있으면 그대로 써요). */
+function stageGrade(school,grade){
+  const g=String(grade==null?'':grade).trim();if(!g)return '';
+  if(/^(초|중|고)\s*\d+/.test(g))return g.replace(/\s+/g,'').replace(/학년$/,'');
+  const n=(g.match(/\d+/)||[''])[0];if(!n)return g;
+  const sc=String(school||'').replace(/\s+/g,'');
+  let st='';
+  if(/(초등학교|초)$/.test(sc)||/초등/.test(sc))st='초';
+  else if(/(중학교|중)$/.test(sc)||/중학/.test(sc))st='중';
+  else if(/(고등학교|고)$/.test(sc)||/고등/.test(sc))st='고';
+  return st?st+n:n+'학년';
+}
+const GRADE_OPTIONS=['초1','초2','초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
+function stageGradeRank(label){const m=String(label).match(/^(초|중|고)(\d+)$/);if(!m)return 99;return {초:0,중:10,고:20}[m[1]]+Number(m[2]);}
 function uniqSorted(arr){return Array.from(new Set(arr.filter(v=>v!=null&&v!=='').map(v=>String(v)))).sort((a,b)=>a.localeCompare(b,'ko'));}
 const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기','글쓰기'],['기사요약','기사요약'],['수행평가','수행평가'],['Story Writing','Story Writing'],['Re-Writing','Re-Writing']];
 /** ⚠️ 예전 Apps Script 시절 제출물엔 "유형(종류)"이 s.type 필드에 저장돼 있었는데, 지금
@@ -3965,7 +3986,15 @@ function buildTeacherMenuSidebar(sidebarCol){
   }
   sidebarCol.appendChild(menuGroups);
 }
-function viewTeacherHome(){clearTeacherNav();teacherMount(w=>{
+/* 초·중·고 학년 일괄 변환 — 전체 관리자가 로그인해서 홈에 들어오면 서버에 "자동 1회 실행"을 한 번 요청해요.
+   서버가 이미 끝났는지(플래그) 확인해서, 끝난 뒤에는 아무것도 안 해요(그래서 버튼 없이 한 번만 적용돼요). */
+let GRADE_MIGRATION_TRIED=false;
+function tryAutoGradeMigration(){
+  if(GRADE_MIGRATION_TRIED||!USER.isAdmin||!SUBMIT_URL)return;
+  GRADE_MIGRATION_TRIED=true;
+  try{fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'migrateStudentGrades',auto:true,role:'teacher',requesterIsAdmin:true,requesterIsAcademyAdmin:false,requesterAcademy:USER.academy||''})}).catch(()=>{});}catch(e){}
+}
+function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMount(w=>{
   const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap';
   titleRow.appendChild(el('h1','title',USER.name+' 선생님'+(USER.isAdmin?' · 전체 학원 관리자':(USER.academy?' · '+USER.academy:''))));
   w.appendChild(titleRow);
@@ -4099,17 +4128,16 @@ function viewGradingManage(opts){teacherMount(w=>{
     if(!all.length){tableWrap.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
     // 학년·반 필터 — 선택지는 실제 제출물에 있는 값으로 채우고, 앞쪽 필터(학원→학년)를 고르면
     // 그 범위 안에 있는 학년·반만 보여줘요(반 이름은 학년·학원마다 겹칠 수 있어서요).
-    const gradeLabel=v=>v?(/학년$/.test(v)?v:v+'학년'):'(학년 미입력)';
     const fillGradeCls=()=>{
       const curG=fGrade.sel.value,curC=fCls.sel.value;
       const fa0=fAcademy?fAcademy.sel.value:'';
       const inAcad=all.filter(s=>!fa0||s.academy===fa0);
       fGrade.sel.innerHTML='';opt0(fGrade.sel,'전체');
-      const gs=Array.from(new Set(inAcad.map(s=>String(s.schoolGrade||'')))).sort((a,b)=>{if(!a)return 1;if(!b)return -1;return a.localeCompare(b,'ko',{numeric:true});});
-      gs.forEach(v=>{const o=el('option');o.value=v||'__none__';o.textContent=gradeLabel(v);fGrade.sel.appendChild(o);});
+      const gs=Array.from(new Set(inAcad.map(s=>stageGrade(s.school,s.schoolGrade)))).sort((a,b)=>{if(!a)return 1;if(!b)return -1;const ra=stageGradeRank(a),rb=stageGradeRank(b);return ra!==rb?ra-rb:a.localeCompare(b,'ko',{numeric:true});});
+      gs.forEach(v=>{const o=el('option');o.value=v||'__none__';o.textContent=v||'(학년 미입력)';fGrade.sel.appendChild(o);});
       fGrade.sel.value=gs.some(v=>(v||'__none__')===curG)?curG:'';
       const g1=fGrade.sel.value;
-      const inGrade=inAcad.filter(s=>!g1||(g1==='__none__'?!s.schoolGrade:String(s.schoolGrade||'')===g1));
+      const inGrade=inAcad.filter(s=>!g1||(g1==='__none__'?!stageGrade(s.school,s.schoolGrade):stageGrade(s.school,s.schoolGrade)===g1));
       fCls.sel.innerHTML='';opt0(fCls.sel,'전체');
       const cs=Array.from(new Set(inGrade.map(s=>String(s.cls||'')))).sort((a,b)=>{if(!a)return 1;if(!b)return -1;return a.localeCompare(b,'ko',{numeric:true});});
       cs.forEach(v=>{const o=el('option');o.value=v||'__none__';o.textContent=v||'(반 미입력)';fCls.sel.appendChild(o);});
@@ -4125,7 +4153,7 @@ function viewGradingManage(opts){teacherMount(w=>{
       const fg=fGrade.sel.value,fc=fCls.sel.value;
       let filtered=all.filter(s=>{
         if(fa&&s.academy!==fa)return false;
-        if(fg&&(fg==='__none__'?!!s.schoolGrade:String(s.schoolGrade||'')!==fg))return false;
+        if(fg&&(fg==='__none__'?!!stageGrade(s.school,s.schoolGrade):stageGrade(s.school,s.schoolGrade)!==fg))return false;
         if(fc&&(fc==='__none__'?!!s.cls:String(s.cls||'')!==fc))return false;
         if(ft&&submissionTypeLabel(s)!==ft)return false;
         const done=hasFeedback(s);
@@ -4171,7 +4199,7 @@ function viewGradingManage(opts){teacherMount(w=>{
         tr.appendChild(td('<b>'+escH(s.name||s.id||'')+'</b><div style="color:#6b7684;font-size:11.5px">('+escH(s.id||'')+')</div>'));
         tr.appendChild(td(escH(submissionTypeLabel(s)||'-')));
         tr.appendChild(td(escH(s.point||s.chapter||'-')));
-        tr.appendChild(td(escH([s.school,s.schoolGrade&&(s.schoolGrade+'학년'),s.cls].filter(Boolean).join(' · ')||'-')));
+        tr.appendChild(td(escH([s.school,stageGrade(s.school,s.schoolGrade),s.cls].filter(Boolean).join(' · ')||'-')));
         const teacherTd=el('td');teacherTd.style.cssText='padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);vertical-align:top';
         const tsel=el('select','in');tsel.style.cssText='padding:4px 6px;font-size:12.5px;border-radius:8px';
         const o0=el('option');o0.value='';o0.textContent='미지정';tsel.appendChild(o0);
@@ -4360,7 +4388,7 @@ function viewReportStudentList(){teacherMount(w=>{
     studentsOut.forEach(st=>{
       const row=el('div','point');
       row.appendChild(el('div','dot','●'));
-      const ctx=[USER.isAdmin?st.academy:'',st.school,st.schoolGrade&&(st.schoolGrade+'학년'),st.cls].filter(Boolean).join(' · ');
+      const ctx=[USER.isAdmin?st.academy:'',st.school,stageGrade(st.school,st.schoolGrade),st.cls].filter(Boolean).join(' · ');
       row.appendChild(el('div','pt',(st.name||st.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+st.id+(ctx?' · '+ctx:'')+')</span>'));
       row.appendChild(el('div','meta',st.subs.length+'건 제출 · 최근 '+String(st.lastAt||'').slice(0,16)));
       row.onclick=()=>viewReportStudentSubmissions(st.id,st.name||st.id,st.subs);
@@ -4379,7 +4407,7 @@ function viewReportStudentSubmissions(studentId,studentName,subs,backFn){teacher
   const summaryRow=el('div');summaryRow.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 14px';
   summaryRow.appendChild(el('div','hint',sorted.length+'건 제출됨'));
   const rewriteReportBtn=el('button','btn ghost','📊 첨삭·Re-Writing 종합 리포트');rewriteReportBtn.type='button';rewriteReportBtn.style.cssText='padding:6px 14px;font-size:12.5px';
-  const ctx=[sorted[0]&&sorted[0].school,sorted[0]&&sorted[0].schoolGrade&&(sorted[0].schoolGrade+'학년'),sorted[0]&&sorted[0].cls].filter(Boolean).join(' · ');
+  const ctx=[sorted[0]&&sorted[0].school,sorted[0]&&stageGrade(sorted[0].school,sorted[0].schoolGrade),sorted[0]&&sorted[0].cls].filter(Boolean).join(' · ');
   rewriteReportBtn.onclick=()=>openRewriteReportPicker({studentId,studentName,subs:sorted,ctx});
   summaryRow.appendChild(rewriteReportBtn);
   w.appendChild(summaryRow);
@@ -5755,7 +5783,7 @@ const STUDENT_FIELDS=[
   // 콘텐츠에 "잠원중"이라고 적어뒀는데 학생 정보엔 "잠원중학교"라고 적으면 그 콘텐츠가 안 보여요).
   // 그래서 형식을 여기 직접 보이게 적어뒀어요.
   {key:'school',label:'학교',ph:'예) 잠원중',note:'꼭 "OO초"·"OO중"·"OO고" 형식으로 적어주세요 (예: 잠원중, 서울고). "잠원중학교"처럼 적으면 콘텐츠 대상 매칭이 안 될 수 있어요.'},
-  {key:'schoolGrade',label:'학년',ph:'예) 2',note:'숫자만 적어주세요 ("2학년"이 아니라 2).'},
+  {key:'schoolGrade',label:'학년',type:'gradeSelect'},
   {key:'cls',label:'반',ph:'예) A반 (없으면 비워둬도 돼요)'},
   {key:'academy',label:'학원',ph:'예) 아이콘 학원 (한 학원만 쓰면 비워둬도 돼요)'}
 ];
@@ -5798,7 +5826,7 @@ function viewStudentManage(){teacherMount(w=>{
     const renderRow=(container,s)=>{
       const row=el('div','point');row.style.cursor='default';
       row.appendChild(el('div','dot','●'));
-      const ctx=[s.academy,s.school,s.schoolGrade,s.cls].filter(Boolean).join(' · ');
+      const ctx=[s.academy,s.school,stageGrade(s.school,s.schoolGrade),s.cls].filter(Boolean).join(' · ');
       row.appendChild(el('div','pt',(s.name||s.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+s.id+(ctx?' · '+ctx:'')+')</span>'));
       const btnRow=el('div');btnRow.style.cssText='display:flex;gap:8px;margin-top:8px';
       const editBtn=el('button','btn ghost','✏️ 수정');editBtn.type='button';editBtn.style.cssText='padding:6px 14px;font-size:13px';
@@ -5871,9 +5899,20 @@ function viewStudentForm(existing){teacherMount(w=>{
   STUDENT_FIELDS.forEach(f=>{
     const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:6px';
     wrap.appendChild(el('div','hint',f.label));
-    const inp=el('input','in');inp.type='text';inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
+    let inp;
+    if(f.type==='gradeSelect'){
+      // 학년은 초1~고3 드롭다운으로 골라요. 예전에 숫자(1~6)만 저장된 학생은 학교 이름(…초/…중/…고)으로 학교급을 알아내서 미리 선택해둬요.
+      inp=el('select','in');inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
+      const o0=el('option');o0.value='';o0.textContent='선택 안 함';inp.appendChild(o0);
+      GRADE_OPTIONS.forEach(v=>{const o=el('option');o.value=v;o.textContent=v;inp.appendChild(o);});
+      const cur=existing?stageGrade(existing.school,existing.schoolGrade):'';
+      if(cur&&!GRADE_OPTIONS.includes(cur)){const o=el('option');o.value=cur;o.textContent=cur+' (학교급 미확인)';inp.appendChild(o);}
+      inp.value=cur;
+    }else{
+    inp=el('input','in');inp.type='text';inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
     if(f.ph)inp.placeholder=f.ph;
     if(existing&&existing[f.key]!==undefined)inp.value=existing[f.key];
+    }
     if(f.key==='academy'&&lockAcademy){inp.value=USER.academy||'';inp.disabled=true;inp.style.background='#f2f2f0';}
     wrap.appendChild(inp);
     if(f.note){const noteEl=el('div',null,f.note);noteEl.style.cssText='font-size:12px;color:#c2650a';wrap.appendChild(noteEl);}
@@ -6107,7 +6146,7 @@ function viewTeacherStudent(studentId,studentName,afterLoad){
       const data=await res.json();
       if(data&&data.ok&&(data.submissions||[]).length){
         const first=data.submissions[0];
-        ctx=[first.school,first.schoolGrade&&(first.schoolGrade+'학년'),first.cls].filter(Boolean).join(' · ');
+        ctx=[first.school,stageGrade(first.school,first.schoolGrade),first.cls].filter(Boolean).join(' · ');
       }
       if(data&&data.ok)subs=data.submissions||[];
     }catch(e){}
