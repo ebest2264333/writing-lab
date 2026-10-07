@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-07e';
+const APP_VERSION='2026-10-12d';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3713,6 +3713,7 @@ function stageGrade(school,grade){
 }
 const GRADE_OPTIONS=['초1','초2','초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
 function stageGradeRank(label){const m=String(label).match(/^(초|중|고)(\d+)$/);if(!m)return 99;return {초:0,중:10,고:20}[m[1]]+Number(m[2]);}
+function sortStageGrades(list){return list.slice().sort((a,b)=>{const ra=stageGradeRank(a),rb=stageGradeRank(b);return ra!==rb?ra-rb:a.localeCompare(b,'ko',{numeric:true});});}
 function uniqSorted(arr){return Array.from(new Set(arr.filter(v=>v!=null&&v!=='').map(v=>String(v)))).sort((a,b)=>a.localeCompare(b,'ko'));}
 const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기','글쓰기'],['기사요약','기사요약'],['수행평가','수행평가'],['Story Writing','Story Writing'],['Re-Writing','Re-Writing']];
 /** ⚠️ 예전 Apps Script 시절 제출물엔 "유형(종류)"이 s.type 필드에 저장돼 있었는데, 지금
@@ -4042,13 +4043,13 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
     const opt0=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
     if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
     opt0(fSchool.sel,'학교 전체');uniqSorted(all.map(s=>s.school)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fSchool.sel.appendChild(o);});
-    opt0(fGrade.sel,'학년 전체');uniqSorted(all.map(s=>s.schoolGrade)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fGrade.sel.appendChild(o);});
+    opt0(fGrade.sel,'학년 전체');sortStageGrades(uniqSorted(all.map(s=>stageGrade(s.school,s.schoolGrade)))).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fGrade.sel.appendChild(o);});
     opt0(fCls.sel,'반 전체');uniqSorted(all.map(s=>s.cls)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fCls.sel.appendChild(o);});
     filterBox.style.display='flex';
     const render=()=>{
       Array.from(box.children).slice(1).forEach(c=>c.remove());
       const fa=fAcademy?fAcademy.sel.value:'',fs=fSchool.sel.value,fg=fGrade.sel.value,fc=fCls.sel.value,ft=fType.sel.value;
-      const filtered=all.filter(s=>(!fa||s.academy===fa)&&(!fs||s.school===fs)&&(!fg||s.schoolGrade===fg)&&(!fc||s.cls===fc)&&(!ft||submissionTypeLabel(s)===ft));
+      const filtered=all.filter(s=>(!fa||s.academy===fa)&&(!fs||s.school===fs)&&(!fg||stageGrade(s.school,s.schoolGrade)===fg)&&(!fc||s.cls===fc)&&(!ft||submissionTypeLabel(s)===ft));
       const counts={};
       filtered.forEach(s=>{
         if(!s.id)return;
@@ -4061,7 +4062,7 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
       studentsOut.forEach(s=>{
         const row=el('div','point');
         row.appendChild(el('div','dot','●'));
-        const ctx=[USER.isAdmin?s.academy:'',s.school,s.schoolGrade&&(s.schoolGrade+'학년'),s.cls].filter(Boolean).join(' · ');
+        const ctx=[USER.isAdmin?s.academy:'',s.school,stageGrade(s.school,s.schoolGrade),s.cls].filter(Boolean).join(' · ');
         row.appendChild(el('div','pt',(s.name||s.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+s.id+(ctx?' · '+ctx:'')+')</span>'));
         row.appendChild(el('div','meta',s.count+'건 제출 · 최근 '+String(s.lastAt||'').slice(0,16)));
         row.onclick=()=>viewTeacherStudent(s.id,s.name||s.id);
@@ -4486,7 +4487,7 @@ const CONTENT_FORMS={
     {key:'evalAreaText',label:'평가 영역 (선택 · 학생에게도 보여요) — 한 줄에 하나씩: 영역명 | 영역 만점 | 평가 요소1; 평가 요소2 ...',type:'textarea',ph:'내용 | 10 | 주제에 맞는 내용 전개; 구체적인 예시 포함\n어휘·문법 | 5 | 문법 오류 없이 쓰기; 다양한 어휘 사용'},
     {key:'rubricLevelsText',label:'수행 수준별 채점 기준 (선택 · 학생에게는 안 보이고 "AI 예상 채점" 때만 참고해요) — 한 줄에 하나씩: 영역명 | 상 설명 | 중 설명 | 하 설명',type:'textarea',ph:'내용 | 상(8~10점): 주제와 관련된 내용을 구체적 예시와 함께 전개함 | 중(5~7점): 내용은 있으나 예시가 부족함 | 하(0~4점): 주제에서 벗어남'},
     {key:'targetSchool',label:'대상 학교',type:'text'},
-    {key:'targetGrade',label:'대상 학년 (숫자만 — 예: 3)',type:'text',numeric:true},
+    {key:'targetGrade',label:'대상 학년 (예: 중3 — 여러 개는 쉼표로, 숫자만 적으면 초·중·고 모두 해당)',type:'text'},
     {key:'targetClass',label:'대상 반',type:'text'},
     {key:'condText',label:'조건 (한 줄에 하나씩)',type:'textarea',ph:'최소 4문장 이상 | 문장수:4\n비교급 사용 | regex:more\\s+\\w+\\s+than'}
   ]},
@@ -4886,10 +4887,10 @@ function viewAddContentForm(type,editId){teacherMount(w=>{
   genRow.appendChild(genBtn);genRow.appendChild(genMsg);
   aiBox.appendChild(genRow);
   const imgDivider=el('div','hint','— 또는 —');imgDivider.style.cssText='margin:2px 0';aiBox.appendChild(imgDivider);
-  aiBox.appendChild(el('div','hint','수행평가 안내문이나 과제지를 사진으로 찍어서 올리면, 사진 속 내용을 읽고 제목·과제 설명·조건 등을 자동으로 채워줘요 (제목을 안 써도 돼요). 사진에 없는 세부 조건(예: 특정 문법 사용)은 과제 설명 문장 안에 그대로 담아주고, 문장 개수처럼 정확히 셀 수 있는 조건만 조건 칸에 넣어요.'));
+  aiBox.appendChild(el('div','hint','수행평가 안내문이나 과제지를 사진으로 찍어서(여러 장 한꺼번에 선택 가능) 올리면, 사진 속 내용을 읽고 제목·과제 설명·조건 등을 자동으로 채워줘요. 과제지에 학생이 적어 넣는 칸·단계·표가 있으면 같은 이름·순서로 🧠 생각 정리 칸(마인드맵)에 옮겨줘서, 학생이 화면에서 같은 뼈대를 채울 수 있어요 (제목을 안 써도 돼요). 사진에 없는 세부 조건(예: 특정 문법 사용)은 과제 설명 문장 안에 그대로 담아주고, 문장 개수처럼 정확히 셀 수 있는 조건만 조건 칸에 넣어요.'));
   const imgRow=el('div');imgRow.style.cssText='display:flex;gap:10px;align-items:center;flex-wrap:wrap';
   const imgBtn=el('button','btn blue','📷 사진으로 자동 채우기');imgBtn.type='button';imgBtn.style.cssText='padding:9px 16px;font-size:14px';
-  const imgInput=el('input');imgInput.type='file';imgInput.accept='image/*';imgInput.style.display='none';
+  const imgInput=el('input');imgInput.type='file';imgInput.accept='image/*';imgInput.multiple=true;imgInput.style.display='none';
   const imgMsg=el('span','fx');imgMsg.style.marginTop='0';
   imgRow.appendChild(imgBtn);imgRow.appendChild(imgMsg);
   aiBox.appendChild(imgRow);aiBox.appendChild(imgInput);
@@ -5485,22 +5486,33 @@ function viewAddContentForm(type,editId){teacherMount(w=>{
       if(r.error){
         const errEl=el('div','hint',r.error);errEl.style.color='#b91c1c';card.appendChild(errEl);
       } else if(r.fields){
-        const applyBtn=el('button','btn ghost','이 결과 적용하기');applyBtn.type='button';
+        const applyBtn=el('button','btn ghost','체크한 칸 적용하기');applyBtn.type='button';
         applyBtn.style.cssText='padding:6px 12px;font-size:13px;border-color:'+p.color+';color:'+p.color;
+        head.appendChild(applyBtn);
+        // 필요 없는 부분은 체크를 풀어서 뺄 수 있어요. 지금 칸이 비어 있으면 기본으로 체크돼 있고,
+        // 이미 내용이 있는 칸은 기본으로 체크가 풀려 있어요(체크하면 AI 결과로 덮어써요).
+        const rowsBox=el('div');rowsBox.style.cssText='margin-top:6px;display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto';
+        const checks=[];
+        Object.keys(r.fields).forEach(k=>{
+          const f=spec.fields.find(x=>x.key===k);
+          const hasVal=!!(refs[k]&&refs[k].value.trim());
+          const row=el('label');row.style.cssText='display:flex;gap:8px;align-items:flex-start;font-size:12.5px;cursor:pointer;border:1px solid rgba(0,0,0,.08);border-radius:8px;padding:6px 8px';
+          const cb=el('input');cb.type='checkbox';cb.checked=!hasVal;cb.style.marginTop='3px';
+          const body=el('div');body.style.cssText='flex:1;min-width:0';
+          const tt=el('div',null,(f?f.label:k)+(hasVal?' · 지금 내용이 있어요(체크하면 덮어써요)':''));tt.style.cssText='font-weight:700;color:#3b4151';
+          const tx=el('div');tx.style.cssText='color:#6b7684;white-space:pre-wrap;word-break:break-word';tx.textContent=String(r.fields[k]||'');
+          body.appendChild(tt);body.appendChild(tx);row.appendChild(cb);row.appendChild(body);rowsBox.appendChild(row);
+          checks.push({k,cb});
+        });
+        if(!checks.length){const none=el('div','hint','(채울 내용이 없었어요)');rowsBox.appendChild(none);}
+        card.appendChild(rowsBox);
         applyBtn.onclick=()=>{
           let n=0;
-          Object.keys(r.fields).forEach(k=>{ if(refs[k]&&!refs[k].value.trim()){refs[k].value=r.fields[k];n++;} });
-          applyBtn.textContent=n?('✅ '+n+'개 칸 적용 완료'):'채울 빈 칸 없음';
+          checks.forEach(({k,cb})=>{ if(cb.checked&&refs[k]){refs[k].value=r.fields[k];n++;} });
+          applyBtn.textContent=n?('✅ '+n+'개 칸 적용 완료'):'체크한 칸이 없어요';
           if(n)refreshPreview();
           saveDraftLocal();
         };
-        head.appendChild(applyBtn);
-        const preview=el('div');preview.style.cssText='font-size:12.5px;color:#6b7684;margin-top:6px;white-space:pre-wrap;max-height:160px;overflow:auto';
-        preview.textContent=Object.keys(r.fields).map(k=>{
-          const f=spec.fields.find(x=>x.key===k);
-          return '['+(f?f.label:k)+']\n'+r.fields[k];
-        }).join('\n\n')||'(채울 내용이 없었어요)';
-        card.appendChild(preview);
       }
       compareBox.appendChild(card);
     });
@@ -5532,20 +5544,23 @@ function viewAddContentForm(type,editId){teacherMount(w=>{
   };
   imgBtn.onclick=()=>imgInput.click();
   imgInput.onchange=async()=>{
-    const file=imgInput.files&&imgInput.files[0];
-    if(!file)return;
-    imgMsg.className='fx';imgMsg.textContent='사진을 준비하는 중…';
+    // 사진을 여러 장 한꺼번에 골라도 돼요(과제지가 여러 장일 때) — 전부 같은 과제의 일부로 보고 함께 읽어요(최대 8장).
+    const files=Array.from(imgInput.files||[]).slice(0,8);
+    if(!files.length)return;
+    imgMsg.className='fx';imgMsg.textContent='사진 '+files.length+'장을 준비하는 중…';
     try{
-      const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});
-      const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=dataUrl;});
-      const maxDim=1600;
-      let w2=img.width,h2=img.height;
-      if(w2>maxDim||h2>maxDim){const scale=maxDim/Math.max(w2,h2);w2=Math.round(w2*scale);h2=Math.round(h2*scale);}
-      const canvas=document.createElement('canvas');canvas.width=w2;canvas.height=h2;
-      canvas.getContext('2d').drawImage(img,0,0,w2,h2);
-      const jpegUrl=canvas.toDataURL('image/jpeg',0.82);
-      const base64=jpegUrl.split(',')[1];
-      await runAiFill({image:{mediaType:'image/jpeg',data:base64}},imgBtn,imgMsg,'사진을 읽는 중… (몇 초 걸릴 수 있어요)');
+      const images=[];
+      for(const file of files){
+        const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});
+        const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=dataUrl;});
+        const maxDim=files.length>3?1300:1600;
+        let w2=img.width,h2=img.height;
+        if(w2>maxDim||h2>maxDim){const scale=maxDim/Math.max(w2,h2);w2=Math.round(w2*scale);h2=Math.round(h2*scale);}
+        const canvas=document.createElement('canvas');canvas.width=w2;canvas.height=h2;
+        canvas.getContext('2d').drawImage(img,0,0,w2,h2);
+        images.push({mediaType:'image/jpeg',data:canvas.toDataURL('image/jpeg',0.8).split(',')[1]});
+      }
+      await runAiFill({images},imgBtn,imgMsg,'사진 '+images.length+'장을 읽는 중… (몇 초 걸릴 수 있어요)');
     }catch(e){
       imgMsg.className='fx no';imgMsg.textContent='사진을 처리하지 못했어요. 다른 사진으로 시도해주세요.';
     }finally{
@@ -5866,12 +5881,12 @@ function viewStudentManage(){teacherMount(w=>{
       const byAcademy=wantAcademy?students.filter(s=>String(s.academy||'').trim()===wantAcademy):students;
       fillOptions(fAcademy.sel,uniq('academy'),'학원 전체');fAcademy.sel.value=wantAcademy;
       fillOptions(fSchool.sel,Array.from(new Set(byAcademy.map(s=>String(s.school||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko')),'학교 전체');fSchool.sel.value=wantSchool;
-      fillOptions(fGrade.sel,Array.from(new Set(byAcademy.map(s=>String(s.schoolGrade||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko',{numeric:true})),'학년 전체');fGrade.sel.value=wantGrade;
+      fillOptions(fGrade.sel,sortStageGrades(Array.from(new Set(byAcademy.map(s=>stageGrade(s.school,s.schoolGrade)).filter(Boolean)))),'학년 전체');fGrade.sel.value=wantGrade;
       fillOptions(fCls.sel,Array.from(new Set(byAcademy.map(s=>String(s.cls||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko',{numeric:true})),'반 전체');fCls.sel.value=wantCls;
       const filtered=students.filter(s=>
         (!wantAcademy||String(s.academy||'').trim()===wantAcademy)&&
         (!wantSchool||String(s.school||'').trim()===wantSchool)&&
-        (!wantGrade||String(s.schoolGrade||'').trim()===wantGrade)&&
+        (!wantGrade||stageGrade(s.school,s.schoolGrade)===wantGrade)&&
         (!wantCls||String(s.cls||'').trim()===wantCls)
       ).sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
       if(!filtered.length){box.appendChild(el('div','hint','조건에 맞는 학생이 없어요.'));return;}
@@ -5880,7 +5895,7 @@ function viewStudentManage(){teacherMount(w=>{
     filterBox.style.display='flex';
     fillOptions(fAcademy.sel,uniq('academy'),'학원 전체');
     fillOptions(fSchool.sel,uniq('school'),'학교 전체');
-    fillOptions(fGrade.sel,uniq('schoolGrade'),'학년 전체');
+    fillOptions(fGrade.sel,sortStageGrades(Array.from(new Set(students.map(s=>stageGrade(s.school,s.schoolGrade)).filter(Boolean)))),'학년 전체');
     fillOptions(fCls.sel,uniq('cls'),'반 전체');
     [fAcademy,fSchool,fGrade,fCls].forEach(f=>f.sel.onchange=render);
     render();
