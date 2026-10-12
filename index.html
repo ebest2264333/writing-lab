@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-12d';
+const APP_VERSION='2026-10-12e';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -4023,6 +4023,14 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
       if(data&&data.ok)all=data.submissions||[];
     }catch(e){}
     if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+    /* 등록만 되고 아직 제출이 없는 학생도 목록에 보이도록 학생 명단을 따로 가져와요(제출 0건으로 표시). */
+    let roster=[];
+    try{
+      const rr=await fetch(SUBMIT_URL+'?view=studentList&_t='+Date.now(),{cache:'no-store'});
+      const rd=await rr.json();
+      if(rd&&rd.ok)roster=rd.students||[];
+    }catch(e){}
+    if(!USER.isAdmin)roster=roster.filter(s=>String(s.academy||'').trim()===String(USER.academy||'').trim());
     loading.remove();
     /* 실시간 구독 — 학생이 새로 제출하거나 다른 선생님이 첨삭을 남기면, 새로고침 없이 이 목록에
        바로 반영돼요. render()가 이미 준비돼 있으면 목록만 다시 그리고(renderReady), 처음부터
@@ -4039,12 +4047,12 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
       },err=>console.warn('교사 제출물 실시간 구독 오류:',err));
       trackViewUnsub(unsub);
     }
-    if(!all.length){box.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
+    if(!all.length&&!roster.length){box.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
     const opt0=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
-    if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
-    opt0(fSchool.sel,'학교 전체');uniqSorted(all.map(s=>s.school)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fSchool.sel.appendChild(o);});
-    opt0(fGrade.sel,'학년 전체');sortStageGrades(uniqSorted(all.map(s=>stageGrade(s.school,s.schoolGrade)))).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fGrade.sel.appendChild(o);});
-    opt0(fCls.sel,'반 전체');uniqSorted(all.map(s=>s.cls)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fCls.sel.appendChild(o);});
+    if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.concat(roster).map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
+    opt0(fSchool.sel,'학교 전체');uniqSorted(all.concat(roster).map(s=>s.school)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fSchool.sel.appendChild(o);});
+    opt0(fGrade.sel,'학년 전체');sortStageGrades(uniqSorted(all.concat(roster).map(s=>stageGrade(s.school,s.schoolGrade)))).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fGrade.sel.appendChild(o);});
+    opt0(fCls.sel,'반 전체');uniqSorted(all.concat(roster).map(s=>s.cls)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fCls.sel.appendChild(o);});
     filterBox.style.display='flex';
     const render=()=>{
       Array.from(box.children).slice(1).forEach(c=>c.remove());
@@ -4057,6 +4065,11 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
         counts[s.id].count++;
         if(String(s.datetime||'')>counts[s.id].lastAt)counts[s.id].lastAt=String(s.datetime||'');
       });
+      if(!ft)roster.forEach(r=>{
+        if(!r.id||counts[r.id])return;
+        if((fa&&r.academy!==fa)||(fs&&r.school!==fs)||(fg&&stageGrade(r.school,r.schoolGrade)!==fg)||(fc&&r.cls!==fc))return;
+        counts[r.id]={id:r.id,name:r.name,academy:r.academy,school:r.school,schoolGrade:r.schoolGrade,cls:r.cls,count:0,lastAt:''};
+      });
       const studentsOut=Object.values(counts).sort((a,b)=>b.lastAt<a.lastAt?-1:1);
       if(!studentsOut.length){box.appendChild(el('div','hint','조건에 맞는 제출 내역이 없어요.'));return;}
       studentsOut.forEach(s=>{
@@ -4064,7 +4077,7 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
         row.appendChild(el('div','dot','●'));
         const ctx=[USER.isAdmin?s.academy:'',s.school,stageGrade(s.school,s.schoolGrade),s.cls].filter(Boolean).join(' · ');
         row.appendChild(el('div','pt',(s.name||s.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+s.id+(ctx?' · '+ctx:'')+')</span>'));
-        row.appendChild(el('div','meta',s.count+'건 제출 · 최근 '+String(s.lastAt||'').slice(0,16)));
+        row.appendChild(el('div','meta',s.count?s.count+'건 제출 · 최근 '+String(s.lastAt||'').slice(0,16):'아직 제출 없음'));
         row.onclick=()=>viewTeacherStudent(s.id,s.name||s.id);
         box.appendChild(row);
       });
