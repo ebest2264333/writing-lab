@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-12e';
+const APP_VERSION='2026-10-15a';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1833,8 +1833,9 @@ function viewLogin(){setWide(false);mountView(w=>{
       return;
     }
     const match=(students||[]).find(s=>String(s.id||'').toLowerCase()===idv.toLowerCase());
-    if(!match){fx.className='fx no';fx.textContent='등록되지 않은 아이디예요. 선생님께 확인하세요.';return;}
+    if(!match||studentStatus(match)==='퇴원'){fx.className='fx no';fx.textContent='아이디를 확인해주세요.';return;}
     if(String(match.pw||'')!==pwv){fx.className='fx no';fx.textContent='비밀번호가 올바르지 않아요.';pi.value='';pi.focus();return;}
+    if(studentStatus(match)==='휴원'){fx.className='fx no';fx.textContent='휴원 중이에요. 선생님께 문의해주세요.';return;}
     USER.id=match.id;USER.name=match.name||match.id;USER.role='student';
     USER.school=match.school||'';USER.schoolGrade=match.schoolGrade||'';USER.cls=match.cls||'';USER.academy=match.academy||'';
     USER.isTestAccount=!!String(match.isTestAccount||'').trim();
@@ -3240,6 +3241,9 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
       if(data&&data.ok)subs=data.submissions||[];
     }catch(e){}
     loading.remove();
+    // 휴원·퇴원 학생은 기본으로 숨기고, 체크박스를 켜면 같이 보여요.
+    const inactiveIds=new Set(roster.filter(isInactiveStudent).map(r=>String(r.id)));
+    let showInactive=false;
     /* 실시간 구독 — 선생님이 첨삭을 남기거나 내가 다른 기기에서 새로 제출하면, 새로고침 없이
        바로 반영돼요. 이 화면은 제출물마다 "수정하기" 같은 인라인 폼이 있어서 부분만 다시 그리기
        어려워요 — 그래서 editSubmission 저장 뒤 지금까지 해온 것과 같은 방식으로, 최초 한 번을
@@ -3388,7 +3392,17 @@ function viewRewriteList(){setWide(true);mountView(w=>{
   filterWrap.appendChild(el('div','hint','컨텐츠 종류'));
   const typeSel=el('select','in');typeSel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';
   filterWrap.appendChild(typeSel);
-  w.appendChild(filterWrap);
+  // 한 것/안 한 것을 나눠서 볼 수 있는 "진행 상태" 드롭다운 (종류 드롭다운 옆에 나란히 보여줘요).
+  const statusWrap=el('div');statusWrap.style.cssText='display:flex;flex-direction:column;gap:4px;max-width:220px';
+  statusWrap.appendChild(el('div','hint','진행 상태'));
+  const statusSel=el('select','in');statusSel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';
+  [['','전체'],['todo','아직 안 한 것'],['done','완료한 것']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;statusSel.appendChild(o);});
+  statusWrap.appendChild(statusSel);
+  const filterRow=el('div');filterRow.style.cssText='display:flex;gap:12px;flex-wrap:wrap;margin-top:12px';
+  filterWrap.style.marginTop='0';
+  filterRow.appendChild(filterWrap);filterRow.appendChild(statusWrap);
+  w.appendChild(filterRow);
+  const summary=el('div','hint');summary.style.marginTop='10px';w.appendChild(summary);
   const box=el('div');box.style.marginTop='14px';
   const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
   w.appendChild(box);
@@ -3400,6 +3414,15 @@ function viewRewriteList(){setWide(true);mountView(w=>{
       if(data&&data.ok)subs=data.submissions||[];
     }catch(e){}
     loading.remove();
+    // 이미 제출한 Re-Writing(chapter==='Rewriting')을 원본 제목(point)별로 모아서, 목록에서 "완료" 표시를 해요.
+    const doneMap=new Map();
+    subs.forEach(s=>{
+      if(String(s.chapter||'')!=='Rewriting')return;
+      const k=String(s.point||'');
+      const prev=doneMap.get(k);
+      if(!prev||String(s.datetime||'')>String(prev.datetime||''))doneMap.set(k,s);
+    });
+    const doneOf=s=>doneMap.get(String(s.point||s.chapter||''));
     const eligibleAll=subs.filter(s=>submissionTypeLabel(s)!=='Re-Writing'&&s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
     // 같은 컨텐츠(같은 종류+챕터+제목)를 여러 번 제출한 경우(더블클릭 등으로 거의 동시에 두 번
     // 저장된 옛날 기록 포함) 다시쓰기 목록엔 그때마다 한 줄씩 다 나와서 똑같은 카드가 여러 개
@@ -3412,25 +3435,30 @@ function viewRewriteList(){setWide(true);mountView(w=>{
       if(!prev||String(s.datetime||'')>String(prev.datetime||''))eligibleByKey.set(key,s);
     });
     const eligible=Array.from(eligibleByKey.values());
-    if(!eligible.length){filterWrap.style.display='none';box.appendChild(el('div','hint','아직 다시 써볼 수 있는 글이 없어요. AI 첨삭이 완료된 제출물이 있어야 다시쓰기를 할 수 있어요.'));return;}
+    if(!eligible.length){filterRow.style.display='none';box.appendChild(el('div','hint','아직 다시 써볼 수 있는 글이 없어요. AI 첨삭이 완료된 제출물이 있어야 다시쓰기를 할 수 있어요.'));return;}
     // 실제로 그 학생 글에 있는 컨텐츠 종류만 드롭다운에 보여줘요 (전체 종류를 다 보여주면 선택해도 텅 비는 경우가 생겨서).
     const presentTypes=new Set(eligible.map(s=>submissionTypeLabel(s)));
     EXAM_TYPE_OPTS.filter(([v])=>v===''||presentTypes.has(v)).forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;typeSel.appendChild(o);});
     const renderList=()=>{
       box.innerHTML='';
-      const wanted=typeSel.value;
-      const filtered=wanted?eligible.filter(s=>submissionTypeLabel(s)===wanted):eligible;
-      if(!filtered.length){box.appendChild(el('div','hint','해당 종류로 다시 써볼 수 있는 글이 없어요.'));return;}
+      const wanted=typeSel.value,wantStatus=statusSel.value;
+      const ofType=wanted?eligible.filter(s=>submissionTypeLabel(s)===wanted):eligible;
+      const doneCnt=ofType.filter(s=>doneOf(s)).length;
+      summary.textContent='✅ 완료 '+doneCnt+'개 · 아직 안 한 것 '+(ofType.length-doneCnt)+'개'+(ofType.length&&doneCnt===ofType.length?' — 전부 다 했어요! 🎉':'');
+      const filtered=ofType.filter(s=>!wantStatus||(wantStatus==='done'?!!doneOf(s):!doneOf(s)));
+      if(!filtered.length){box.appendChild(el('div','hint',wantStatus==='todo'?'아직 안 한 Re-Writing이 없어요. 모두 완료했어요! 🎉':(wantStatus==='done'?'아직 완료한 Re-Writing이 없어요.':'해당 종류로 다시 써볼 수 있는 글이 없어요.')));return;}
       filtered.forEach(s=>{
+        const dn=doneOf(s);
         const card=el('button','btn ghost');
-        card.type='button';card.style.cssText='display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;border-radius:12px';
-        card.innerHTML='<div style="font-weight:800">'+escH(submissionTypeLabel(s))+' - '+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+escH(s.datetime||'')+')</span></div>'+
-          '<div style="margin-top:4px;color:#6b7684;font-size:13px">이 글을 다시 써보기 →</div>';
-        card.onclick=()=>viewRewriteWrite(s);
+        card.type='button';card.style.cssText='display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;border-radius:12px'+(dn?';background:#f1faf4;border-color:#bfe3cb':'');
+        card.innerHTML='<div style="font-weight:800">'+escH(submissionTypeLabel(s))+' - '+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+escH(s.datetime||'')+')</span>'+
+          (dn?' <span style="background:#d1fadf;color:#166534;border-radius:8px;padding:1px 8px;font-size:12px;font-weight:800">✅ 완료</span>':'')+'</div>'+
+          '<div style="margin-top:4px;color:#6b7684;font-size:13px">'+(dn?'완료했어요 ('+escH(dn.datetime||'')+') · 눌러서 이어서 고쳐 쓰기 →':'이 글을 다시 써보기 →')+'</div>';
+        card.onclick=()=>viewRewriteWrite(s,dn);
         box.appendChild(card);
       });
     };
-    typeSel.onchange=renderList;
+    typeSel.onchange=renderList;statusSel.onchange=renderList;
     renderList();
   })();
 });}
@@ -3483,7 +3511,7 @@ function inlineDiffNotesHtml(errorsList){
     }).join('')+
     '</div>';
 }
-function viewRewriteWrite(sub){setWide(true);mountView(w=>{
+function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
   const bk=el('button','backbtn','◀ 목록으로');bk.onclick=viewRewriteList;w.appendChild(bk);
   w.appendChild(el('h1','title','Re-Writing · '+(sub.point||sub.chapter||'')));
   w.appendChild(el('div','hint','아래 원문과 고쳐진 내용을 참고해서, 처음부터 전체를 다시 써 보세요.'));
@@ -3648,6 +3676,30 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
   wmid.appendChild(el('div','fl','✍️ 다시 쓰기'));
   const ta=el('textarea','in');ta.placeholder='고쳐진 내용을 참고해서 전체를 처음부터 다시 써보세요.';ta.style.cssText='flex:1;min-height:420px;resize:vertical';
   wmid.appendChild(ta);
+  /* 이어쓰기 — 쓰다 만 글(임시저장)이 있으면 그걸, 없고 이미 제출한 적이 있으면 그 제출한 글을 불러와서
+     처음부터 다시 치지 않고 이어서 고치게 해요. 입력하는 동안 자동으로 임시저장되고, 뒤로 가거나 창을 닫을 때도 저장해요. */
+  const rwPoint=sub.point||sub.chapter||'';
+  const resumeNote=el('div');resumeNote.style.cssText='background:#eef0ff;color:#4338ca;border-radius:10px;padding:8px 12px;font-size:13px;margin-top:8px;display:none';
+  wmid.insertBefore(resumeNote,ta);
+  let rwSubmitted=false,rwBase='',rwLoaded=false;
+  const rwSaveNow=()=>{if(rwSubmitted||!rwLoaded)return;const v=ta.value;if(!v.trim()||v===rwBase)return;rwBase=v;saveDraftNow('Rewriting',rwPoint,{draft:v});};
+  const rwSaveSoon=debounce(rwSaveNow,2000);
+  ta.addEventListener('input',()=>{if(!rwLoaded)return;rwSaveSoon();});
+  window.addEventListener('pagehide',()=>{if(ta.isConnected)rwSaveNow();});
+  bk.onclick=()=>{rwSaveNow();viewRewriteList();};
+  (async()=>{
+    const d=await fetchDraft('Rewriting',rwPoint);
+    if(ta.value.trim()){rwLoaded=true;return;} // 불러오는 사이 학생이 먼저 치기 시작했으면 덮어쓰지 않아요.
+    if(d&&d.obj&&typeof d.obj.draft==='string'&&d.obj.draft.trim()){
+      ta.value=d.obj.draft;rwBase=ta.value;
+      resumeNote.textContent='🕓 쓰던 글을 불러왔어요'+(d.savedAt?' ('+String(d.savedAt).slice(0,16)+' 저장)':'')+'. 이어서 쓰면 돼요.';resumeNote.style.display='block';
+    }else if(prevDone&&String(prevDone.final||prevDone.text||'').trim()){
+      ta.value=String(prevDone.final||prevDone.text);rwBase=ta.value;
+      resumeNote.textContent='✅ 이미 제출한 글이에요 ('+(prevDone.datetime||'')+'). 더 고치고 싶으면 이어서 쓰고 다시 제출할 수 있어요.';resumeNote.style.display='block';
+    }
+    rwLoaded=true;
+    ta.dispatchEvent(new Event('input'));
+  })();
   let rewriteUl=null;
   if(rewriteConds.length){
     wright.appendChild(el('div','fl','고쳐진 대로 반영했는지 확인 (입력하는 동안 실시간으로 확인돼요)'));
@@ -3688,6 +3740,7 @@ function viewRewriteWrite(sub){setWide(true);mountView(w=>{
     if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;}catch(e){}}
     subBtn.disabled=false;subBtn.textContent=sent?'제출 완료!':prev;
     if(sent){
+      rwSubmitted=true; // 이제 임시저장은 필요 없어요(서버도 제출하면 같은 항목 임시저장을 지워요).
       fx.className='fx ok';fx.textContent='제출했어요! 선생님이 다시 확인할 수 있어요.';
       const hb=el('button','btn ghost','← 목록으로');hb.style.marginTop='10px';hb.onclick=viewRewriteList;wmid.appendChild(hb);
     } else {
@@ -3712,6 +3765,9 @@ function stageGrade(school,grade){
   return st?st+n:n+'학년';
 }
 const GRADE_OPTIONS=['초1','초2','초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
+/* 학생 상태: ''(재원) / '휴원' / '퇴원'. 휴원·퇴원 학생은 로그인이 막히고 목록에서는 기본으로 숨겨요. */
+function studentStatus(s){const v=String((s&&s.status)||'').trim();return (v==='휴원'||v==='퇴원')?v:'';}
+function isInactiveStudent(s){return !!studentStatus(s);}
 function stageGradeRank(label){const m=String(label).match(/^(초|중|고)(\d+)$/);if(!m)return 99;return {초:0,중:10,고:20}[m[1]]+Number(m[2]);}
 function sortStageGrades(list){return list.slice().sort((a,b)=>{const ra=stageGradeRank(a),rb=stageGradeRank(b);return ra!==rb?ra-rb:a.localeCompare(b,'ko',{numeric:true});});}
 function uniqSorted(arr){return Array.from(new Set(arr.filter(v=>v!=null&&v!=='').map(v=>String(v)))).sort((a,b)=>a.localeCompare(b,'ko'));}
@@ -4054,10 +4110,16 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
     opt0(fGrade.sel,'학년 전체');sortStageGrades(uniqSorted(all.concat(roster).map(s=>stageGrade(s.school,s.schoolGrade)))).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fGrade.sel.appendChild(o);});
     opt0(fCls.sel,'반 전체');uniqSorted(all.concat(roster).map(s=>s.cls)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fCls.sel.appendChild(o);});
     filterBox.style.display='flex';
+    if(inactiveIds.size){
+      const lab=el('label');lab.style.cssText='display:flex;align-items:center;gap:6px;font-size:13px;color:#6b7684;align-self:flex-end;padding-bottom:8px;cursor:pointer';
+      const cb=el('input');cb.type='checkbox';cb.onchange=()=>{showInactive=cb.checked;render();};
+      lab.appendChild(cb);lab.appendChild(document.createTextNode('휴원·퇴원 학생도 보기 ('+inactiveIds.size+'명)'));
+      filterBox.appendChild(lab);
+    }
     const render=()=>{
       Array.from(box.children).slice(1).forEach(c=>c.remove());
       const fa=fAcademy?fAcademy.sel.value:'',fs=fSchool.sel.value,fg=fGrade.sel.value,fc=fCls.sel.value,ft=fType.sel.value;
-      const filtered=all.filter(s=>(!fa||s.academy===fa)&&(!fs||s.school===fs)&&(!fg||stageGrade(s.school,s.schoolGrade)===fg)&&(!fc||s.cls===fc)&&(!ft||submissionTypeLabel(s)===ft));
+      const filtered=all.filter(s=>(showInactive||!inactiveIds.has(String(s.id)))&&(!fa||s.academy===fa)&&(!fs||s.school===fs)&&(!fg||stageGrade(s.school,s.schoolGrade)===fg)&&(!fc||s.cls===fc)&&(!ft||submissionTypeLabel(s)===ft));
       const counts={};
       filtered.forEach(s=>{
         if(!s.id)return;
@@ -4067,6 +4129,7 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
       });
       if(!ft)roster.forEach(r=>{
         if(!r.id||counts[r.id])return;
+        if(!showInactive&&isInactiveStudent(r))return;
         if((fa&&r.academy!==fa)||(fs&&r.school!==fs)||(fg&&stageGrade(r.school,r.schoolGrade)!==fg)||(fc&&r.cls!==fc))return;
         counts[r.id]={id:r.id,name:r.name,academy:r.academy,school:r.school,schoolGrade:r.schoolGrade,cls:r.cls,count:0,lastAt:''};
       });
@@ -4076,7 +4139,8 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
         const row=el('div','point');
         row.appendChild(el('div','dot','●'));
         const ctx=[USER.isAdmin?s.academy:'',s.school,stageGrade(s.school,s.schoolGrade),s.cls].filter(Boolean).join(' · ');
-        row.appendChild(el('div','pt',(s.name||s.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+s.id+(ctx?' · '+ctx:'')+')</span>'));
+        const _rs=roster.find(r=>String(r.id)===String(s.id));const _st=_rs?studentStatus(_rs):'';
+        row.appendChild(el('div','pt',(s.name||s.id)+(_st?' <b style="color:#92400e;font-size:12px">['+_st+']</b>':'')+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+s.id+(ctx?' · '+ctx:'')+')</span>'));
         row.appendChild(el('div','meta',s.count?s.count+'건 제출 · 최근 '+String(s.lastAt||'').slice(0,16):'아직 제출 없음'));
         row.onclick=()=>viewTeacherStudent(s.id,s.name||s.id);
         box.appendChild(row);
@@ -4137,6 +4201,12 @@ function viewGradingManage(opts){teacherMount(w=>{
       if(data&&data.ok)all=data.submissions||[];
     }catch(e){}
     if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+    // 휴원·퇴원 학생의 제출물은 첨삭 목록에서 기본으로 빼요(선생님 홈의 "휴원·퇴원 학생도 보기"에서 확인할 수 있어요).
+    try{
+      const rr=await fetch(SUBMIT_URL+'?view=studentList&_t='+Date.now(),{cache:'no-store'});
+      const rd=await rr.json();
+      if(rd&&rd.ok){const off=new Set((rd.students||[]).filter(isInactiveStudent).map(r=>String(r.id)));all=all.filter(x=>!off.has(String(x.id)));}
+    }catch(e){}
     loading.remove();
     if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
     if(!all.length){tableWrap.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
@@ -5813,7 +5883,8 @@ const STUDENT_FIELDS=[
   {key:'school',label:'학교',ph:'예) 잠원중',note:'꼭 "OO초"·"OO중"·"OO고" 형식으로 적어주세요 (예: 잠원중, 서울고). "잠원중학교"처럼 적으면 콘텐츠 대상 매칭이 안 될 수 있어요.'},
   {key:'schoolGrade',label:'학년',type:'gradeSelect'},
   {key:'cls',label:'반',ph:'예) A반 (없으면 비워둬도 돼요)'},
-  {key:'academy',label:'학원',ph:'예) 아이콘 학원 (한 학원만 쓰면 비워둬도 돼요)'}
+  {key:'academy',label:'학원',ph:'예) 아이콘 학원 (한 학원만 쓰면 비워둬도 돼요)'},
+  {key:'status',label:'상태',type:'statusSelect',note:'휴원: 로그인하면 "휴원 중이에요. 선생님께 문의해주세요"가 떠요. 퇴원: "아이디를 확인해주세요"가 떠요(없는 아이디처럼 보여요). 둘 다 선생님 목록에서는 기본으로 숨겨지고, 제출·첨삭 기록은 그대로 남아요.'}
 ];
 function viewStudentManage(){teacherMount(w=>{
   const bk=el('button','backbtn','◀ 학생 목록으로');bk.onclick=viewTeacherHome;w.appendChild(bk);
@@ -5831,9 +5902,10 @@ function viewStudentManage(){teacherMount(w=>{
     const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
     return{wrap,sel};};
   const showAcademyFilter=USER.isAdmin; // 학원별 관리자는 학원이 하나로 고정이라 이 필터가 필요 없어요.
-  const fAcademy=mkFilterSelect('학원'),fSchool=mkFilterSelect('학교'),fGrade=mkFilterSelect('학년'),fCls=mkFilterSelect('반');
+  const fAcademy=mkFilterSelect('학원'),fSchool=mkFilterSelect('학교'),fGrade=mkFilterSelect('학년'),fCls=mkFilterSelect('반'),fStatus=mkFilterSelect('상태');
+  [['','재원생(기본)'],['휴원','휴원'],['퇴원','퇴원'],['all','전체']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;fStatus.sel.appendChild(o);});
   const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-top:12px';
-  (showAcademyFilter?[fAcademy,fSchool,fGrade,fCls]:[fSchool,fGrade,fCls]).forEach(f=>filterBox.appendChild(f.wrap));
+  (showAcademyFilter?[fAcademy,fSchool,fGrade,fCls,fStatus]:[fSchool,fGrade,fCls,fStatus]).forEach(f=>filterBox.appendChild(f.wrap));
   w.appendChild(filterBox);
   filterBox.style.display='none';
   const box=el('div');box.style.marginTop='14px';
@@ -5855,7 +5927,8 @@ function viewStudentManage(){teacherMount(w=>{
       const row=el('div','point');row.style.cursor='default';
       row.appendChild(el('div','dot','●'));
       const ctx=[s.academy,s.school,stageGrade(s.school,s.schoolGrade),s.cls].filter(Boolean).join(' · ');
-      row.appendChild(el('div','pt',(s.name||s.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+s.id+(ctx?' · '+ctx:'')+')</span>'));
+      const stBadge=studentStatus(s)?' <span style="background:'+(studentStatus(s)==='휴원'?'#fef3c7;color:#92400e':'#e5e7eb;color:#374151')+';border-radius:8px;padding:1px 8px;font-size:12px;font-weight:700">'+studentStatus(s)+'</span>':'';
+      row.appendChild(el('div','pt',(s.name||s.id)+stBadge+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+s.id+(ctx?' · '+ctx:'')+')</span>'));
       const btnRow=el('div');btnRow.style.cssText='display:flex;gap:8px;margin-top:8px';
       const editBtn=el('button','btn ghost','✏️ 수정');editBtn.type='button';editBtn.style.cssText='padding:6px 14px;font-size:13px';
       editBtn.onclick=(ev)=>{ev.stopPropagation();viewStudentForm(s);};
@@ -5900,7 +5973,8 @@ function viewStudentManage(){teacherMount(w=>{
         (!wantAcademy||String(s.academy||'').trim()===wantAcademy)&&
         (!wantSchool||String(s.school||'').trim()===wantSchool)&&
         (!wantGrade||stageGrade(s.school,s.schoolGrade)===wantGrade)&&
-        (!wantCls||String(s.cls||'').trim()===wantCls)
+        (!wantCls||String(s.cls||'').trim()===wantCls)&&
+        (fStatus.sel.value==='all'||studentStatus(s)===fStatus.sel.value)
       ).sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
       if(!filtered.length){box.appendChild(el('div','hint','조건에 맞는 학생이 없어요.'));return;}
       filtered.forEach(s=>renderRow(box,s));
@@ -5910,7 +5984,7 @@ function viewStudentManage(){teacherMount(w=>{
     fillOptions(fSchool.sel,uniq('school'),'학교 전체');
     fillOptions(fGrade.sel,sortStageGrades(Array.from(new Set(students.map(s=>stageGrade(s.school,s.schoolGrade)).filter(Boolean)))),'학년 전체');
     fillOptions(fCls.sel,uniq('cls'),'반 전체');
-    [fAcademy,fSchool,fGrade,fCls].forEach(f=>f.sel.onchange=render);
+    [fAcademy,fSchool,fGrade,fCls,fStatus].forEach(f=>f.sel.onchange=render);
     render();
   })();
 });}
@@ -5928,7 +6002,11 @@ function viewStudentForm(existing){teacherMount(w=>{
     const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:6px';
     wrap.appendChild(el('div','hint',f.label));
     let inp;
-    if(f.type==='gradeSelect'){
+    if(f.type==='statusSelect'){
+      inp=el('select','in');inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
+      [['','재원'],['휴원','휴원'],['퇴원','퇴원']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;inp.appendChild(o);});
+      inp.value=existing?studentStatus(existing):'';
+    }else if(f.type==='gradeSelect'){
       // 학년은 초1~고3 드롭다운으로 골라요. 예전에 숫자(1~6)만 저장된 학생은 학교 이름(…초/…중/…고)으로 학교급을 알아내서 미리 선택해둬요.
       inp=el('select','in');inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
       const o0=el('option');o0.value='';o0.textContent='선택 안 함';inp.appendChild(o0);
@@ -8290,7 +8368,12 @@ function stopRealtimeContent(){
     }else{
       enterHome();
     }
-    fetchRoster().catch(()=>{});
+    // 로그인 상태로 남아 있던 학생이 그 사이 휴원·퇴원 처리됐으면 로그아웃시켜요.
+    fetchRoster().then(r=>{
+      if(USER.role!=='student')return;
+      const me=((r&&r.students)||[]).find(x=>String(x.id)===String(USER.id));
+      if(me&&isInactiveStudent(me)){logoutBtn.onclick();}
+    }).catch(()=>{});
   }else{
     viewLogin();
   }
