@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-15a';
+const APP_VERSION='2026-10-16b';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -512,6 +512,12 @@ function splitWordLines(raw){
   const lines=String(raw||'').split('\n').map(s=>s.trim()).filter(Boolean);
   const out=[];
   lines.forEach(line=>{
+    // AI가 줄바꿈 대신 쉼표로 이어 붙여 줄 때가 있어요("knitting|뜨개질,kitten|새끼 고양이,yarn") — 쉼표 뒤에 새 영어
+    // 단어가 시작되는 경우에만 갈라요(한국어 뜻 안의 쉼표 "뛰다, 달리다"는 그대로 둬요).
+    if(line.indexOf(',')>-1){
+      const segs=line.split(/\s*,\s*(?=[A-Za-z][A-Za-z '\-]*(?:\||,|$))/).map(x=>x.trim()).filter(Boolean);
+      if(segs.length>1){segs.forEach(sg=>out.push(sg));return;}
+    }
     const pipeCount=(line.match(/\|/g)||[]).length;
     if(pipeCount>=2){
       const candidates=line.split(/\s*\/\s*/).map(s=>s.trim()).filter(Boolean);
@@ -538,6 +544,17 @@ function stripColorAdj(text,colorList){
     if(rest)return rest;
   }
   return t;
+}
+/* 단어 중복 검사용 — 소문자·색깔 형용사·관사·복수형 차이를 지우고 비교해요("Green bucket"="bucket"="buckets"). */
+function normWordKey(en){
+  let t=stripColorAdj(String(en||'').toLowerCase().replace(/[^a-z '\-]/g,'').trim(),COLOR_WORDS_EN).replace(/^(a|an|the)\s+/,'').trim();
+  if(t.length>3&&/ies$/.test(t))t=t.slice(0,-3)+'y';
+  else if(t.length>3&&/s$/.test(t)&&!/ss$/.test(t))t=t.slice(0,-1);
+  return t;
+}
+/* AI가 질문을 줄바꿈 대신 쉼표로 이어 붙였을 때("...?,How do you...") 줄바꿈으로 되돌려요. */
+function fixQuestionLines(q){
+  return String(q||'').split('\n').map(x=>x.trim()).filter(Boolean).flatMap(line=>line.split(/(?<=[?!.])\s*,\s*(?=[A-Z])/)).map(x=>x.trim()).filter(Boolean).join('\n');
 }
 function stripColorFromWordLine(line){
   const w=parseWordLine(line);
@@ -3241,9 +3258,6 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
       if(data&&data.ok)subs=data.submissions||[];
     }catch(e){}
     loading.remove();
-    // 휴원·퇴원 학생은 기본으로 숨기고, 체크박스를 켜면 같이 보여요.
-    const inactiveIds=new Set(roster.filter(isInactiveStudent).map(r=>String(r.id)));
-    let showInactive=false;
     /* 실시간 구독 — 선생님이 첨삭을 남기거나 내가 다른 기기에서 새로 제출하면, 새로고침 없이
        바로 반영돼요. 이 화면은 제출물마다 "수정하기" 같은 인라인 폼이 있어서 부분만 다시 그리기
        어려워요 — 그래서 editSubmission 저장 뒤 지금까지 해온 것과 같은 방식으로, 최초 한 번을
@@ -4088,6 +4102,9 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
     }catch(e){}
     if(!USER.isAdmin)roster=roster.filter(s=>String(s.academy||'').trim()===String(USER.academy||'').trim());
     loading.remove();
+    // 휴원·퇴원 학생은 기본으로 숨기고, 체크박스를 켜면 같이 보여요.
+    const inactiveIds=new Set(roster.filter(isInactiveStudent).map(r=>String(r.id)));
+    let showInactive=false;
     /* 실시간 구독 — 학생이 새로 제출하거나 다른 선생님이 첨삭을 남기면, 새로고침 없이 이 목록에
        바로 반영돼요. render()가 이미 준비돼 있으면 목록만 다시 그리고(renderReady), 처음부터
        제출물이 하나도 없어서 아래 필터·render()가 아예 안 만들어졌던 경우엔 화면 자체를 새로
@@ -5201,28 +5218,66 @@ function viewAddContentForm(type,editId){teacherMount(w=>{
           aiFillBtn.disabled=true;aiRedoBtn.disabled=true;aiFillMsg.className='fx';aiFillMsg.textContent=force?'다시 만드는 중…':'AI가 채우는 중…';
           try{
             const body={action:'generateContent',contentType:'story',seed,fields:picFields};
-            // p._imgB64가 없어도(예: 저장했다가 다시 불러온 뒤라 임시 필드가 사라진 경우) p.url 자체가
-            // data: 이미지(예: "3~4등분" 조각처럼 base64로 통째로 저장된 그림)라면 거기서 바로 이미지 데이터를
-            // 뽑아서 보내요 — 그래야 AI가 실제로 이 그림(조각)을 보고 단어·질문을 만들어서, 그림에 없는
-            // 엉뚱한 단어가 섞이거나 그림마다 비슷한 단어만 반복되는 문제를 줄일 수 있어요.
-            // ⚠️ 그런데 업로드한 사진은 p.url이 data:가 아니라 진짜 https 주소(파이어베이스 스토리지
-            // 다운로드 링크)예요 — 저장했다가 다시 불러온 뒤(수정 화면 재진입 등)라 p._imgB64도 없고
-            // p.url도 data:가 아니면, 위 두 조건 다 걸리지 않아서 이미지를 아예 안 보내고 있었어요.
-            // 그러면 AI는 진짜 그림을 못 보고 제목·이미 채워진 단어/질문만 보고 "그냥 지어내서" 답하게
-            // 되고, 그게 바로 "그림이랑 안 맞는 엉뚱한 질문·단어가 나온다"는 문제의 원인이었어요.
-            // https 주소는 서버가 대신 그 주소로 이미지를 가져와서 Claude에 보내도록(url) 넘겨줘요.
             const dataUrlMatch=!p._imgB64&&/^data:([^;]+);base64,(.+)$/.exec(p.url||'');
             if(p._imgB64&&p._imgMime)body.image={mediaType:p._imgMime,data:p._imgB64};
             else if(dataUrlMatch)body.image={mediaType:dataUrlMatch[1],data:dataUrlMatch[2]};
             else if(/^https?:\/\//i.test(p.url||''))body.image={url:p.url};
-            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(body)});
-            let data=null;try{data=await res.json();}catch(e){}
-            if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 자동 채우기 실패');
-            const results=data.results||{};
-            const picked=(results.claude&&results.claude.fields)||(results.gpt&&results.gpt.fields)||null;
+            const callAI=async(b)=>{
+              const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(b)});
+              let data=null;try{data=await res.json();}catch(e){}
+              if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 자동 채우기 실패');
+              const results=data.results||{};
+              return (results.claude&&results.claude.fields)||(results.gpt&&results.gpt.fields)||null;
+            };
+            let picked=await callAI(body);
             if(!picked||!Object.keys(picked).length){aiFillMsg.className='fx';aiFillMsg.textContent='채울 빈 칸이 없었어요.';return;}
+            // ⚠️ 단어 중복을 프롬프트만 믿지 않고 여기서 직접 검사해요 — 다른 그림에 이미 있는 단어(색·복수형 차이 무시)나
+            // 같은 그림 안에서 두 번 나온 단어를 걸러내고, 걸러진 게 있으면 "이 단어들은 빼고" 한 번 더 시켜서 채워요.
+            const otherKeys=new Set(otherWordsArr.map(normWordKey).filter(Boolean));
+            const cleanWords=(txt)=>{
+              const seen=new Set(),kept=[],dropped=[];
+              splitWordLines(txt).map(stripColorFromWordLine).forEach(line=>{
+                const w=parseWordLine(line);const k=normWordKey(w.en);
+                if(!k)return;
+                if(otherKeys.has(k)||seen.has(k)){dropped.push(w.en);return;}
+                seen.add(k);kept.push(line);
+              });
+              return {kept,dropped};
+            };
+            if(picked.words!==undefined&&(force||!seed.words)){
+              let cw=cleanWords(picked.words);
+              if(cw.dropped.length||cw.kept.length<3){
+                aiFillMsg.textContent='겹치는 단어('+cw.dropped.join(', ')+')를 빼고 다시 만드는 중…';
+                try{
+                  const body2=JSON.parse(JSON.stringify(body));
+                  body2.seed.bannedWords=Array.from(new Set(otherWordsArr.concat(cw.dropped))).join(', ');
+                  body2.seed.keepWords=cw.kept.join(' / ');
+                  const picked2=await callAI(body2);
+                  if(picked2&&picked2.words){
+                    const cw2=cleanWords(picked2.words);
+                    if(cw2.kept.length>=cw.kept.length){cw=cw2;picked.words=picked2.words;}
+                  }
+                }catch(e){}
+              }
+              picked.words=cw.kept.join('\n');
+              // 한글 뜻이 빠진 단어("tail")는 사전으로 뜻을 채워요.
+              const lines2=splitWordLines(picked.words);
+              for(let li=0;li<lines2.length;li++){
+                const w=parseWordLine(lines2[li]);
+                if(w.en&&!w.ko){
+                  try{
+                    const r2=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'lookupWord',word:w.en})});
+                    const d2=await r2.json();
+                    const e0=d2&&d2.ok&&d2.result&&((d2.result.entries&&d2.result.entries[0])||d2.result);
+                    if(e0&&e0.meaningKo)lines2[li]=w.en+'|'+e0.meaningKo;
+                  }catch(e){}
+                }
+              }
+              picked.words=lines2.join('\n');
+            }
+            if(picked.questions!==undefined)picked.questions=fixQuestionLines(picked.questions);
             if(picked.questions!==undefined&&(force||!seed.questions))p.questions=picked.questions;
-            if(picked.words!==undefined&&(force||!seed.words))p.words=splitWordLines(picked.words).map(stripColorFromWordLine).join('\n');
+            if(picked.words!==undefined&&(force||!seed.words))p.words=picked.words;
             if(picked.starter!==undefined&&(force||!seed.starter))p.starter=picked.starter;
             renderStoryPics();refreshPreview();saveDraftLocal();
             if(force){aiFillMsg.className='fx ok';aiFillMsg.textContent='새로 만들었어요! 그림·단어가 잘 맞는지 확인해보세요.';}
