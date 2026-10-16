@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-16b';
+const APP_VERSION='2026-10-17a';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -6751,6 +6751,8 @@ logoutBtn.onclick=()=>{document.body.classList.remove('can-copy');nav.classList.
 
 /* ================= DRILL RUNNER ================= */
 function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
+  // 같은 유닛을 다시 열 때 이전에 채점된 표시(_graded)가 남아 있으면 그 문제가 채점 안 되는 문제가 있어서, 시작할 때 항상 비워둬요.
+  (P.arrange||[]).forEach(x=>{if(x)x._graded=false;});(P.compose||[]).forEach(x=>{if(x)x._graded=false;});
   const drillStart=Date.now();setStudyTimer(drillStart,'⏱ 학습 시간');
   const RES={quiz:{ok:0,tot:P.quiz.length},arrange:{ok:0,tot:P.arrange.length},compose:{ok:0,tot:P.compose.length},wrong:[],all:[],taskDone:false,taskText:'',startTime:drillStart,finishTime:null};
   // "조건 영작(Task)" 글쓰기 칸도 다른 글쓰기 화면들처럼 임시저장이 되도록, 제출할 때 쓰는 chapter/point(P.id/P.title)와
@@ -6765,6 +6767,20 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
   const PROGRESS_CHAPTER='진행상황::'+P.id,PROGRESS_POINT=P.title;
   const progress={quizCorrect:[],arrangeCorrect:[],composeCorrect:[]};
   const saveProgressNow=()=>saveDraftNow(PROGRESS_CHAPTER,PROGRESS_POINT,progress);
+  // "처음부터 다시 시작" — 이어하기 위치(진행 상황 임시저장)를 비우고, 이 유닛을 퀴즈 첫 문제부터 다시 풀어요.
+  // 이미 제출한 글(제출 기록)은 지우지 않아요.
+  const restartDrill=()=>{
+    if(!confirm('처음부터 다시 풀까요?\n지금까지 푼 위치(이어하기 기록)는 지워지지만, 이미 제출한 글은 그대로 남아요.'))return;
+    saveDraftNow(PROGRESS_CHAPTER,PROGRESS_POINT,{quizCorrect:[],arrangeCorrect:[],composeCorrect:[]});
+    runDrill(P,Object.assign({},opts,{review:false,restart:true}));
+  };
+  const restartBar=(msg)=>{
+    const bar=el('div');bar.style.cssText='background:#fff7ed;color:#9a3412;border-radius:10px;padding:8px 12px;font-size:13px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
+    bar.appendChild(el('span',null,msg));
+    const rb=el('button','btn ghost','🔄 처음부터 다시 시작');rb.type='button';rb.style.cssText='padding:5px 12px;font-size:12.5px;background:#fff';
+    rb.onclick=restartDrill;bar.appendChild(rb);
+    return bar;
+  };
   // 0 설명 (노란 부분을 모두 눌러야 다음으로 이동 가능)
   let expTotal=0,expClicked=0;
   slideAdd(b=>{b.appendChild(el('span','badge blue','설명 · '+P.title));
@@ -6943,7 +6959,7 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
     saveDraftNow(PROGRESS_CHAPTER,PROGRESS_POINT,{quizCorrect:[],arrangeCorrect:[],composeCorrect:[]});
   },opts.review);},{onEnter(){if(!RES.finishTime){RES.finishTime=Date.now();}freezeStudyTimer();}});
   deckStart();
-  if(opts.review){
+  if(opts.review&&!opts.restart){
     // 이미 제출을 마친 유닛을 다시 눌렀을 때예요 — 퀴즈·배열·영작을 처음부터 다시 풀게 하지 않고,
     // 서버에 저장된 마지막 제출물을 그대로 불러와서 "조건 영작" 글쓰기 화면으로 바로 건너뛰어요.
     // (redoAnchor 슬라이드는 한 번도 거치지 않으니 buildRedo가 실행되지 않아서, 슬라이드 배열에
@@ -6973,6 +6989,7 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
       prevB.disabled=idx===0;nextB.disabled=(idx===slides.length-1)||(!!s._lock&&s._lock());
       if(s._onEnter)try{s._onEnter();}catch(e){}
       if(s._focusSel){const f=s.querySelector(s._focusSel);if(f)setTimeout(()=>f.focus(),60);}
+      if(s._box)s._box.insertBefore(restartBar('이미 끝낸 유닛이에요. 처음부터 다시 풀어보고 싶으면 눌러주세요.'),s._box.children[1]||null);
       const taskTa=s.querySelector('textarea.in');
       if(taskTa&&!taskTa.value.trim()&&RES.taskText){taskTa.value=RES.taskText;taskTa.dispatchEvent(new Event('input'));}
     })();
@@ -6981,6 +6998,7 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
   // 이전에 풀다 만 진행 상황이 있으면, 이미 푼 문제는 다시 안 보여주고 이어서 풀 수 있는 위치로 바로 이동해요.
   // 화면은 이미 위 deckStart()로 즉시 그려졌고, 이 조회는 그 뒤에서 조용히 진행돼요(화면을 막지 않음).
   (async()=>{
+    if(opts.restart)return; // 처음부터 다시 시작한 경우엔 저장된 진행 상황을 불러오지 않아요.
     const foundProgress=await fetchDraft(PROGRESS_CHAPTER,PROGRESS_POINT);
     if(!foundProgress||!foundProgress.obj)return;
     if(Array.isArray(foundProgress.obj.quizCorrect))progress.quizCorrect=foundProgress.obj.quizCorrect.slice(0,P.quiz.length);
@@ -7015,7 +7033,7 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
       prevB.disabled=idx===0;nextB.disabled=(idx===slides.length-1)|| !!s._lock&&s._lock();
       if(s._onEnter)try{s._onEnter();}catch(e){}
       if(s._focusSel){const f=s.querySelector(s._focusSel);if(f)setTimeout(()=>f.focus(),60);}
-      if(s._box)s._box.insertBefore(draftBanner(foundProgress.savedAt),s._box.children[1]||null);
+      if(s._box){s._box.insertBefore(draftBanner(foundProgress.savedAt),s._box.children[1]||null);s._box.insertBefore(restartBar('처음부터 다시 풀고 싶으면 눌러주세요.'),s._box.children[1]||null);}
     }
   })();
 }
