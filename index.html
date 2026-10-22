@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-22i';
+const APP_VERSION='2026-10-22j';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -8540,6 +8540,7 @@ deckShow=function(i){_deckShow(i);const s=slides[idx];if(s&&s._box){if(s._box._o
    전혀 흔들리지 않아요. 서버에서 못 받아오면(네트워크 오류 등) 조용히 건너뛰고, 코드에 원래 내장된
    기본 커리큘럼(레벨1~3의 기존 챕터 등)만으로 계속 쓸 수 있게 해요. */
 async function loadLiveContent(){
+  let contentChanged=false;
   try{
     const res=await fetch(SUBMIT_URL+'?view=content&_t='+Date.now(),{method:'GET',cache:'no-store'});
     const data=await res.json();
@@ -8554,12 +8555,18 @@ async function loadLiveContent(){
       if(typeof data.drillMinWords==='number'&&data.drillMinWords>=0)DRILL_MIN_WORDS=data.drillMinWords;
       if(typeof data.drillMinSentences==='number'&&data.drillMinSentences>=0)DRILL_MIN_SENTENCES=data.drillMinSentences;
       saveContentCache();
+      contentChanged=(window._contentSig!==undefined&&window._contentSig!==contentSig_(data));
+      window._contentSig=contentSig_(data);
     }
   }catch(e){
     console.warn('컨텐츠를 실시간으로 불러오지 못했어요(기본 커리큘럼만 사용해요):',e);
   }
   remergeContent();
+  // 저장해 둔 예전 내용으로 먼저 홈을 그렸는데 그사이 선생님이 컨텐츠를 고쳤다면, 지금 홈 화면일 때 새 내용으로 다시 그려요
+  // (예전엔 로그아웃했다 들어와야만 바뀐 게 보였어요). 글 쓰는 중인 화면은 건드리지 않아요.
+  if(contentChanged&&USER&&USER.role==='student'&&document.querySelector('.hero'))enterHome();
 }
+function contentSig_(d){return JSON.stringify([d.levels,d.patternStructure,d.gen,d.genpara,d.genarticle,d.genexam,d.story]);}
 /* loadLiveContent()가 data.xxx를 GEN/GENPARA/... 전역 변수에 채운 뒤 항상 실행하던 "병합" 순서를
    그대로 뽑아낸 거예요. 실시간 구독(onSnapshot)도 콘텐츠가 바뀔 때마다 이 함수를 다시 불러서
    똑같은 방식으로 반영해요 — 병합 순서가 중요해요: 레벨/챕터 구조부터 먼저 자리를 잡아야, 그 위에
@@ -8644,6 +8651,7 @@ function stopRealtimeContent(){
     if(Array.isArray(cachedContent.story))GENSTORY=cachedContent.story;
     if(typeof cachedContent.drillMinWords==='number')DRILL_MIN_WORDS=cachedContent.drillMinWords;
     if(typeof cachedContent.drillMinSentences==='number')DRILL_MIN_SENTENCES=cachedContent.drillMinSentences;
+    window._contentSig=contentSig_(cachedContent);
     remergeContent();
   }else{
     await loadLiveContent();
@@ -8682,12 +8690,11 @@ function stopRealtimeContent(){
       if(me){
         const fresh={school:me.school||'',schoolGrade:me.schoolGrade||'',cls:me.cls||'',academy:me.academy||'',isTestAccount:!!String(me.isTestAccount||'').trim()};
         const changed=Object.keys(fresh).some(k=>String(USER[k]||'')!==String(fresh[k]));
-        if(changed){
-          Object.assign(USER,fresh);
-          saveSession();
-          applyClassLevel(USER.cls);
-          if(document.querySelector('.hero'))enterHome(); // 지금 홈 화면이면 새 값으로 다시 그려요.
-        }
+        const lvBefore=curLevel;
+        if(changed){ Object.assign(USER,fresh); saveSession(); }
+        // 반→레벨 연결을 선생님이 바꿨을 수도 있어서, 학생 정보가 안 바뀌었어도 최신 명단 기준으로 다시 맞춰요.
+        applyClassLevel(USER.cls);
+        if((changed||curLevel!==lvBefore)&&document.querySelector('.hero'))enterHome(); // 지금 홈 화면이면 새 값으로 다시 그려요.
       }
     }).catch(()=>{});
   }else{
