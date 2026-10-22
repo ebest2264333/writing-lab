@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-22e';
+const APP_VERSION='2026-10-22h';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2147,7 +2147,19 @@ function viewExamMenu(){setWide(false);mountView(w=>{
   const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
   w.appendChild(el('h1','title','수행평가 대비'));
   w.appendChild(el('div','hint','주제와 조건에 맞춰 미리 써 보는 연습이에요. (자동 채점 + 선생님 첨삭)'));
-  const list=Object.values(EXAM).flat().filter(visibleToUser);
+  const all=Object.values(EXAM).flat().filter(visibleToUser);
+  // 제목 맨 앞에 붙인 연도(예: "2026 안화중 …")로 묶어서 드롭다운으로 골라 볼 수 있어요. 연도가 없으면 '기타'.
+  const yearOf=t=>{const m=String(t.title||'').match(/^\s*(20\d\d)(?!\d)/);return m?m[1]:'기타';};
+  const years=[...new Set(all.map(yearOf))].sort((a,b)=>a==='기타'?1:b==='기타'?-1:b.localeCompare(a));
+  if(!window._examYear||(window._examYear!=='전체'&&!years.includes(window._examYear)))window._examYear=years.find(y=>y!=='기타')||'전체';
+  if(years.length>1){
+    const sel=el('select','in');sel.style.cssText='padding:10px;font-size:14px;border-radius:10px;margin:10px 0';
+    [['전체','전체 연도']].concat(years.map(y=>[y,y==='기타'?'연도 없음':y+'년'])).forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;sel.appendChild(o);});
+    sel.value=window._examYear;
+    sel.onchange=()=>{window._examYear=sel.value;viewExamMenu();};
+    w.appendChild(sel);
+  }
+  const list=window._examYear==='전체'?all:all.filter(t=>yearOf(t)===window._examYear);
   if(!list.length)w.appendChild(el('div','hint','지금 볼 수 있는 주제가 없어요.'));
   const box=el('div','chapter');box.appendChild(el('div','ch-h','주제 (Topics)'));
   const P=loadProg();
@@ -3778,7 +3790,7 @@ function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
   let rwSubmitted=false,rwBase='',rwLoaded=false;
   const rwSaveNow=()=>{if(rwSubmitted||!rwLoaded)return;const v=ta.value;if(!v.trim()||v===rwBase)return;rwBase=v;saveDraftNow('Rewriting',rwPoint,{draft:v});};
   const rwSaveSoon=debounce(rwSaveNow,2000);
-  ta.addEventListener('input',()=>{if(!rwLoaded)return;rwSaveSoon();});
+  ta.addEventListener('input',()=>{if(!rwLoaded)return;rwSubmitted=false;rwSaveSoon();}); // 제출한 뒤 더 고치기 시작하면 다시 임시저장돼요.
   window.addEventListener('pagehide',()=>{if(ta.isConnected)rwSaveNow();});
   bk.onclick=()=>{rwSaveNow();viewRewriteList();};
   (async()=>{
@@ -5002,6 +5014,27 @@ function viewContentEditList(type){teacherMount(w=>{
   const spec=CONTENT_FORMS[type];
   const bk=el('button','backbtn','◀ 종류 다시 고르기');bk.onclick=viewContentEditPicker;w.appendChild(bk);
   w.appendChild(el('h1','title',spec.emoji+' '+spec.label+' — 수정할 항목 고르기'));
+  if(type==='exam'&&USER.isAdmin){
+    const rb=el('button','btn ghost','🏷️ 수행평가 아이디 한꺼번에 정리하기');rb.type='button';rb.style.cssText='margin-top:10px;padding:8px 14px;font-size:13px';
+    const rmsg=el('div','hint');rmsg.style.whiteSpace='pre-line';
+    const callRenum=async(dry)=>{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'renumberExamIds',role:'teacher',requesterIsAdmin:true,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||'',dryRun:dry})});
+      const data=await res.json();if(!data||data.ok===false)throw new Error((data&&data.error)||'실패');return data;
+    };
+    rb.onclick=async()=>{
+      rb.disabled=true;rmsg.textContent='확인 중…';
+      try{
+        const r=await callRenum(true);
+        if(!r.changes.length){rmsg.textContent='이미 모두 정리되어 있어요.';rb.disabled=false;return;}
+        const list=r.changes.map(c=>c.title+'\n   '+c.from+'  →  '+c.to).join('\n');
+        if(!confirm('아이디를 이렇게 바꿀까요? ('+r.changes.length+'개)\n\n'+list)){rmsg.textContent='취소했어요.';rb.disabled=false;return;}
+        rmsg.textContent='바꾸는 중…';await callRenum(false);
+        rmsg.textContent='✅ '+r.changes.length+'개의 아이디를 바꿨어요. 화면을 새로고침하면 반영돼요.';
+        setTimeout(()=>viewContentEditList(type),1200);
+      }catch(e){rmsg.textContent='바꾸지 못했어요: '+e.message+' (서버 업데이트가 배포됐는지 확인해 주세요)';rb.disabled=false;}
+    };
+    w.appendChild(rb);w.appendChild(rmsg);
+  }
   const box=el('div');box.style.marginTop='14px';
   const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
   w.appendChild(box);
@@ -7864,6 +7897,25 @@ function runExam(topic){deckInit();
       if(found&&found.obj&&found.obj.draft&&!ta.value.trim()){
         ST.draft=found.obj.draft;taskText=ST.draft;ta.value=ST.draft;checkConds();
         bannerSlot.appendChild(draftBanner(found.savedAt));
+      }else if(!ta.value.trim()&&!TEACHER_PREVIEW&&USER.id){
+        // 제출하면 서버가 임시저장을 지우기 때문에, 이미 제출한 수행평가를 다시 열면 빈 칸으로 시작했어요.
+        // 임시저장이 없으면 내가 마지막으로 제출한 글을 불러와서 이어서 고칠 수 있게 해요.
+        try{
+          const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+          const data=await res.json();
+          let last=null;
+          ((data&&data.ok&&data.submissions)||[]).forEach(x=>{
+            if(String(x.chapter||'')!==DRAFT_CHAPTER||String(x.point||'')!==DRAFT_POINT)return;
+            if(!String(x.final||'').trim())return;
+            if(!last||String(x.datetime||'')>String(last.datetime||''))last=x;
+          });
+          if(last&&!ta.value.trim()){
+            ST.draft=String(last.final);taskText=ST.draft;ta.value=ST.draft;checkConds();
+            const nb=el('div');nb.style.cssText='background:#eef0ff;color:#4338ca;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:10px';
+            nb.textContent='✅ 이미 제출한 글이에요'+(last.datetime?' ('+String(last.datetime).slice(0,16)+')':'')+'. 더 고치고 싶으면 이어서 쓰고 다시 제출할 수 있어요.';
+            bannerSlot.appendChild(nb);
+          }
+        }catch(e){}
       }
     })();
     let right=null,refreshNotes=null;
