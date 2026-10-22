@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-22h';
+const APP_VERSION='2026-10-22i';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1793,6 +1793,20 @@ function saveDraftNow(chapter,point,stObj){
   }catch(e){}
 }
 /* 임시저장 불러왔다는 안내 배너를 slide 맨 위에 붙여줘요. */
+/* 글쓰는 칸 아래에 "지금 몇 단어" 표시 — 칸이 화면에 붙으면 자동으로 아래에 붙고, 값이 코드로 채워져도(이어쓰기 등) 따라가요. */
+function wordCountEn_(v){return (String(v||'').match(/[A-Za-z0-9]+(?:['’\-][A-Za-z0-9]+)*/g)||[]).length;}
+function addWordCount(ta){
+  const c=el('div');c.style.cssText='font-size:12.5px;color:#6b7684;text-align:right;margin-top:4px';
+  let attached=false,tries=0,last=-1;
+  const tick=()=>{
+    if(ta.isConnected){
+      if(!attached){ta.insertAdjacentElement('afterend',c);attached=true;}
+      const n=wordCountEn_(ta.value);if(n!==last){last=n;c.textContent='✍️ '+n+'단어';}
+    }else if(attached||++tries>240){clearInterval(t);}
+  };
+  const t=setInterval(tick,400);ta.addEventListener('input',tick);tick();
+  return ta;
+}
 function draftBanner(savedAt){
   const b=el('div');b.style.cssText='background:#eef0ff;color:#4338ca;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:10px';
   b.textContent='🕓 이전에 저장해둔 글을 불러왔어요'+(savedAt?(' ('+String(savedAt).slice(0,16)+' 저장)'):'')+'. 이어서 쓰면 돼요.';
@@ -3780,7 +3794,7 @@ function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
     });
   });
   wmid.appendChild(el('div','fl','✍️ 다시 쓰기'));
-  const ta=el('textarea','in');ta.placeholder='고쳐진 내용을 참고해서 전체를 처음부터 다시 써보세요.';ta.style.cssText='flex:1;min-height:420px;resize:vertical';
+  const ta=addWordCount(el('textarea','in'));ta.placeholder='고쳐진 내용을 참고해서 전체를 처음부터 다시 써보세요.';ta.style.cssText='flex:1;min-height:420px;resize:vertical';
   wmid.appendChild(ta);
   /* 이어쓰기 — 쓰다 만 글(임시저장)이 있으면 그걸, 없고 이미 제출한 적이 있으면 그 제출한 글을 불러와서
      처음부터 다시 치지 않고 이어서 고치게 해요. 입력하는 동안 자동으로 임시저장되고, 뒤로 가거나 창을 닫을 때도 저장해요. */
@@ -7035,7 +7049,7 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
     b.appendChild(el('div','lead',autoFormatPrompt(P.task.prompt)));
     const dictWrap=el('div','dictwrap');const dictLeft=el('div','dictleft');const right=el('div','dictright');
     dictLeft.appendChild(buildDictPanel());dictWrap.appendChild(dictLeft);dictWrap.appendChild(right);b.appendChild(dictWrap);
-    const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';right.appendChild(ta);
+    const ta=addWordCount(el('textarea','in'));ta.placeholder='여기에 영어로 써요.';right.appendChild(ta);
     const wcEl=el('div','hint');wcEl.style.cssText='margin:4px 0 2px;font-size:13px';right.appendChild(wcEl);
     // "조건 영작"은 개별 문법 포인트마다 다른 조건(문법 사용 등) 말고도, Pattern Drill 전체에 공통으로
     // 적용되는 최소 분량 조건(전체 단어 수·전체 문장 수)이 항상 함께 붙어요 — 선생님이 매번 "과제 조건"에
@@ -7478,7 +7492,7 @@ function runParagraph(topic){setWide(true);deckInit();
     // 이 화면은 이미 왼쪽(글쓰기)·오른쪽(브레인스토밍 참고자료) 2단이라, 사전은 버튼으로 따로 열지
     // 않고 왼쪽 칸 맨 위에 기본으로 붙여요(Re-Writing 제외 요청에 따라 다른 글쓰기 화면들도 동일).
     left.appendChild(buildDictPanel());
-    const ta=el('textarea','in');ta.style.minHeight='260px';ta.placeholder=topic.sample[0].en+' First, ... It is because ...';left.appendChild(ta);
+    const ta=addWordCount(el('textarea','in'));ta.style.minHeight='260px';ta.placeholder=topic.sample[0].en+' First, ... It is because ...';left.appendChild(ta);
     draftTaRef=ta;
     const counter=el('div','hint');left.appendChild(counter);
     const btn=el('button','btn','조건 확인');btn.style.marginTop='8px';left.appendChild(btn);
@@ -7523,7 +7537,7 @@ function runParagraph(topic){setWide(true);deckInit();
     const flags=el('div');flags.style.marginTop='10px';b.appendChild(flags);const fbtn=el('button','btn ghost','자동 점검');fbtn.style.marginTop='10px';b.appendChild(fbtn);
     const dictWrap=el('div','dictwrap');const dictLeft=el('div','dictleft');const finalRight=el('div','dictright');
     dictLeft.appendChild(buildDictPanel());dictWrap.appendChild(dictLeft);dictWrap.appendChild(finalRight);b.appendChild(dictWrap);
-    finalRight.appendChild(el('div','fl','완성본 (고친 글)'));const ta=el('textarea','in');ta.placeholder='교정한 완성본을 여기에 써요.';finalRight.appendChild(ta);
+    finalRight.appendChild(el('div','fl','완성본 (고친 글)'));const ta=addWordCount(el('textarea','in'));ta.placeholder='교정한 완성본을 여기에 써요.';finalRight.appendChild(ta);
     finalTaRef=ta;
     const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
     const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
@@ -7637,7 +7651,7 @@ function runArticle(topic){setWide(true);deckInit();
     b.appendChild(cols);
     rightCol.appendChild(el('div','lead',autoFormatPrompt(topic.prompt)));
     const bannerSlot=el('div');rightCol.appendChild(bannerSlot);
-    const ta=el('textarea','in');ta.placeholder='여기에 영어로 요약을 써요.';rightCol.appendChild(ta);
+    const ta=addWordCount(el('textarea','in'));ta.placeholder='여기에 영어로 요약을 써요.';rightCol.appendChild(ta);
     const copyWarn=el('div','fx no');copyWarn.style.cssText='display:none';rightCol.appendChild(copyWarn);
     const ul=el('ul','conds');allConds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});rightCol.appendChild(ul);
     const fx=el('div','fx');rightCol.appendChild(fx);
@@ -7875,7 +7889,7 @@ function runExam(topic){deckInit();
       left.appendChild(toolBtnRow);
     }
     const bannerSlot=el('div');left.appendChild(bannerSlot);
-    const ta=el('textarea','in');ta.placeholder='여기에 영어로 써요.';left.appendChild(ta);
+    const ta=addWordCount(el('textarea','in'));ta.placeholder='여기에 영어로 써요.';left.appendChild(ta);
     const ul=el('ul','conds');topic.conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});left.appendChild(ul);
     const fx=el('div','fx');left.appendChild(fx);
     addAiCondCheckButton(left,ul,()=>ta.value);
@@ -8398,7 +8412,7 @@ function runStory(topic){setWide(true);deckInit();
       if(img.complete&&img.naturalWidth)onReady();
     };
     window.addEventListener('resize',fitImgBox);
-    const tas=pics.map(()=>{const ta=el('textarea','in');ta.style.minHeight='110px';ta.addEventListener('focus',()=>{lastFocusedTa=ta;});return ta;});
+    const tas=pics.map(()=>{const ta=addWordCount(el('textarea','in'));ta.style.minHeight='110px';ta.addEventListener('focus',()=>{lastFocusedTa=ta;});return ta;});
     const taSlot=el('div');b.appendChild(taSlot);
     let writeIdx=0;
     const renderPic=()=>{
