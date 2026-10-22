@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-17a';
+const APP_VERSION='2026-10-22b';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -460,6 +460,40 @@ const norm=s=>(s||'').toLowerCase().replace(/[’']/g,"'").replace(/[.,!?;:"]/g,
    통일하고 공백만 정리할 뿐, 대문자/소문자나 마침표·물음표 등은 그대로 비교해요. */
 const normStrict=s=>(s||'').replace(/[’']/g,"'").replace(/\s+/g,' ').trim();
 const normKo=s=>(s||'').replace(/\s+/g,'').trim();
+/* Pattern Drill에서 "같은 뜻으로 쓰이는 단어/형태"는 맞게 인정하기 위한 목록이에요(예: 과거분사 got/gotten, home/house,
+   영국식·미국식 철자). 한 줄이 한 묶음이고 첫 단어가 대표예요. 더 필요하면 여기에 줄만 추가하면 돼요. 목록에 없는 동의어는
+   영작 채점에서 AI가 따로 판단해요. */
+const WORD_VARIANT_GROUPS=[
+  ['got','gotten'],['home','house'],['learned','learnt'],['burned','burnt'],['dreamed','dreamt'],['spelled','spelt'],
+  ['spilled','spilt'],['smelled','smelt'],['spoiled','spoilt'],['proved','proven'],['dived','dove'],['sneaked','snuck'],
+  ['color','colour'],['colors','colours'],['colored','coloured'],['favorite','favourite'],['favorites','favourites'],['center','centre'],
+  ['neighbor','neighbour'],['neighbors','neighbours'],['mom','mum'],['math','maths'],['soccer','football'],['vacation','holiday'],
+  ['vacations','holidays'],['apartment','flat'],['candy','sweets'],['garbage','rubbish'],['elevator','lift'],['cellphone','mobile']
+];
+const WORD_VARIANT_MAP=(()=>{const m={};WORD_VARIANT_GROUPS.forEach(g=>g.forEach(w=>{m[w]=g;}));return m;})();
+/* 문장 속 변형 단어를 전부 대표 단어로 바꿔요(대소문자 첫 글자는 유지) — 두 문장을 이 상태로 비교하면 got/gotten, home/house가 같은 것으로 처리돼요. */
+function canonVariants(str){
+  return String(str||'').replace(/[A-Za-z]+/g,w=>{
+    const g=WORD_VARIANT_MAP[w.toLowerCase()];if(!g)return w;
+    const c=g[0];
+    return (w[0]!==w[0].toLowerCase()&&w.slice(1)===w.slice(1).toLowerCase())?c[0].toUpperCase()+c.slice(1):c;
+  });
+}
+/* 대소문자·문장부호는 그대로 엄격하게 보되, 변형 단어(got/gotten 등)만 같은 것으로 보는 정답 비교예요. */
+function sameAnswer(a,b){const x=normStrict(a),y=normStrict(b);return x===y||canonVariants(x)===canonVariants(y);}
+/* 글 안의 변형 단어를 하나씩 다른 형태로 바꾼 글들을 만들어요(조건 검사에서 "gotten을 써라"에 got으로 써도 통과시키려고). */
+function wordVariantTexts(text){
+  const t=String(text||'');const out=[];
+  WORD_VARIANT_GROUPS.forEach(g=>{
+    const present=g.filter(w=>new RegExp('\\b'+w+'\\b','i').test(t));
+    if(!present.length)return;
+    g.forEach(target=>{
+      if(present.length===1&&present[0]===target)return;
+      out.push(t.replace(new RegExp('\\b('+g.join('|')+')\\b','gi'),m=>target));
+    });
+  });
+  return out;
+}
 /* norm()으로 다듬은 두 문자열을 그냥 .includes()로 비교하면, 짧은 표현(예: "is","a","go")이 전혀
    상관없는 다른 단어 속(예: "this","away","going")에 우연히 들어있다는 이유만으로 "포함된다"고 잘못
    판단할 수 있어요 — Re-Writing에서 "분명 맞게 고쳤는데 완전 다른 단어·문장 때문에 X가 뜬다"는 문제가
@@ -1254,6 +1288,8 @@ function expandContractionVariants(text){
 function testWithContractions(test){
   return t=>{
     try{ if(test(t))return true; }catch(e){}
+    // 같은 뜻의 변형 단어(got/gotten, home/house 등)로 바꿔 써도 조건을 충족한 것으로 봐요.
+    if(wordVariantTexts(t).some(v=>{try{return test(v);}catch(e){return false;}}))return true;
     if(!/['’‘`]/.test(String(t||'')))return false;
     return expandContractionVariants(t).some(v=>{try{return test(v);}catch(e){return false;}});
   };
@@ -1475,6 +1511,32 @@ function matchAudience(target,val){
   const m=v.match(/^(?:초|중|고)(\d+)$/);
   return !!(m&&list.includes(m[1]));
 }
+/* 학교 이름 비교 — 띄어쓰기·대소문자·"학교" 글자 유무("안화중" = "안화중학교" = "안화 중")를 무시해요. */
+function normSchoolName(x){
+  return String(x||'').replace(/\s+/g,'').toLowerCase().replace(/(초등학교|중학교|고등학교)$/,m=>({'초등학교':'초','중학교':'중','고등학교':'고'})[m]);
+}
+function matchAudienceSchool(target,school){
+  const t=String(target||'').trim();
+  if(!t)return true;
+  const v=normSchoolName(school);
+  return t.split(/[,，、]/).map(x=>x.trim()).filter(Boolean).some(x=>normSchoolName(x)===v);
+}
+/* 학년 비교 — 학생 쪽이 "1"(숫자만)·"중1"·"1학년"·"중1학년" 중 어떻게 저장돼 있든, 콘텐츠 대상 학년이 "1"·"중1"·"1학년"
+   어떻게 적혀 있든 맞춰요. 대상에 학교급(초/중/고)이 붙어 있으면 학생의 학교급(학교 이름 끝글자나 학년 값)과도 같아야 하고,
+   학생 쪽 학교급을 알 수 없으면(숫자만 저장된 학생) 숫자만 같으면 맞는 걸로 봐요. */
+function matchAudienceGrade(target,school,grade){
+  const t=String(target||'').trim();
+  if(!t)return true;
+  const sg=String(grade==null?'':grade).replace(/\s+/g,'');
+  const stuNum=(sg.match(/\d+/)||[''])[0];
+  const stage=(stageGrade(school,grade).match(/^(초|중|고)/)||[''])[1]||((sg.match(/^(초|중|고)/)||[''])[1]);
+  return t.split(/[,，、]/).map(x=>x.trim().replace(/\s+/g,'')).filter(Boolean).some(x=>{
+    const m=x.match(/^(초|중|고)?(\d+)(?:학년)?$/);
+    if(!m)return x===sg;
+    if(m[2]!==stuNum)return false;
+    return !m[1]||!stage||m[1]===stage;
+  });
+}
 function visibleToUser(item){
   // 학생계정 탭에서 "테스트계정" 칸을 표시해둔 계정은, 학교/학년/반으로 공개 대상이 좁혀진 컨텐츠(예:
   // 특정 학교·학년 전용 수행평가)까지 전부 보여요 — 선생님이 지금 등록된 모든 컨텐츠를 학생 입장에서
@@ -1488,7 +1550,7 @@ function visibleToUser(item){
   const school=TEACHER_PREVIEW?TEACHER_PREVIEW.school:USER.school;
   const grade=TEACHER_PREVIEW?TEACHER_PREVIEW.schoolGrade:USER.schoolGrade;
   const cls=TEACHER_PREVIEW?TEACHER_PREVIEW.cls:USER.cls;
-  return matchAudience(item.targetSchool,school)&&matchAudience(item.targetSchoolGrade,grade)&&matchAudience(item.targetClass,cls);
+  return matchAudienceSchool(item.targetSchool,school)&&matchAudienceGrade(item.targetSchoolGrade,school,grade)&&matchAudience(item.targetClass,cls);
 }
 function toArticlePoint(g){
   const rawConds=(g.conds&&g.conds.length)?g.conds:parseCondText(g.condText);
@@ -1516,7 +1578,7 @@ function toExamPoint(g){
   return {id:g.id,level:g.level,title:g.title,prompt:g.prompt||'',conds,
     evalCriteria:g.evalCriteria||g.evalAreaText||'',
     targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||g.targetGrade||'',targetClass:g.targetClass||'',images:g.images||'',
-    mindmapText:g.mindmapText||'',frameText:g.frameText||'',grammarSwapText:g.grammarSwapText||''};
+    mindmapText:g.mindmapText||'',tableText:g.tableText||'',frameText:g.frameText||'',grammarSwapText:g.grammarSwapText||''};
 }
 const EXAM={};
 function mergeExam(){
@@ -2821,7 +2883,22 @@ function processSectionHtml(orig){
       }
     }
   }catch(e){}
-  return mmHtml+grammarPracticeHtml(orig);
+  let tbHtml='';
+  try{
+    const tb=orig.tableNotes?JSON.parse(orig.tableNotes):null;
+    if(tb&&typeof tb==='object'){
+      Object.keys(tb).forEach(title=>{
+        const d=tb[title]||{};const cols=Array.isArray(d.cols)?d.cols:[];
+        const rows=(Array.isArray(d.rows)?d.rows:[]).filter(r=>Array.isArray(r)&&r.some(c=>String(c||'').trim()));
+        if(!cols.length||!rows.length)return;
+        tbHtml+='<div class="procblock"><div class="prochead">표에 적은 내용 · '+escH(title)+'</div>'+
+          '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr>'+cols.map(c=>'<th style="border:1px solid #ddd;background:#f4f5ff;padding:4px 6px;text-align:left">'+escH(c)+'</th>').join('')+'</tr>'+
+          rows.map(r=>'<tr>'+cols.map((c,ci)=>'<td style="border:1px solid #ddd;padding:4px 6px;vertical-align:top">'+escH(r[ci]||'').replace(/\n/g,'<br>')+'</td>').join('')+'</tr>').join('')+
+          '</table></div>';
+      });
+    }
+  }catch(e){}
+  return mmHtml+tbHtml+grammarPracticeHtml(orig);
 }
 /** "오늘의 문법 연습"에서 학생이 적은 "나의 문장"들과, 선생님이 "🤖 문법 연습 AI 검토"를 눌러 만든
  *  검토 결과(orig.grammarFeedback — 문법명별 grammarOk/sentenceOk/corrected/note)가 있으면 문장 바로
@@ -4582,6 +4659,7 @@ const CONTENT_FORMS={
     {key:'level',label:'레벨',type:'text'},
     {key:'prompt',label:'과제 프롬프트',type:'textarea',ph:'학생에게 보여줄 과제 설명'},
     {key:'mindmapText',label:'🧠 브레인스토밍 마인드맵 (선택 · 글쓰기 전에 생각을 정리하게 하고 싶을 때만) — 한 줄에 하나씩: 가지 이름 | 안내 문구(선택)',type:'textarea',ph:'High Point (가장 자랑스럽거나 기뻤던 일) | 몇 살 때 있었던 일인가요? 사건과 그때 느낀 감정을 적어보세요.\nLow Point (좌절·실패했거나 극복해야 했던 일) | 어떤 어려움이었고, 어떻게 극복했나요?\nTurning Point (배운 점과 가치관의 변화) | 이 경험으로 무엇을 배웠나요?'},
+    {key:'tableText',label:'📋 표 작성 칸 (선택 · 과제지에 "여러 칸짜리 표"가 있을 때 — 사진으로 올리면 AI가 표 모양을 제안해줘요) — 표마다 빈 줄로 구분. 1번째 줄 "표 제목 | 안내 문구(선택)", 2번째 줄 "열: 열1 | 열2 | 열3", 선택 줄 "예: 예시값1 | 예시값2 | ..." 과 "행: 2"(학생이 처음 보는 빈 행 수, 기본 2)',type:'textarea',ph:'생각 정리 표 | 작품에서 보이는 것과 그 의미를 정리해보세요\n열: 작품에서 보이는 것 | 나의 어떤 면을 나타내나요? | 왜 이렇게 표현했나요? | 필요한 영어 단어\n예: 파란색 | 차분한 성격 | 혼자 조용히 있는 시간을 좋아해서 | blue, calm\n행: 2'},
     {key:'frameText',label:'✏️ 글의 뼈대 잡기 (선택 · 자서전 쓰기처럼 단계별로 뼈대를 잡게 하고 싶을 때만) — 한 줄에 하나씩: 구성 이름 | 문장 시작 단서(세미콜론 ; 으로 구분) | 선생님 예시 문장',type:'textarea',ph:'Introduction (과거) | When I was...; I was born in...; As a child, I used to... | When I was seven years old, I was a shy boy who was afraid of speaking in front of people.\nBody (현재) | However, ... made me realize that...; Since then, I have... | However, joining the debate club made me realize that I could enjoy speaking in public.\nConclusion (미래) | Based on this experience, I want to become someone who...; In the future, I hope to... | Based on this experience, I want to become someone who helps other shy students.'},
     {key:'grammarSwapText',label:'🔧 오늘의 문법 연습 (선택 · 그날 발표되는 필수 문법을 연습시키고 싶을 때만) — 문법 항목마다 빈 줄로 구분해서: 1번째 줄 "문법명 | 설명", 그 아래 "- 영어 예문 | 한글 해석" 줄(여러 개 가능). 학생은 각 문법마다 "나의 문장" 칸에 그 문법을 활용한 문장을 자유롭게 적어요.',type:'textarea',ph:'현재완료 (have/has p.p.)|과거에 시작된 일이 현재까지 영향을 주거나 계속될 때 사용해요\n- I have overcome my fear.|나는 두려움을 극복해왔다.\n- I have learned many things from my family.|나는 가족으로부터 많은 것을 배워왔다.\n\n관계대명사 (who/which/that)|사람·사물 뒤에서 추가 설명을 붙일 때 사용해요\n- The fear that I overcame made me stronger.|내가 극복한 두려움은 나를 더 강하게 만들었다.\n- I met a teacher who believed in me.|나는 나를 믿어준 선생님을 만났다.'},
     {key:'evalAreaText',label:'평가 영역 (선택 · 학생에게도 보여요) — 한 줄에 하나씩: 영역명 | 영역 만점 | 평가 요소1; 평가 요소2 ...',type:'textarea',ph:'내용 | 10 | 주제에 맞는 내용 전개; 구체적인 예시 포함\n어휘·문법 | 5 | 문법 오류 없이 쓰기; 다양한 어휘 사용'},
@@ -4684,6 +4762,27 @@ function parseMindmapText(text){
     const parts=line.split('|').map(x=>x.trim());
     return { name: parts[0]||'', guide: parts[1]||'' };
   }).filter(m=>m.name);
+}
+/* 수행평가의 "📋 표 작성 칸"(tableText)을 파싱해요. 표마다 빈 줄로 구분하고, 각 표는
+     1번째 줄:  표 제목 | 안내 문구(선택)
+     "열: 열1 | 열2 | 열3 ..."  (필수)
+     "예: 값1 | 값2 | ..."      (선택 — 학생에게 회색 예시 줄로 보여줘요)
+     "행: 2"                     (선택 — 처음 보여줄 빈 행 수, 기본 2, 최대 10) */
+function parseTableText(text){
+  if(!text)return [];
+  return String(text).split(/\n\s*\n/).map(block=>{
+    const lines=block.split('\n').map(x=>x.trim()).filter(Boolean);
+    if(!lines.length)return null;
+    const t={title:'',guide:'',cols:[],example:[],rows:2};
+    lines.forEach((ln,i)=>{
+      let m;
+      if((m=ln.match(/^열\s*[:：]\s*(.*)$/)))t.cols=m[1].split('|').map(x=>x.trim()).filter(Boolean);
+      else if((m=ln.match(/^예\s*[:：]\s*(.*)$/)))t.example=m[1].split('|').map(x=>x.trim());
+      else if((m=ln.match(/^행\s*[:：]\s*(\d+)/)))t.rows=Math.max(1,Math.min(10,Number(m[1])||2));
+      else if(i===0){const parts=ln.split('|').map(x=>x.trim());t.title=parts[0]||'';t.guide=parts[1]||'';}
+    });
+    return (t.title&&t.cols.length)?t:null;
+  }).filter(Boolean);
 }
 /* 수행평가의 "✏️ 글의 뼈대 잡기"(frameText)를 파싱해요. 형식(한 줄에 하나씩):
    구성 이름 | 문장 시작 단서(세미콜론으로 구분) | 선생님 예시 문장 — 뒤 두 칸은 선택이에요. */
@@ -6463,9 +6562,9 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
         const wrongWrap=el('div');wrongWrap.innerHTML=renderDrillWrongReport(parseWrongReport(s.wrongReport));
         card.appendChild(wrongWrap);
       }
-      if(s.mindmapNotes){
+      if(s.mindmapNotes||s.tableNotes){
         const mmWrap=el('div');mmWrap.style.cssText='margin-top:10px';
-        mmWrap.innerHTML=processSectionHtml({mindmapNotes:s.mindmapNotes});
+        mmWrap.innerHTML=processSectionHtml({mindmapNotes:s.mindmapNotes,tableNotes:s.tableNotes});
         card.appendChild(mmWrap);
       }
       if(s.grammarPractice){
@@ -6846,7 +6945,7 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
     inp.addEventListener('input',updateChips);
     const check=()=>{if(!inp.value.trim()){inp.classList.remove('ok','no');fx.className='fx no';fx.textContent='문장을 입력한 후 Enter를 눌러 채점하세요.';return;}
       if(!allUsed){inp.classList.remove('ok','no');fx.className='fx no';fx.textContent='주어진 단어를 모두 사용해서 문장을 완성한 후 Enter를 눌러 채점하세요.';return;}
-      correct=normStrict(inp.value)===normStrict(it.a);inp.classList.remove('ok','no');inp.classList.add(correct?'ok':'no');
+      correct=sameAnswer(inp.value,it.a);inp.classList.remove('ok','no');inp.classList.add(correct?'ok':'no');
       fx.className='fx '+(correct?'ok':'no');fx.textContent=correct?'정답이에요! (Enter=다음)':'다시 확인해요. 대소문자와 문장부호(마침표 등)까지 정확히 맞아야 해요. (Enter=다음, 오답노트에 담겨요)';checked=true;
       nextB.disabled=(idx===slides.length-1);
       if(!it._graded){it._graded=true;if(correct)RES.arrange.ok++;else RES.wrong.push({type:'배열',ko:it.ko,a:it.a,user:inp.value});RES.all.push({type:'배열',ko:it.ko,a:it.a,user:inp.value,correct:correct});progress.arrangeCorrect.push(correct);saveProgressNow();}};
@@ -6858,7 +6957,7 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
     if(it.h)b.appendChild(el('div','frame','단어: '+it.h));
     const inp=el('input','in');inp.placeholder='영어로 문장을 완성하세요.';b.appendChild(inp);
     const fx=el('div','fx');b.appendChild(fx);b.appendChild(el('div','enter-tip','Enter = 채점 · 채점 후 Enter 한 번 더 = 다음'));
-    let checked=false,correct=false,pending=false;const ansList=[it.a].concat(it.alt||[]).map(normStrict);
+    let checked=false,correct=false,pending=false;const ansList=[it.a].concat(it.alt||[]);
     const finalize=()=>{inp.classList.remove('ok','no');inp.classList.add(correct?'ok':'no');
       fx.className='fx '+(correct?'ok':'no');fx.innerHTML=correct?'정답이에요! (Enter=다음)':('아쉬워요(대소문자·문장부호도 정확해야 해요). 모범답안: <b>'+it.a+'</b> (오답노트에 담겨요)');checked=true;pending=false;
       if(!it._graded){it._graded=true;if(correct)RES.compose.ok++;else RES.wrong.push({type:'영작',ko:it.k,a:it.a,user:inp.value});RES.all.push({type:'영작',ko:it.k,a:it.a,user:inp.value,correct:correct});progress.composeCorrect.push(correct);saveProgressNow();}};
@@ -6868,7 +6967,7 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
     const check=async()=>{
       if(pending)return;
       const typed=inp.value;
-      if(ansList.includes(normStrict(typed))){correct=true;finalize();return;}
+      if(ansList.some(x=>sameAnswer(typed,x))){correct=true;finalize();return;}
       pending=true;fx.className='fx';fx.textContent='채점 중… (표현이 달라도 같은 뜻이면 AI가 확인해줘요)';
       try{
         const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'checkComposeAnswerAI',studentId:USER.id,korean:it.k,modelAnswer:it.a,studentAnswer:typed})});
@@ -7050,7 +7149,7 @@ function buildRedo(RES){ // insert redo slides right after the redo anchor (befo
     let tries=0,solved=false;const target=normStrict(w.a);
     const stage3=()=>{copyWrap.innerHTML='';const cb=el('div','copybox','따라 적기: '+w.a);copyWrap.appendChild(cb);hintbox.textContent='세 번째예요. 정답을 그대로 따라 적으면 통과!';};
     const check=()=>{if(solved){if(idx<slides.length-1)deckShow(idx+1);return;}
-      tries++;const ok=normStrict(inp.value)===target;
+      tries++;const ok=sameAnswer(inp.value,w.a);
       if(ok){solved=true;inp.classList.remove('no');inp.classList.add('ok');fx.className='fx ok';fx.textContent='잘했어요! (Enter=다음)';hintbox.textContent='';}
       else{inp.classList.add('no');fx.className='fx no';fx.textContent='다시 해봐요.';
         if(tries===1)hintbox.textContent='힌트: 첫 단어는 "'+w.a.split(' ')[0]+'" 로 시작해요.';
@@ -7578,11 +7677,13 @@ function runExam(topic){deckInit();
   // 전에 참고용 슬라이드를 순서대로(마인드맵 → 뼈대 잡기 → 문법 연습) 먼저 보여줘요. 셋 다 비워둔
   // (예전 방식) 수행평가는 슬라이드 자체가 안 생기고 예전처럼 바로 글쓰기 화면으로 시작해요.
   const mindmapItems=parseMindmapText(topic.mindmapText);
+  const tableItems=parseTableText(topic.tableText);
+  const hasSide=mindmapItems.length>0||tableItems.length>0;
   const frameItems=parseFrameText(topic.frameText);
   const grammarItems=parseGrammarSwapText(topic.grammarSwapText);
   // 마인드맵 가지가 여러 개일 때는 칸이 너무 좁아 보이지 않도록, 이 수행평가 화면 전체를 좀 더 넓게 써요
   // (Paragraph Writing이 좌우 분할 화면에서 쓰는 것과 같은 넓은 화면 모드예요).
-  setWide(mindmapItems.length>0);
+  setWide(hasSide);
   // 마인드맵에 적은 내용은 이후 실제 글쓰기 화면 오른쪽 참고 패널에 그대로 보여줘요(Paragraph Writing의
   // 좌우 분할 글쓰기 방식과 같아요) — 그래서 각 가지의 값을 mmNotes에 실시간으로 저장해둬요.
   const mmNotes={};
@@ -7591,6 +7692,48 @@ function runExam(topic){deckInit();
   const gpNotes={};
   grammarItems.forEach(g=>{gpNotes[g.name]='';});
   mindmapItems.forEach(m=>{mmNotes[m.name]='';});
+  // 표 작성 칸 — 표 제목마다 {cols, rows:[[셀...]]}로 모아둬요(제출할 때 tableNotes로 같이 저장해요).
+  const tblNotes={};
+  tableItems.forEach(t=>{tblNotes[t.title]={cols:t.cols.slice(),rows:Array.from({length:t.rows},()=>t.cols.map(()=>''))};});
+  if(tableItems.length){
+    slideAdd(b=>{
+      b.appendChild(el('span','badge accent','수행평가 대비 · 표 작성'));
+      b.appendChild(el('h1','title','📋 표로 정리하기'));
+      b.appendChild(el('div','hint','과제지의 표처럼 칸마다 생각을 정리해보세요. 여기 적은 내용은 채점되지 않지만, 다음 글쓰기 화면 오른쪽에서 계속 참고할 수 있고 선생님이 제출한 글과 함께 볼 수 있어요.'));
+      tableItems.forEach(t=>{
+        const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-top:12px;background:#faf9fb;overflow-x:auto';
+        card.appendChild(el('div','fl',escH(t.title)));
+        if(t.guide){const g=el('div');g.style.cssText='margin-top:4px;font-size:13px;color:#6b7684';g.textContent=t.guide;card.appendChild(g);}
+        const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;margin-top:8px;font-size:13.5px;min-width:480px';
+        const head=el('tr');
+        t.cols.forEach(c=>{const th=el('th',null,escH(c));th.style.cssText='border:1px solid rgba(0,0,0,.12);background:#eef0ff;padding:6px 8px;text-align:left;font-weight:700';head.appendChild(th);});
+        tbl.appendChild(head);
+        if(t.example.length){
+          const ex=el('tr');
+          t.cols.forEach((c,ci)=>{const td=el('td',null,escH(ci===0&&t.example[0]?'예) '+t.example[0]:(t.example[ci]||'')));td.style.cssText='border:1px solid rgba(0,0,0,.12);padding:6px 8px;color:#8b95a1;background:#f6f6f8';ex.appendChild(td);});
+          tbl.appendChild(ex);
+        }
+        const data=tblNotes[t.title];
+        const addRow=(ri)=>{
+          const tr=el('tr');
+          t.cols.forEach((c,ci)=>{
+            const td=el('td');td.style.cssText='border:1px solid rgba(0,0,0,.12);padding:2px';
+            const ta=el('textarea','in');ta.rows=2;ta.style.cssText='width:100%;min-height:44px;border:none;font-size:13.5px;resize:vertical;background:transparent';
+            ta.value=(data.rows[ri]&&data.rows[ri][ci])||'';
+            ta.addEventListener('input',()=>{data.rows[ri][ci]=ta.value;});
+            td.appendChild(ta);tr.appendChild(td);
+          });
+          tbl.appendChild(tr);
+        };
+        data.rows.forEach((_,ri)=>addRow(ri));
+        card.appendChild(tbl);
+        const addBtn=el('button','btn ghost','+ 행 추가');addBtn.type='button';addBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12.5px';
+        addBtn.onclick=()=>{if(data.rows.length>=12)return;data.rows.push(t.cols.map(()=>''));addRow(data.rows.length-1);};
+        card.appendChild(addBtn);
+        b.appendChild(card);
+      });
+    },{wide:true,wideMax:'1200px'});
+  }
   if(mindmapItems.length){
     slideAdd(b=>{
       b.appendChild(el('span','badge accent','수행평가 대비 · 브레인스토밍'));
@@ -7670,7 +7813,7 @@ function runExam(topic){deckInit();
   }
   let writingSlideRefresh=null;
   slideAdd(b=>{
-    const hasMap=mindmapItems.length>0;
+    const hasMap=hasSide;
     const wrap=hasMap?el('div','writer'):b;
     const left=hasMap?el('div','wleft'):b;
     if(hasMap){wrap.appendChild(left);}
@@ -7718,7 +7861,7 @@ function runExam(topic){deckInit();
     let right=null,refreshNotes=null;
     if(hasMap){
       right=el('div','wright');
-      right.appendChild(el('div','fl','🧠 내가 적은 마인드맵'));
+      right.appendChild(el('div','fl',mindmapItems.length?'🧠 내가 적은 마인드맵':'📋 내가 적은 표'));
       const notesHost=el('div');notesHost.style.cssText='margin-top:8px';
       right.appendChild(notesHost);
       refreshNotes=()=>{
@@ -7731,13 +7874,26 @@ function runExam(topic){deckInit();
           card.appendChild(txt);
           notesHost.appendChild(card);
         });
+        tableItems.forEach(t=>{
+          const d=tblNotes[t.title];
+          const filled=d.rows.filter(r=>r.some(c=>String(c||'').trim()));
+          const card=el('div','exmnotes-card');
+          card.appendChild(el('div','lbl','📋 '+escH(t.title)));
+          if(!filled.length)card.appendChild(el('div','txt empty','(아직 안 적었어요)'));
+          filled.forEach(r=>{
+            const line=el('div','txt');line.style.cssText='margin-top:4px';
+            line.innerHTML=t.cols.map((c,ci)=>'<b>'+escH(c)+'</b>: '+escH(r[ci]||'-')).join('<br>');
+            card.appendChild(line);
+          });
+          notesHost.appendChild(card);
+        });
       };
       refreshNotes();
       writingSlideRefresh=refreshNotes;
       wrap.appendChild(right);
       b.appendChild(wrap);
     }
-  },{focus:'textarea',onEnter:()=>{if(writingSlideRefresh)writingSlideRefresh();},wide:mindmapItems.length>0,wideMax:'1200px'});
+  },{focus:'textarea',onEnter:()=>{if(writingSlideRefresh)writingSlideRefresh();},wide:hasSide,wideMax:'1200px'});
   // 2) 점수 + 제출
   slideAdd(b=>{b.appendChild(el('span','badge green','수행평가 대비 · 채점 결과'));b.appendChild(el('h1','title','자동 채점 결과'));
     b._onShow=()=>{};
@@ -7790,9 +7946,10 @@ function runExam(topic){deckInit();
         // "고쳐 쓴 최종 글"과 함께 볼 수 있게 해요. 빈 값만 있으면(가지를 하나도 안 채웠으면) 아예 안 보내요.
         const mmFilled=Object.keys(mmNotes).some(k=>String(mmNotes[k]||'').trim());
         const gpFilled=Object.keys(gpNotes).some(k=>String(gpNotes[k]||'').trim());
+        const tblFilled=Object.keys(tblNotes).some(k=>tblNotes[k].rows.some(r=>r.some(c=>String(c||'').trim())));
         const payload={book:lv.book,chapter:'Performance Assessment',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Performance Assessment',topic.title),datetime:dt,
           quiz:'',arrange:'',compose:'',task:okConds+'/'+totalConds,final:taskText,total:okConds+'/'+totalConds,score:score,grade:gr,progress:prog,studyTime:studyTimeStr,
-          mindmapNotes:mmFilled?JSON.stringify(mmNotes):'',grammarPractice:gpFilled?JSON.stringify(gpNotes):''};
+          mindmapNotes:mmFilled?JSON.stringify(mmNotes):'',tableNotes:tblFilled?JSON.stringify(tblNotes):'',grammarPractice:gpFilled?JSON.stringify(gpNotes):''};
         const txt=['English Writing Lab · 수행평가 대비',topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'학습 시간: '+studyTimeStr,'',
           '[작성한 글]',taskText||'(작성 없음)','','총점 '+score+'/100 ('+gr+') · 조건 '+okConds+'/'+totalConds].join('\n');
         return{payload,txt};};
