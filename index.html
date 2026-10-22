@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-22b';
+const APP_VERSION='2026-10-22e';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1586,8 +1586,11 @@ function mergeExam(){
   // 전에 항상 한 번 비워요(mergeStory와 같은 방식).
   Object.keys(EXAM).forEach(k=>{ delete EXAM[k]; });
   (typeof GENEXAM!=='undefined'?GENEXAM:[]).forEach(g=>{
-    if(!g||!g.level)return;
-    (EXAM[g.level]=EXAM[g.level]||[]).push(toExamPoint(g));
+    if(!g)return;
+    // ⚠️ 예전엔 "레벨" 칸이 비어 있는 수행평가는 목록에서 통째로 빠져서(대상 학교·학년을 맞게 적어도) 학생에게 안 보였어요.
+    // 수행평가는 레벨이 아니라 대상 학교·학년·반으로 공개하니, 레벨이 비어 있어도 목록에 넣어줘요.
+    const key=g.level||'_none';
+    (EXAM[key]=EXAM[key]||[]).push(toExamPoint(g));
   });
 }
 
@@ -6038,6 +6041,7 @@ const STUDENT_FIELDS=[
   {key:'schoolGrade',label:'학년',type:'gradeSelect'},
   {key:'cls',label:'반',ph:'예) A반 (없으면 비워둬도 돼요)'},
   {key:'academy',label:'학원',ph:'예) 아이콘 학원 (한 학원만 쓰면 비워둬도 돼요)'},
+  {key:'isTestAccount',label:'테스트 계정',type:'testSelect',note:'"테스트 계정"으로 두면 이 아이디는 학생 화면 그대로 보이면서, 학교·학년·반으로 제한된 컨텐츠까지 전부 보여요. 선생님이 학생 입장에서 확인해 볼 때 쓰세요. 실제 학생은 "아니요"로 두세요.'},
   {key:'status',label:'상태',type:'statusSelect',note:'휴원: 로그인하면 "휴원 중이에요. 선생님께 문의해주세요"가 떠요. 퇴원: "아이디를 확인해주세요"가 떠요(없는 아이디처럼 보여요). 둘 다 선생님 목록에서는 기본으로 숨겨지고, 제출·첨삭 기록은 그대로 남아요.'}
 ];
 function viewStudentManage(){teacherMount(w=>{
@@ -6156,7 +6160,11 @@ function viewStudentForm(existing){teacherMount(w=>{
     const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:6px';
     wrap.appendChild(el('div','hint',f.label));
     let inp;
-    if(f.type==='statusSelect'){
+    if(f.type==='testSelect'){
+      inp=el('select','in');inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
+      [['','아니요 (일반 학생)'],['Y','네 (모든 컨텐츠 보기)']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;inp.appendChild(o);});
+      inp.value=(existing&&String(existing.isTestAccount||'').trim())?'Y':'';
+    }else if(f.type==='statusSelect'){
       inp=el('select','in');inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
       [['','재원'],['휴원','휴원'],['퇴원','퇴원']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;inp.appendChild(o);});
       inp.value=existing?studentStatus(existing):'';
@@ -8602,7 +8610,19 @@ function stopRealtimeContent(){
     fetchRoster().then(r=>{
       if(USER.role!=='student')return;
       const me=((r&&r.students)||[]).find(x=>String(x.id)===String(USER.id));
-      if(me&&isInactiveStudent(me)){logoutBtn.onclick();}
+      if(me&&isInactiveStudent(me)){logoutBtn.onclick();return;}
+      // 로그인 상태가 계속 유지되는 동안 선생님이 학교·학년·반을 고치면, 예전 값이 세션에 남아서 새로 공개한
+      // 콘텐츠(대상 학교/학년/반)가 안 보이는 문제가 있었어요. 접속할 때마다 최신 명단 값으로 맞춰줘요.
+      if(me){
+        const fresh={school:me.school||'',schoolGrade:me.schoolGrade||'',cls:me.cls||'',academy:me.academy||'',isTestAccount:!!String(me.isTestAccount||'').trim()};
+        const changed=Object.keys(fresh).some(k=>String(USER[k]||'')!==String(fresh[k]));
+        if(changed){
+          Object.assign(USER,fresh);
+          saveSession();
+          applyClassLevel(USER.cls);
+          if(document.querySelector('.hero'))enterHome(); // 지금 홈 화면이면 새 값으로 다시 그려요.
+        }
+      }
     }).catch(()=>{});
   }else{
     viewLogin();
