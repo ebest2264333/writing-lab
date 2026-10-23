@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-23h';
+const APP_VERSION='2026-10-23n';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2901,11 +2901,13 @@ const WR_FONTS=
 function wrErrHtml_(e,tpl){
   const type=e.type||'wrong';
   const chip=type==='suggestion'?'<span class="chip s">제안</span>':type==='missing'?'<span class="chip m">빠진 표현</span>':'';
-  const d=diffPairHtml_(e);
-  const icon=tpl==='초등'?('<span class="ic ic-x">✕</span>'):'';
-  const icon2=tpl==='초등'?('<span class="ic ic-ok">✓</span>'):'';
-  const noteIcon=tpl==='초등'?'<span class="ic ic-q">?</span>':'';
-  return '<div class="wr-err"><div class="wr-pair">'+icon+'<span>'+d.wrongHtml+'</span>'+(d.hasCorrect?('<span class="arr">→</span>'+icon2+'<span>'+d.correctHtml+'</span>'):'')+chip+'</div>'+
+  const d=diffPairHtml_(e,{collapse:true});
+  const el_=tpl==='초등';
+  // 한 줄에 "틀린 표현 → 고친 표현"을 다 넣으면 길 때 줄바꿈이 애매하게 꺾여서, 틀린 표현 줄 / 고친 표현 줄로 나눠요.
+  const l1='<div class="l1">'+(el_?'<span class="ic ic-x">✕</span>':'')+'<span>'+d.wrongHtml+'</span></div>';
+  const l2=d.hasCorrect?('<div class="l2">'+(el_?'<span class="ic ic-ok">✓</span>':'<span class="arr">→</span>')+'<span>'+d.correctHtml+'</span>'+chip+'</div>'):'';
+  const noteIcon=el_?'<span class="ic ic-q">?</span>':'';
+  return '<div class="wr-err"><div class="wr-pair">'+l1+l2+'</div>'+
     (e.note?('<div class="wr-note">'+noteIcon+'<span>'+escH(e.note)+'</span></div>'):'')+'</div>';
 }
 const WR_LEGEND='<div class="wr-legend"><span style="color:#C62828">● 고칠 표현</span><span style="color:#1D4ED8">● 더해야 할 표현</span><span style="color:#7C3AED">● 더 자연스러운 제안</span></div>';
@@ -2920,7 +2922,7 @@ const WR_CSS_COMMON=
   "*{box-sizing:border-box}body{margin:0;background:#E9EBF0;padding:24px 12px;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-family:'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#1F2430;line-height:1.6}"+
   ".wr-page{max-width:794px;margin:0 auto;background:#fff;padding:0 0 22px}"+
   ".wr-sent{display:flex;gap:14px;break-inside:avoid;page-break-inside:avoid}"+
-  ".wr-err{margin:6px 0 10px}.wr-pair{font-size:14.5px;display:flex;flex-wrap:wrap;align-items:center;gap:6px}"+
+  ".wr-err{margin:6px 0 10px}.wr-pair{font-size:14.5px}.wr-pair .l1,.wr-pair .l2{display:flex;flex-wrap:wrap;align-items:center;gap:6px}.wr-pair .l2{margin-top:4px}"+
   ".arr{color:#8A93A5}.chip{font-size:11px;font-weight:700;padding:1px 7px;border-radius:5px;border:1px solid currentColor;margin-left:4px}"+
   ".wr-note{font-size:13px;color:#4A5262;margin-top:2px;line-height:1.55;display:flex;gap:6px}"+
   ".wr-legend{display:flex;gap:14px;justify-content:flex-end;font-size:11.5px;font-weight:700;margin:-4px 0 8px}.wr-empty{padding:14px 4px;color:#6B7486;font-size:14px}"+
@@ -3253,7 +3255,8 @@ function splitAltCorrects(str){
  *  (예: "The boy is ache → The boy is in pain" 에서 The boy is 는 그대로 두고 ache만 빨간 취소선, in pain만 빨강.)
  *  빨강(wrong)=바뀐/지워진 단어 취소선 + 새 단어 빨강, 파랑(missing)=새로 더한 단어만 파랑, 보라(suggestion)=새 단어 보라.
  *  고친 표현이 비어 있으면(지우기만) 빨간 취소선만 그어요. "A / B"처럼 대안이 여러 개면 각각 비교해요. */
-function diffPairHtml_(e){
+function diffPairHtml_(e,opts){
+  const collapse=!!(opts&&opts.collapse);
   const type=e.type||'wrong';
   const color=type==='missing'?'#1D4ED8':(type==='suggestion'?'#7C3AED':'#B3261E');
   const nz=t=>String(t||'').toLowerCase().replace(/[^a-z0-9'가-힣]/g,'');
@@ -3261,10 +3264,27 @@ function diffPairHtml_(e){
   const wt=toks(e.wrong);
   const alts=splitAltCorrects(e.correct);
   const strike='color:#B3261E;text-decoration:line-through';
+  const dots='<span style="color:#8A93A5">…</span>';
+  // collapse=true(리포트용)면 그대로인 단어가 길게 이어질 때 앞뒤 한 단어만 남기고 …로 줄여서 "바뀐 부분"만 눈에 띄게 해요.
+  const join=items=>{
+    if(!collapse)return items.map(x=>x.h).join(' ');
+    const out=[];let i=0;
+    while(i<items.length){
+      if(!items[i].k){out.push(items[i].h);i++;continue;}
+      let j=i;while(j<items.length&&items[j].k)j++;
+      const run=items.slice(i,j),len=run.length,atStart=i===0,atEnd=j===items.length;
+      if(len<=2||(len===3&&!atStart&&!atEnd))run.forEach(x=>out.push(x.h));
+      else if(atStart&&atEnd)run.forEach(x=>out.push(x.h));
+      else if(atStart){out.push(dots,run[len-1].h);}
+      else if(atEnd){out.push(run[0].h,dots);}
+      else{out.push(run[0].h,dots,run[len-1].h);}
+      i=j;
+    }
+    return out.join(' ');
+  };
   if(!alts.length){
     return {wrongHtml:wt.map(t=>'<span style="'+strike+'">'+escH(t)+'</span>').join(' '),correctHtml:'',hasCorrect:false};
   }
-  // LCS로 "그대로 남은" 단어 위치를 찾아요.
   const lcs=(a,b)=>{
     const n=a.length,m=b.length,dp=Array.from({length:n+1},()=>new Array(m+1).fill(0));
     for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)dp[i][j]=(nz(a[i])&&nz(a[i])===nz(b[j]))?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
@@ -3279,9 +3299,9 @@ function diffPairHtml_(e){
   const cHtml=alts.map(alt=>{
     const ct=toks(alt),r=lcs(wt,ct);
     keptWrong=keptWrong?new Set([...keptWrong,...r.ka]):r.ka; // 대안 중 하나라도 그대로 쓴 단어는 안 긋고, 모든 대안에서 사라진 단어만 그어요.
-    return ct.map((t,j)=>r.kb.has(j)?escH(t):'<b style="color:'+color+'">'+(type==='suggestion'&&!r.kb.size&&j===0?'💡':'')+escH(t)+'</b>').join(' ');
+    return join(ct.map((t,j)=>r.kb.has(j)?{k:true,h:escH(t)}:{k:false,h:'<b style="color:'+color+'">'+(type==='suggestion'&&!r.kb.size&&j===0?'💡':'')+escH(t)+'</b>'}));
   }).join(' <span style="color:#8A93A5">/</span> ');
-  const wHtml=wt.map((t,i)=>(type==='wrong'&&!keptWrong.has(i))?'<span style="'+strike+'">'+escH(t)+'</span>':escH(t)).join(' ');
+  const wHtml=join(wt.map((t,i)=>{const kept=keptWrong.has(i);return {k:kept,h:(type==='wrong'&&!kept)?'<span style="'+strike+'">'+escH(t)+'</span>':escH(t)};}));
   return {wrongHtml:wHtml,correctHtml:cHtml,hasCorrect:true};
 }
 /** 오류 종류(type)에 따라 색을 다르게 보여줘요 — "wrong"(명백히 틀림)은 빨간 줄+초록 고침,
@@ -7089,10 +7109,7 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
           card.appendChild(rwBadge);
         }
       }
-      const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기 (학부모님께 보내기 좋아요)');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
-      printBtn.onclick=()=>printSubmissionReport(s,studentName,studentId,s.academy,siblings);
-      card.appendChild(printBtn);
-      const wrBtn3=el('button','btn blue','📄 Writing Report (학부모님께 보내기)');wrBtn3.type='button';wrBtn3.style.cssText='margin:8px 0 0 6px;padding:5px 12px;font-size:12px';
+      const wrBtn3=el('button','btn blue','📄 Writing Report (학부모님께 보내기)');wrBtn3.type='button';wrBtn3.style.cssText='margin:8px 0 0 0;padding:5px 12px;font-size:12px';
       wrBtn3.onclick=()=>printWritingReport(s,studentName,studentId,s.academy,siblings);
       card.appendChild(wrBtn3);
       const audioBox=renderAudioPlayback(s);if(audioBox)card.appendChild(audioBox);
@@ -7227,6 +7244,9 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
         const nowBtn=el('button','btn ghost','⚡ AI 첨삭 지금 생성하기');nowBtn.type='button';nowBtn.style.cssText='padding:6px 12px;font-size:13px';
         const nowMsg=el('div','fx');
         nowWrap.appendChild(nowBtn);nowWrap.appendChild(nowMsg);
+        if(String(s.chapter||'')==='Performance Assessment'&&!aifb.overall&&!aifbGpt.overall){
+          const pa=el('div','hint',"수행평가는 AI 첨삭이 자동으로 만들어지지 않아요. 필요할 때 이 버튼을 눌러주세요.");pa.style.cssText='font-size:12.5px;width:100%';nowWrap.appendChild(pa);
+        }
         card.appendChild(nowWrap);
         nowBtn.onclick=async()=>{
           nowBtn.disabled=true;const prevT=nowBtn.textContent;nowBtn.textContent='생성 중… (몇 초 걸릴 수 있어요)';
@@ -8233,6 +8253,51 @@ function runExam(topic){deckInit();
   // 표 작성 칸 — 표 제목마다 {cols, rows:[[셀...]]}로 모아둬요(제출할 때 tableNotes로 같이 저장해요).
   const tblNotes={};
   tableItems.forEach(t=>{tblNotes[t.title]={cols:t.cols.slice(),rows:Array.from({length:t.rows},()=>t.cols.map(()=>''))};});
+  // ---- 이어쓰기: 쓰던 것(임시저장)이나 이미 낸 제출물이 있으면 마인드맵·표·문법 연습·최종 글을 다시 불러와요 ----
+  ST.mm=mmNotes;ST.tbl=tblNotes;ST.gp=gpNotes; // 임시저장(saveDraftNow(ST))에 중간 과정도 같이 담겨요
+  const resumeRefs={mm:{},gp:{},tbl:{}};
+  let resumeLoaded=false;
+  const notesSave=debounce(()=>{if(!resumeLoaded||TEACHER_PREVIEW)return;saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);},2500);
+  const applyResume=o=>{
+    if(!o)return;
+    if(o.mm&&typeof o.mm==='object')Object.keys(mmNotes).forEach(k=>{if(typeof o.mm[k]==='string'&&o.mm[k]){mmNotes[k]=o.mm[k];if(resumeRefs.mm[k])resumeRefs.mm[k].value=o.mm[k];}});
+    if(o.gp&&typeof o.gp==='object')Object.keys(gpNotes).forEach(k=>{if(typeof o.gp[k]==='string'&&o.gp[k]){gpNotes[k]=o.gp[k];if(resumeRefs.gp[k])resumeRefs.gp[k].value=o.gp[k];}});
+    if(o.tbl&&typeof o.tbl==='object')Object.keys(tblNotes).forEach(title=>{
+      const src=o.tbl[title];if(!src||!Array.isArray(src.rows))return;
+      const d=tblNotes[title];
+      const rows=src.rows.slice(0,12).map(r=>d.cols.map((_,ci)=>String((r&&r[ci])||'')));
+      if(!rows.some(r=>r.some(c=>c.trim())))return;
+      d.rows.length=0;rows.forEach(r=>d.rows.push(r));
+      if(resumeRefs.tbl[title])resumeRefs.tbl[title]();
+    });
+  };
+  const resumeP=(async()=>{
+    const out={text:'',savedAt:'',from:'',datetime:''};
+    try{
+      const found=await fetchDraft(DRAFT_CHAPTER,DRAFT_POINT);
+      const d=found&&found.obj;
+      if(d&&(String(d.draft||'').trim()||d.mm||d.tbl||d.gp)){
+        applyResume({mm:d.mm,tbl:d.tbl,gp:d.gp});
+        out.text=String(d.draft||'');out.savedAt=found.savedAt||'';out.from='draft';
+      }else if(!TEACHER_PREVIEW&&USER.id){
+        // 제출하면 서버가 임시저장을 지우기 때문에, 이미 낸 수행평가를 다시 열면 전부 비어 있었어요. 마지막 제출물에서 불러와요.
+        const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+        const data=await res.json();
+        let last=null;
+        ((data&&data.ok&&data.submissions)||[]).forEach(x=>{
+          if(String(x.chapter||'')!==DRAFT_CHAPTER||String(x.point||'')!==DRAFT_POINT)return;
+          if(!last||String(x.datetime||'')>String(last.datetime||''))last=x;
+        });
+        if(last){
+          const j=v=>{try{return v?JSON.parse(v):null;}catch(e){return null;}};
+          applyResume({mm:j(last.mindmapNotes),tbl:j(last.tableNotes),gp:j(last.grammarPractice)});
+          out.text=String(last.final||last.text||'');out.from='sub';out.datetime=last.datetime||'';
+        }
+      }
+    }catch(e){}
+    resumeLoaded=true;
+    return out;
+  })();
   if(tableItems.length){
     slideAdd(b=>{
       b.appendChild(el('span','badge accent','수행평가 대비 · 표 작성'));
@@ -8253,17 +8318,18 @@ function runExam(topic){deckInit();
         }
         const data=tblNotes[t.title];
         const addRow=(ri)=>{
-          const tr=el('tr');
+          const tr=el('tr');tr.className='dr';
           t.cols.forEach((c,ci)=>{
             const td=el('td');td.style.cssText='border:1px solid rgba(0,0,0,.12);padding:2px';
             const ta=el('textarea','in');ta.rows=2;ta.style.cssText='width:100%;min-height:44px;border:none;font-size:13.5px;resize:vertical;background:transparent';
             ta.value=(data.rows[ri]&&data.rows[ri][ci])||'';
-            ta.addEventListener('input',()=>{data.rows[ri][ci]=ta.value;});
+            ta.addEventListener('input',()=>{data.rows[ri][ci]=ta.value;notesSave();});
             td.appendChild(ta);tr.appendChild(td);
           });
           tbl.appendChild(tr);
         };
         data.rows.forEach((_,ri)=>addRow(ri));
+        resumeRefs.tbl[t.title]=()=>{tbl.querySelectorAll('tr.dr').forEach(r=>r.remove());data.rows.forEach((_,ri)=>addRow(ri));};
         card.appendChild(tbl);
         const addBtn=el('button','btn ghost','+ 행 추가');addBtn.type='button';addBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12.5px';
         addBtn.onclick=()=>{if(data.rows.length>=12)return;data.rows.push(t.cols.map(()=>''));addRow(data.rows.length-1);};
@@ -8287,7 +8353,8 @@ function runExam(topic){deckInit();
         if(m.guide)branch.appendChild(el('div','exmmap-guide',escH(m.guide)));
         const ta=el('textarea','in');ta.placeholder='생각나는 것을 적어보세요 (여기 적은 내용이 글쓰기 화면 오른쪽에 보여요)';
         ta.value=mmNotes[m.name]||'';
-        ta.addEventListener('input',()=>{mmNotes[m.name]=ta.value;});
+        resumeRefs.mm[m.name]=ta;
+        ta.addEventListener('input',()=>{mmNotes[m.name]=ta.value;notesSave();});
         branch.appendChild(ta);
         branches.appendChild(branch);
       });
@@ -8343,7 +8410,7 @@ function runExam(topic){deckInit();
         practiceTa.placeholder='이 문법을 활용해서 나만의 문장을 만들어보세요';
         practiceTa.style.cssText='min-height:50px;font-size:13px;margin-top:4px';
         practiceTa.value=gpNotes[g.name]||'';
-        practiceTa.addEventListener('input',()=>{gpNotes[g.name]=practiceTa.value;});
+        resumeRefs.gp[g.name]=practiceTa;practiceTa.addEventListener('input',()=>{gpNotes[g.name]=practiceTa.value;notesSave();});
         card.appendChild(practiceTa);
         b.appendChild(card);
       });
@@ -8390,29 +8457,15 @@ function runExam(topic){deckInit();
     saveBtn.onclick=()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='저장했어요! 나중에 이어서 쓸 수 있어요.';};
     ta.value=ST.draft;checkConds();
     (async()=>{
-      const found=await fetchDraft(DRAFT_CHAPTER,DRAFT_POINT);
-      if(found&&found.obj&&found.obj.draft&&!ta.value.trim()){
-        ST.draft=found.obj.draft;taskText=ST.draft;ta.value=ST.draft;checkConds();
-        bannerSlot.appendChild(draftBanner(found.savedAt));
-      }else if(!ta.value.trim()&&!TEACHER_PREVIEW&&USER.id){
-        // 제출하면 서버가 임시저장을 지우기 때문에, 이미 제출한 수행평가를 다시 열면 빈 칸으로 시작했어요.
-        // 임시저장이 없으면 내가 마지막으로 제출한 글을 불러와서 이어서 고칠 수 있게 해요.
-        try{
-          const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
-          const data=await res.json();
-          let last=null;
-          ((data&&data.ok&&data.submissions)||[]).forEach(x=>{
-            if(String(x.chapter||'')!==DRAFT_CHAPTER||String(x.point||'')!==DRAFT_POINT)return;
-            if(!String(x.final||'').trim())return;
-            if(!last||String(x.datetime||'')>String(last.datetime||''))last=x;
-          });
-          if(last&&!ta.value.trim()){
-            ST.draft=String(last.final);taskText=ST.draft;ta.value=ST.draft;checkConds();
-            const nb=el('div');nb.style.cssText='background:#eef0ff;color:#4338ca;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:10px';
-            nb.textContent='✅ 이미 제출한 글이에요'+(last.datetime?' ('+String(last.datetime).slice(0,16)+')':'')+'. 더 고치고 싶으면 이어서 쓰고 다시 제출할 수 있어요.';
-            bannerSlot.appendChild(nb);
-          }
-        }catch(e){}
+      const rs=await resumeP;
+      if(rs.text.trim()&&!ta.value.trim()){
+        ST.draft=rs.text;taskText=ST.draft;ta.value=ST.draft;checkConds();
+        if(rs.from==='draft'){bannerSlot.appendChild(draftBanner(rs.savedAt));}
+        else{
+          const nb=el('div');nb.style.cssText='background:#eef0ff;color:#4338ca;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:10px';
+          nb.textContent='✅ 이미 제출한 글이에요'+(rs.datetime?' ('+String(rs.datetime).slice(0,16)+')':'')+'. 더 고치고 싶으면 이어서 쓰고 다시 제출할 수 있어요.';
+          bannerSlot.appendChild(nb);
+        }
       }
     })();
     let right=null,refreshNotes=null;
@@ -8512,7 +8565,7 @@ function runExam(topic){deckInit();
         return{payload,txt};};
       dl.onclick=()=>{const {txt}=build();const blob=new Blob(['﻿'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='수행평가_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
       sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
-        if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;triggerAiFeedbackNow(payload.subId,payload.academy);}catch(e){}}
+        if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true; /* 수행평가는 AI 첨삭을 자동으로 만들지 않아요(선생님이 필요할 때 직접 만들어요). */}catch(e){}}
         if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_수행평가_'+USER.name+'_'+topic.id+'.json';document.body.appendChild(a);a.click();a.remove();}
         saveDone('EX-'+topic.id,payload.progress);sub.disabled=false;sub.textContent=sent?'제출 완료!':'제출 완료 (파일 저장됨)';
         msg.innerHTML=sent?'관리자에게 전송되었어요.':'서버 주소가 없어 파일로 저장했어요. 선생님께 내면 됩니다.';
