@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-22j';
+const APP_VERSION='2026-10-23a';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -6562,6 +6562,44 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
   const bk=el('button','backbtn',backFn?'◀ 뒤로':'◀ 제출 목록');bk.onclick=backFn||(()=>viewTeacherStudent(studentId,studentName));w.appendChild(bk);
   w.appendChild(el('h1','title',studentName+' · '+(s.point||s.chapter||'')));
   w.appendChild(el('div','hint','('+submissionTypeLabel(s)+' · '+(s.datetime||'')+')'));
+  // 다른 학생 아이디로 잘못 제출된 글이면, 이 글 한 편을 올바른 학생에게 옮길 수 있어요.
+  if(s&&s.subId&&!TEACHER_PREVIEW){
+    const mvWrap=el('div');mvWrap.style.cssText='margin-top:8px';
+    const mvBtn=el('button','btn ghost','↪ 다른 학생으로 옮기기');mvBtn.type='button';mvBtn.style.cssText='padding:6px 12px;font-size:13px';
+    const mvBox=el('div');mvBox.style.cssText='display:none;margin-top:8px;gap:8px;align-items:center;flex-wrap:wrap';
+    const mvSel=el('select','in');mvSel.style.cssText='padding:8px;font-size:13px;border-radius:10px;max-width:100%';
+    const mvGo=el('button','btn green','옮기기');mvGo.type='button';mvGo.style.cssText='padding:7px 14px;font-size:13px';
+    const mvMsg=el('div','fx');
+    mvBox.appendChild(mvSel);mvBox.appendChild(mvGo);
+    mvWrap.appendChild(mvBtn);mvWrap.appendChild(mvBox);mvWrap.appendChild(mvMsg);
+    w.appendChild(mvWrap);
+    mvBtn.onclick=async()=>{
+      const show=mvBox.style.display==='none';mvBox.style.display=show?'flex':'none';
+      if(!show||mvSel.options.length)return;
+      mvSel.appendChild(Object.assign(el('option'),{value:'',textContent:'불러오는 중…'}));
+      try{
+        const r=await fetchRoster();
+        const list=((r&&r.students)||[]).filter(x=>String(x.id)!==String(studentId)&&(USER.isAdmin||!USER.academy||String(x.academy||'')===String(USER.academy||'')))
+          .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ko'));
+        mvSel.innerHTML='';
+        mvSel.appendChild(Object.assign(el('option'),{value:'',textContent:'받을 학생 고르기'}));
+        list.forEach(x=>mvSel.appendChild(Object.assign(el('option'),{value:x.id,textContent:(x.name||x.id)+' ('+x.id+(x.cls?' · '+x.cls:'')+(x.school?' · '+x.school:'')+')'})));
+      }catch(e){mvSel.innerHTML='';mvMsg.className='fx no';mvMsg.textContent='학생 목록을 불러오지 못했어요.';}
+    };
+    mvGo.onclick=async()=>{
+      const to=mvSel.value;if(!to){mvMsg.className='fx no';mvMsg.textContent='받을 학생을 골라주세요.';return;}
+      const toName=mvSel.options[mvSel.selectedIndex].textContent;
+      if(!confirm('이 글을 "'+toName+'" 학생에게 옮길까요?\n(이 글의 이름·학교·반 정보도 그 학생으로 바뀌어요)'))return;
+      mvGo.disabled=true;mvMsg.className='fx';mvMsg.textContent='옮기는 중…';
+      try{
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'moveSubmission',role:'teacher',subId:s.subId,toStudentId:to})});
+        const data=await res.json();
+        if(!data||data.ok===false)throw new Error((data&&data.error)||'실패');
+        mvMsg.className='fx ok';mvMsg.textContent='✅ 옮겼어요. 이 학생 제출 목록에서는 사라지고 "'+toName+'" 쪽에 보여요.';
+        setTimeout(()=>viewTeacherStudent(studentId,studentName),1400);
+      }catch(e){mvGo.disabled=false;mvMsg.className='fx no';mvMsg.textContent='옮기지 못했어요: '+e.message+' (서버 업데이트가 배포됐는지 확인해 주세요)';}
+    };
+  }
   // 같은 컨텐츠를 여러 번 제출한 경우, 지금 보는 것 말고 다른 제출물도 눌러서 볼 수 있게
   // "이전 제출 보기" 토글을 보여줘요. (siblings는 최신순으로 정렬돼 있어요.)
   if(siblings&&siblings.length>1){
