@@ -388,7 +388,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-23a';
+const APP_VERSION='2026-10-23h';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch(location.href,{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2467,11 +2467,26 @@ function parseFeedback(raw){
   return{overall:String(raw),sentences:{}};
 }
 /* AI 첨삭은 문장별로 {errors:[{wrong,correct,note}], corrected} 형태라 선생님 첨삭(문자열)과 모양이 달라요. */
+/** 첨삭 종류를 글자 비교로 바로잡아요(서버의 fixErrType_와 같은 규칙) — 이미 저장된 예전 첨삭도 같은 기준으로 보여요.
+ *  빨강(wrong)=틀려서 바꿈/지움, 파랑(missing)=원래 표현은 그대로 두고 단어만 새로 끼워 넣음, 보라(suggestion)=제안. */
+function fixErrType(type,wrong,correct){
+  if(type==='suggestion')return 'suggestion';
+  const tok=x=>String(x||'').toLowerCase().replace(/[^a-z0-9'\s-]/g,' ').split(/\s+/).filter(Boolean);
+  const w=tok(wrong),c=tok(correct);
+  if(!c.length)return 'wrong';
+  if(!w.length)return 'missing';
+  let i=0;c.forEach(t=>{if(i<w.length&&t===w[i])i++;});
+  return (i===w.length&&c.length>w.length)?'missing':'wrong';
+}
 function parseAiFeedback(raw){
   if(!raw)return{overall:'',sentences:{}};
   try{
     const o=JSON.parse(raw);
-    if(o&&typeof o==='object'&&!Array.isArray(o))return{overall:o.overall||'',sentences:o.sentences||{}};
+    if(o&&typeof o==='object'&&!Array.isArray(o)){
+      const sents=o.sentences||{};
+      Object.keys(sents).forEach(k=>{const e=sents[k];if(e&&typeof e==='object'&&Array.isArray(e.errors))e.errors.forEach(x=>{if(x&&typeof x==='object')x.type=fixErrType(x.type||'wrong',x.wrong,x.correct);});});
+      return{overall:o.overall||'',sentences:sents};
+    }
   }catch(e){}
   return{overall:'',sentences:{}};
 }
@@ -2802,6 +2817,359 @@ function rubricSectionHtml(rb,title,studentName){
       '</div>'+
     '</div>';
 }
+/* ================= Writing Report (초등/중등 양식) =================
+   학원·반마다 "초등 양식"/"중등 양식"을 골라 쓰고, 학원별 로고도 올려서 쓰는 한 장짜리 학부모용 리포트예요.
+   설정(로고·반별 양식)은 서버(ewl_report_config)에 학원별로 저장돼요 — 🧾 리포트 설정 화면에서 바꿔요. */
+let REPORT_CFG=null,reportCfgLoading=null;
+function fetchReportConfig(force){
+  if(REPORT_CFG&&!force)return Promise.resolve(REPORT_CFG);
+  if(reportCfgLoading&&!force)return reportCfgLoading;
+  reportCfgLoading=(async()=>{
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=reportConfig&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      REPORT_CFG=(data&&data.ok&&data.configs&&typeof data.configs==='object')?data.configs:{};
+    }catch(e){REPORT_CFG=REPORT_CFG||{};}
+    reportCfgLoading=null;return REPORT_CFG;
+  })();
+  return reportCfgLoading;
+}
+function reportAcademyCfg_(cfg,academy){
+  const a=String(academy||'').trim();
+  return (cfg&&(cfg[a]||cfg['']))||{};
+}
+/** 그 학생(반)에게 쓸 양식: 학원이 반별로 지정해 둔 게 있으면 그걸, 없으면 반 레벨·학교·학년 이름에서 초/중을 가늠해요(못 찾으면 중등). */
+function reportStageFor_(s,cfg){
+  const c=reportAcademyCfg_(cfg,s&&s.academy);
+  const m=c.classStages&&c.classStages[String((s&&s.cls)||'').trim()];
+  if(m==='초등'||m==='중등')return m;
+  const st=schoolStageFromText(levelDisplayName(s&&s.cls)||'')||schoolStageFromText(s&&s.school)||schoolStageFromText(s&&s.schoolGrade);
+  return st==='초'?'초등':'중등';
+}
+function findStoryTopicByTitle_(title){
+  const t=String(title||'').trim();if(!t)return null;
+  for(const k of Object.keys(STORY||{})){const f=(STORY[k]||[]).find(x=>String(x.title||'').trim()===t);if(f)return f;}
+  return null;
+}
+/** 제출물 s와 짝이 되는 원본/다시쓰기 제출물을 찾아요(s가 어느 쪽이어도 돼요). */
+function writingReportPair_(s,siblings){
+  const key=s.point||s.chapter||'';
+  const sib=(siblings||[]).filter(x=>x!==s&&(x.point||x.chapter||'')===key);
+  const desc=(a,b)=>String(a.datetime||'')<String(b.datetime||'')?1:-1;
+  if(submissionTypeLabel(s)==='Re-Writing'){
+    return {original:sib.filter(x=>submissionTypeLabel(x)!=='Re-Writing').sort(desc)[0]||null,rewrite:s};
+  }
+  return {original:s,rewrite:sib.filter(x=>submissionTypeLabel(x)==='Re-Writing').sort(desc)[0]||null};
+}
+/** 한 제출물의 문장별 첨삭(Claude+GPT+선생님 코멘트)을 [{text,errors,comment}]로 모아요. 틀린 곳이 없는 문장은 빼요. */
+function writingReportSentences_(sub){
+  if(!sub||!sub.text)return [];
+  const fb=parseFeedback(sub.feedback),a1=parseAiFeedback(sub.aiFeedback),a2=parseAiFeedback(sub.aiFeedbackGpt);
+  const out=[];
+  splitSentences(sub.text).forEach((sent,i)=>{
+    const errs=[],seen={};
+    [a1,a2].forEach(a=>{
+      const e=a.sentences[i]||a.sentences[String(i)];
+      if(e&&typeof e==='object'&&Array.isArray(e.errors))e.errors.forEach(x=>{
+        if(!x||(!x.wrong&&!x.correct))return;
+        const k=norm(x.wrong||'')+'|'+norm(x.correct||'');
+        if(seen[k])return;seen[k]=1;errs.push({type:x.type||'wrong',wrong:x.wrong||'',correct:x.correct||'',note:x.note||''});
+      });
+    });
+    const c=fb.sentences[i]||fb.sentences[String(i)];
+    const comment=(typeof c==='string')?c:'';
+    if(errs.length||comment)out.push({text:sent,errors:errs,comment});
+  });
+  return out;
+}
+function writingReportComment_(subs){
+  const seen={},parts=[];
+  subs.filter(Boolean).forEach(x=>{
+    [parseAiFeedback(x.aiFeedback).overall,parseAiFeedback(x.aiFeedbackGpt).overall,parseFeedback(x.feedback).overall].forEach(t=>{
+      t=String(t||'').trim();if(t&&!seen[t]){seen[t]=1;parts.push(t);}
+    });
+  });
+  return parts.join('\n\n');
+}
+function wrDateStr_(dt,sep){
+  const m=String(dt||'').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  return m?(m[1]+sep+String(m[2]).padStart(2,'0')+sep+String(m[3]).padStart(2,'0')):String(dt||'');
+}
+const WR_FONTS=
+  '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'+
+  '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;700;800;900&family=Jua&family=Noto+Sans+KR:wght@400;500;700;800;900&display=swap" rel="stylesheet">';
+function wrErrHtml_(e,tpl){
+  const type=e.type||'wrong';
+  const chip=type==='suggestion'?'<span class="chip s">제안</span>':type==='missing'?'<span class="chip m">빠진 표현</span>':'';
+  const d=diffPairHtml_(e);
+  const icon=tpl==='초등'?('<span class="ic ic-x">✕</span>'):'';
+  const icon2=tpl==='초등'?('<span class="ic ic-ok">✓</span>'):'';
+  const noteIcon=tpl==='초등'?'<span class="ic ic-q">?</span>':'';
+  return '<div class="wr-err"><div class="wr-pair">'+icon+'<span>'+d.wrongHtml+'</span>'+(d.hasCorrect?('<span class="arr">→</span>'+icon2+'<span>'+d.correctHtml+'</span>'):'')+chip+'</div>'+
+    (e.note?('<div class="wr-note">'+noteIcon+'<span>'+escH(e.note)+'</span></div>'):'')+'</div>';
+}
+const WR_LEGEND='<div class="wr-legend"><span style="color:#C62828">● 고칠 표현</span><span style="color:#1D4ED8">● 더해야 할 표현</span><span style="color:#7C3AED">● 더 자연스러운 제안</span></div>';
+function wrSentencesHtml_(sents,tpl){
+  if(!sents.length)return '<div class="wr-empty">지적된 문장이 없어요. 잘 썼어요!</div>';
+  return WR_LEGEND+sents.map((x,i)=>'<div class="wr-sent"><div class="no">'+String(i+1).padStart(2,'0')+'</div><div class="bd"><div class="orig">'+escH(x.text)+'</div>'+
+    x.errors.map(e=>wrErrHtml_(e,tpl)).join('')+(x.comment?('<div class="wr-note"><span>'+escH(x.comment)+'</span></div>'):'')+'</div></div>').join('');
+}
+function wrParagraphs_(t){return String(t||'').trim().split(/\n{2,}/).map(p=>'<p>'+escH(p).replace(/\n/g,'<br>')+'</p>').join('');}
+function wrGradeColor_(g){return /^[AB]/.test(g||'')?'#1B4A8A':/^C/.test(g||'')?'#6C9AD0':'#E07B2A';}
+const WR_CSS_COMMON=
+  "*{box-sizing:border-box}body{margin:0;background:#E9EBF0;padding:24px 12px;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-family:'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#1F2430;line-height:1.6}"+
+  ".wr-page{max-width:794px;margin:0 auto;background:#fff;padding:0 0 22px}"+
+  ".wr-sent{display:flex;gap:14px;break-inside:avoid;page-break-inside:avoid}"+
+  ".wr-err{margin:6px 0 10px}.wr-pair{font-size:14.5px;display:flex;flex-wrap:wrap;align-items:center;gap:6px}"+
+  ".arr{color:#8A93A5}.chip{font-size:11px;font-weight:700;padding:1px 7px;border-radius:5px;border:1px solid currentColor;margin-left:4px}"+
+  ".wr-note{font-size:13px;color:#4A5262;margin-top:2px;line-height:1.55;display:flex;gap:6px}"+
+  ".wr-legend{display:flex;gap:14px;justify-content:flex-end;font-size:11.5px;font-weight:700;margin:-4px 0 8px}.wr-empty{padding:14px 4px;color:#6B7486;font-size:14px}"+
+  ".noprint{text-align:center;margin:22px 0 4px}.noprint button{padding:11px 26px;font-size:14px;font-weight:800;border:none;border-radius:8px;background:#1B2A49;color:#fff;cursor:pointer}"+
+  "@page{size:A4;margin:10mm}@media print{body{background:#fff;padding:0}.wr-page{max-width:100%}.noprint{display:none}}";
+const WR_CSS_MID=
+  ".wr-hero{background:#1B4A8A;padding:28px 34px 26px;color:#fff;position:relative;border-bottom:14px solid #7BA3D6}"+
+  ".wr-hero .eyebrow{font-family:Inter,sans-serif;font-size:11px;font-weight:700;letter-spacing:.18em;display:flex;align-items:center;gap:10px}"+
+  ".wr-hero .eyebrow::before{content:'';width:26px;height:4px;background:#E07B2A;display:inline-block}"+
+  ".wr-hero h1{font-family:Inter,'Noto Sans KR',sans-serif;font-size:40px;font-weight:800;margin:6px 0 4px;letter-spacing:-.02em}.wr-hero h1 span{color:#9FC0EA}"+
+  ".wr-hero .sub{font-size:13px;opacity:.92}.wr-hero .logo{position:absolute;right:34px;top:26px;width:84px;height:84px;display:flex;align-items:center;justify-content:center}"+
+  ".wr-hero .logo img{max-width:100%;max-height:100%;object-fit:contain}.wr-hero .logo.txt{font-weight:800;font-size:14px;text-align:center}"+
+  ".wr-in{padding:0 34px}"+
+  ".wr-meta{border-top:2px solid #1B4A8A;margin-top:18px}.wr-meta .row{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid #D3D8E1}"+
+  ".wr-meta .row.topic{grid-template-columns:1fr}.wr-meta .c{padding:9px 12px;border-right:1px solid #D3D8E1;min-width:0}.wr-meta .c:last-child{border-right:none}"+
+  ".wr-meta .k{font-family:Inter,sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.14em;color:#6B7486;line-height:1.1}.wr-meta .k b{display:block;font-family:'Noto Sans KR';font-size:11px;letter-spacing:0;color:#1F2430;margin-top:1px}"+
+  ".wr-meta .v{font-size:15px;font-weight:700;margin-top:2px;word-break:break-word}.wr-meta .topic .v{font-size:19px;font-weight:800}.wr-meta .topic .c{display:flex;gap:26px;align-items:baseline}"+
+  ".wr-h{display:flex;align-items:baseline;gap:9px;margin:26px 0 10px;border-bottom:1.5px solid #1F2430;padding-bottom:6px}.wr-h .n{font-family:Inter,sans-serif;font-size:23px;font-weight:800;color:#1B4A8A}.wr-h .t{font-size:16.5px;font-weight:800}.wr-h .e{font-family:Inter,sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.16em;color:#8A93A5}"+
+  ".wr-score{display:grid;grid-template-columns:1fr 250px;gap:22px;align-items:center}.wr-score .bar{margin-bottom:14px}.wr-score .bh{display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:5px}.wr-score .bh b{font-family:Inter,sans-serif;color:#1B4A8A}"+
+  ".wr-score .tr{height:9px;background:#E9EDF4}.wr-score .fl{height:9px}.wr-total{background:#1B4A8A;color:#fff;padding:16px 20px}.wr-total .l{font-family:Inter,sans-serif;font-size:10px;letter-spacing:.16em;color:#B9CDEA}.wr-total .l b{display:block;font-family:'Noto Sans KR';font-size:14px;letter-spacing:0;color:#fff}"+
+  ".wr-total .v{font-family:Inter,sans-serif;font-size:46px;font-weight:800;text-align:right;line-height:1}.wr-total .v small{font-size:15px;font-weight:700;color:#B9CDEA;margin-left:4px}"+
+  ".wr-sent{padding:14px 0;border-bottom:1px solid #D3D8E1}.wr-sent .no{font-family:Inter,sans-serif;font-size:17px;font-weight:800;color:#7BA3D6;min-width:30px}"+
+  ".wr-sent .orig{background:#EAF1FA;border-left:4px solid #1B4A8A;padding:9px 14px;font-weight:700;font-size:15px;margin-bottom:8px}.wr-sent .bd{flex:1;min-width:0}"+
+  ".wr-wrong{color:#C62828;text-decoration:line-through;font-weight:500}.wr-plain{color:#1F2430}.wr-ok{color:#C62828;font-weight:800}.wr-miss{color:#1D4ED8;font-weight:800}.wr-sug{color:#7C3AED;font-weight:800}.chip{background:#fff}.chip.m{color:#1D4ED8}.chip.s{color:#7C3AED}"+
+  ".wr-final{border:1.5px solid #1B4A8A;padding:20px 24px;break-inside:avoid}.wr-final h3{font-family:Inter,'Noto Sans KR',sans-serif;color:#1B4A8A;font-size:18px;font-weight:800;margin:0 0 10px}.wr-final p{margin:0 0 6px;font-size:15px;line-height:1.85}"+
+  ".wr-cmt{background:#EAF1FA;border-top:3px solid #E07B2A;padding:16px 22px 12px;font-size:14.5px;line-height:1.8;break-inside:avoid}.wr-cmt p{margin:0 0 8px}.wr-sign{text-align:right;font-size:13px;color:#4A5262;margin-top:8px}.wr-sign i{display:inline-block;width:130px;border-bottom:1px solid #1F2430;margin-left:8px}"+
+  ".wr-foot{margin:24px 34px 0;border-top:1px solid #D3D8E1;padding-top:8px;display:flex;justify-content:space-between;font-family:Inter,sans-serif;font-size:10px;font-weight:700;letter-spacing:.12em;color:#6B7486}.wr-foot b{color:#E07B2A}";
+const WR_CSS_ELEM=
+  "body{background:#F4EFE6}.wr-page{background:#FFFDF9;padding:34px 34px 22px;border-radius:0}"+
+  ".wr-head{display:flex;align-items:flex-start;justify-content:space-between}.wr-head .dots{display:flex;gap:6px;margin-bottom:6px}.wr-head .dots i{width:11px;height:11px;border-radius:50%;display:block}"+
+  ".wr-head .eyebrow{font-family:'Noto Sans KR';font-size:10px;font-weight:700;letter-spacing:.2em;color:#8A8274}.wr-head h1{font-family:Jua,'Noto Sans KR',sans-serif;font-size:42px;font-weight:400;margin:0;line-height:1.15}"+
+  ".wr-head .logo{width:84px;height:84px;display:flex;align-items:center;justify-content:center;flex:0 0 auto}.wr-head .logo img{max-width:100%;max-height:100%;object-fit:contain}.wr-head .logo.txt{font-weight:800;font-size:14px;text-align:center}"+
+  ".wr-card{border:1.5px solid #DDD6C8;border-radius:14px;padding:6px 16px;margin-top:16px;background:#fff}.wr-card .r{display:flex;gap:10px;padding:10px 0;align-items:baseline}.wr-card .r+.r{border-top:1px solid #E7E1D4}"+
+  ".wr-card .r.g{display:grid;grid-template-columns:1.6fr 1fr 1fr 1.3fr}.wr-card .k{font-family:Jua,sans-serif;font-size:14px;color:#6E675A;margin-right:10px}.wr-card .v{font-size:15px;font-weight:700}.wr-card .topic .v{font-family:Jua,'Noto Sans KR',sans-serif;font-size:20px;font-weight:400}"+
+  ".wr-h{font-family:Jua,'Noto Sans KR',sans-serif;font-size:22px;font-weight:400;margin:24px 0 10px}.wr-h b{font-weight:400;color:#8A8274;margin-left:2px}"+
+  ".wr-pics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.wr-pics .p{border:1.5px solid #DDD6C8;border-radius:14px;padding:5px;background:#fff;aspect-ratio:4/3}.wr-pics .p div{width:100%;height:100%;border-radius:10px;overflow:hidden}.wr-pics img{width:100%;height:100%;object-fit:cover;display:block}"+
+  ".wr-final{border:2px solid #4DB380;border-radius:16px;padding:18px 22px;background:#fff;break-inside:avoid}.wr-final h3{font-family:Jua,'Noto Sans KR',sans-serif;font-weight:400;color:#0E6B3A;font-size:20px;margin:0 0 8px}.wr-final p{margin:0 0 6px;font-size:15px;line-height:1.85}"+
+  ".wr-cmt{background:#EAF2FD;border-radius:16px;padding:16px 20px;font-size:14.5px;line-height:1.85;break-inside:avoid}.wr-cmt p{margin:0 0 8px}"+
+  ".wr-card2{border:1.5px solid #DDD6C8;border-radius:16px;padding:6px 16px 8px;margin-bottom:12px;background:#fff}.wr-sent{padding:10px 0}.wr-sent+.wr-sent{border-top:1px dashed #E7E1D4}.wr-sent .no{font-family:Jua,sans-serif;font-size:17px;color:#9A917F;min-width:30px}"+
+  ".wr-sent .orig{background:#F4EFE6;border-radius:10px;padding:9px 14px;font-weight:800;font-size:15px;margin-bottom:8px}.wr-sent .bd{flex:1;min-width:0}"+
+  ".ic{display:inline-flex;width:20px;height:20px;border-radius:50%;align-items:center;justify-content:center;font-size:11px;font-weight:900;flex:0 0 auto}.ic-x{background:#F9C9C4;color:#B3261E}.ic-ok{background:#BFE8CF;color:#0E6B3A}.ic-q{background:#BFD8F7;color:#1B4A8A;margin-top:2px}"+
+  ".wr-wrong{color:#C62828;text-decoration:line-through;font-weight:500}.wr-plain{color:#1F2430}.wr-ok{color:#C62828;font-weight:800}.wr-miss{color:#1D4ED8;font-weight:800}.wr-sug{color:#7C3AED;font-weight:800}.chip{background:#fff;border-radius:999px;padding:1px 9px}.chip.m{color:#1D4ED8;background:#E3ECFF;border:none}.chip.s{color:#7C3AED;background:#EFE8FF;border:none}"+
+  ".wr-par{margin-top:18px;margin-left:auto;width:300px;border:1.5px solid #DDD6C8;border-radius:14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:flex-end;font-family:Jua,sans-serif;color:#6E675A;break-inside:avoid}.wr-par i{display:inline-block;width:110px;border-bottom:1px solid #6E675A;margin-left:8px}"+
+  ".wr-foot{margin-top:14px;font-size:10px;letter-spacing:.12em;color:#9A917F;font-weight:700}";
+function wrLogoHtml_(ctx){
+  if(ctx.logo)return '<div class="logo"><img src="'+escH(ctx.logo)+'" alt="logo"></div>';
+  return ctx.academy?('<div class="logo txt" style="'+(ctx.stage==='초등'?'color:#6E675A':'color:#fff')+'">'+escH(ctx.academy)+'</div>'):'';
+}
+function buildWritingReportHtml_(ctx){
+  const e=ctx.stage==='초등';
+  const sentsHtml=wrSentencesHtml_(ctx.sentences,ctx.stage);
+  const cmtHtml=ctx.comment?wrParagraphs_(ctx.comment):'<p style="color:#8A93A5">아직 등록된 선생님 코멘트가 없어요.</p>';
+  const title=escH(ctx.name)+' - '+escH(ctx.topic)+' Writing Report';
+  const printBtn='<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div>';
+  let body;
+  if(!e){
+    const r=ctx.rubric;
+    const scoreHtml=r?('<div class="wr-h"><span class="n">01</span><span class="t">성적 요약</span><span class="e">SCORE</span></div>'+
+      '<div class="wr-score"><div>'+
+        [['과제 완성',r.taskGrade,r.taskScore],['형식',r.formatGrade,r.formatScore]].map(x=>
+          '<div class="bar"><div class="bh"><span>'+x[0]+'</span><b>'+escH(String(x[1]||'-'))+' · '+escH(String(x[2]!=null?x[2]:'-'))+' / 10</b></div><div class="tr"><div class="fl" style="width:'+Math.max(0,Math.min(100,(Number(x[2])||0)*10))+'%;background:'+wrGradeColor_(x[1])+'"></div></div></div>').join('')+
+      '</div><div class="wr-total"><div class="l">TOTAL<b>종합 점수</b></div><div class="v">'+escH(String(r.totalScore!=null?r.totalScore:'-'))+'<small>/ 20 · '+escH(String(r.totalGrade||''))+'</small></div></div></div>'):'';
+    const n=(k)=>String(r?k:k-1).padStart(2,'0');
+    body='<div class="wr-hero"><div class="eyebrow">WRITING-LAB · REPORT</div><h1>Writing <span>Report</span></h1><div class="sub">제출한 영작과 첨삭, 다시 쓴 글을 정리한 학습 리포트입니다.</div>'+wrLogoHtml_(ctx)+'</div>'+
+      '<div class="wr-in"><div class="wr-meta"><div class="row topic"><div class="c"><div class="k">TOPIC<b>주제</b></div><div class="v">'+escH(ctx.topic)+'</div></div></div>'+
+      '<div class="row"><div class="c"><div class="k">NAME<b>이름</b></div><div class="v">'+escH(ctx.name)+'</div></div><div class="c"><div class="k">CLASS<b>반</b></div><div class="v">'+escH(ctx.cls||'-')+'</div></div><div class="c"><div class="k">LEVEL<b>레벨</b></div><div class="v">'+escH(ctx.level||'-')+'</div></div><div class="c"><div class="k">DATE<b>날짜</b></div><div class="v">'+escH(ctx.date)+'</div></div></div></div>'+
+      scoreHtml+
+      '<div class="wr-h"><span class="n">'+(r?'02':'01')+'</span><span class="t">문장별 첨삭</span><span class="e">FEEDBACK</span></div>'+sentsHtml+
+      (ctx.finalText?('<div class="wr-h"><span class="n">'+(r?'03':'02')+'</span><span class="t">다시 쓴 글</span><span class="e">FINAL DRAFT</span></div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+wrParagraphs_(ctx.finalText)+'</div>'):'')+
+      '<div class="wr-h"><span class="n">'+(r?(ctx.finalText?'04':'03'):(ctx.finalText?'03':'02'))+'</span><span class="t">선생님 코멘트</span><span class="e">TEACHER\'S COMMENT</span></div><div class="wr-cmt">'+cmtHtml+'<div class="wr-sign">담당 선생님<i></i></div></div></div>'+
+      '<div class="wr-foot"><span>'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</span><b>MIDDLE SCHOOL</b></div>';
+  }else{
+    const picsHtml=(ctx.pics&&ctx.pics.length)?('<div class="wr-h">01. 그림 보고 쓰기</div><div class="wr-pics">'+ctx.pics.map(p=>'<div class="p"><div><img src="'+escH(p.imageUrl)+'" style="object-position:'+escH(p.crop||'center center')+';transform:scale('+((Number(p.zoom)||100)/100)+')" alt=""></div></div>').join('')+'</div>'):'';
+    const k=ctx.pics&&ctx.pics.length?1:0;
+    body='<div class="wr-head"><div><div class="dots"><i style="background:#E8736B"></i><i style="background:#3DB56F"></i><i style="background:#4C9BE8"></i></div><div class="eyebrow">WRITING-LAB · REPORT</div><h1>Writing Report</h1></div>'+wrLogoHtml_(ctx)+'</div>'+
+      '<div class="wr-card"><div class="r topic"><span class="k">주제</span><span class="v">'+escH(ctx.topic)+'</span></div><div class="r g"><div><span class="k">이름</span><span class="v">'+escH(ctx.name)+'</span></div><div><span class="k">반</span><span class="v">'+escH(ctx.cls||'-')+'</span></div><div><span class="k">레벨</span><span class="v">'+escH((ctx.level||'-').replace(/^Level\s*/i,''))+'</span></div><div><span class="k">날짜</span><span class="v">'+escH(ctx.date)+'</span></div></div></div>'+
+      picsHtml+
+      '<div class="wr-h">'+String(k+1).padStart(2,'0')+'. 다시 쓴 글</div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 다시 쓴 글이 없어요)</p>')+'</div>'+
+      '<div class="wr-h">'+String(k+2).padStart(2,'0')+'. 선생님 코멘트</div><div class="wr-cmt">'+cmtHtml+'</div>'+
+      '<div class="wr-h">'+String(k+3).padStart(2,'0')+'. 문장별 첨삭</div><div class="wr-card2">'+sentsHtml+'</div>'+
+      '<div class="wr-par">부모님 확인<span>(서명)<i></i></span></div><div class="wr-foot">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div>';
+  }
+  return '<!doctype html><html><head><meta charset="utf-8"><title>'+title+'</title>'+WR_FONTS+'<style>'+WR_CSS_COMMON+(e?WR_CSS_ELEM:WR_CSS_MID)+'</style></head><body><div class="wr-page">'+body+'</div>'+printBtn+'</body></html>';
+}
+/** 제출물 하나(원본 또는 다시쓰기)로 Writing Report를 새 창에 열어줘요. 양식(초등/중등)·로고는 학원 설정을 따라요. */
+async function printWritingReport(s,studentName,studentId,academyName,siblings,forceStage){
+  const win=window.open('','_blank');
+  if(!win){alert('팝업이 차단되어 있어요. 브라우저 팝업 차단을 해제한 뒤 다시 시도해주세요.');return;}
+  win.document.open();win.document.write('<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;padding:40px;color:#555">리포트를 만드는 중이에요…</body>');win.document.close();
+  try{
+    const cfg=await fetchReportConfig();
+    const pair=writingReportPair_(s,siblings);
+    const base=pair.original||s,rw=pair.rewrite;
+    const acad=String(s.academy||academyName||'').trim();
+    const stage=forceStage||reportStageFor_(Object.assign({},s,{academy:acad}),cfg);
+    const ac=reportAcademyCfg_(cfg,acad);
+    const rubric=parseRubricEval(s.rubric)||parseRubricEval(base.rubric)||autoComputeRubric(base);
+    const topicName=s.point||s.chapter||'';
+    const st=stage==='초등'&&String(base.chapter||s.chapter||'')==='Story Writing'?findStoryTopicByTitle_(topicName):null;
+    const pics=st?(st.pics||[]).filter(p=>p.imageUrl):[];
+    const finalSrc=rw||(submissionTypeLabel(s)==='Re-Writing'?s:null);
+    const ctx={stage,logo:ac.logo||ACADEMY_LOGOS[acad]||'',academy:acad,name:studentName||s.name||'',cls:s.cls||'',
+      level:(rubric&&rubric.writingLevel)||'',date:wrDateStr_(base.datetime||s.datetime,stage==='초등'?'. ':'.'),
+      topic:topicName,rubric,sentences:writingReportSentences_(base),
+      finalText:finalSrc?String(finalSrc.final||finalSrc.text||''):(stage==='초등'?String(base.text||''):''),comment:writingReportComment_([base,rw]),pics};
+    win.document.open();win.document.write(buildWritingReportHtml_(ctx));win.document.close();
+  }catch(e){try{win.document.body.textContent='리포트를 만들지 못했어요: '+(e&&e.message||e);}catch(_){}}
+}
+
+/** 로고 이미지 파일 → 작게 줄인 이미지 데이터(data URL). SVG는 그대로, 나머지는 긴 변 360px로 줄여요. */
+function readReportLogoFile_(f){
+  return new Promise((resolve,reject)=>{
+    const rd=new FileReader();
+    rd.onerror=()=>reject(new Error('파일을 읽지 못했어요.'));
+    rd.onload=()=>{
+      const src=String(rd.result||'');
+      if(/^data:image\/svg/.test(src)){ if(src.length>400000)reject(new Error('로고 파일이 너무 커요.')); else resolve(src); return; }
+      const img=new Image();
+      img.onload=()=>{
+        const sc=Math.min(1,360/Math.max(img.width,img.height));
+        const cv=document.createElement('canvas');cv.width=Math.round(img.width*sc);cv.height=Math.round(img.height*sc);
+        cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
+        let out=cv.toDataURL('image/png');
+        if(out.length>430000)out=cv.toDataURL('image/jpeg',0.85);
+        resolve(out);
+      };
+      img.onerror=()=>reject(new Error('이미지를 읽지 못했어요.'));
+      img.src=src;
+    };
+    rd.readAsDataURL(f);
+  });
+}
+async function saveReportConfigRemote_(academy,fields){
+  const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(Object.assign({action:'saveReportConfig',role:'teacher',requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||'',academy},fields))});
+  const data=await res.json();if(!data||data.ok===false)throw new Error((data&&data.error)||'실패');
+  return fetchReportConfig(true);
+}
+/** 🧾 리포트 설정 — 첫 화면은 학원 목록(전체 관리자는 모든 학원, 학원 관리자는 자기 학원)이고, 학원마다 로고를
+ *  바로 등록할 수 있어요. "반 양식 설정"을 누르면 그 학원의 반별 초등/중등 양식을 정하는 화면으로 들어가요. */
+function viewReportSettings(focus){teacherMount(w=>{
+  const detail=(typeof focus==='string');
+  const bk=el('button','backbtn',detail?'◀ 학원 목록':'◀ 선생님 홈');
+  bk.onclick=()=>{ if(detail)viewReportSettings(); else viewTeacherHome(); };w.appendChild(bk);
+  w.appendChild(el('h1','title','🧾 리포트 설정'));
+  const box=el('div');box.style.marginTop='14px';w.appendChild(box);
+  box.appendChild(el('div','hint','불러오는 중…'));
+  (async()=>{
+    let students=[],cfg={};
+    try{const r=await fetchRoster();students=(r&&r.students)||[];}catch(e){}
+    cfg=await fetchReportConfig(true);
+    box.innerHTML='';
+    // ---------- 학원 목록 ----------
+    if(!detail){
+      w.querySelector('.title').after(Object.assign(el('div','hint'),{textContent:'학원마다 Writing Report에 넣을 로고를 등록하고, 반마다 초등/중등 양식을 정해요.'}));
+      let academies=[...new Set(students.map(x=>String(x.academy||'').trim()))];
+      if(!USER.isAdmin)academies=[String(USER.academy||'').trim()];
+      else if(!academies.length)academies=[''];
+      academies.sort((a,b)=>a.localeCompare(b,'ko'));
+      academies.forEach(a=>{
+        const mine=students.filter(x=>String(x.academy||'').trim()===a&&!isInactiveStudent(x));
+        const classes=[...new Set(mine.map(x=>String(x.cls||'').trim()).filter(Boolean))];
+        const c=cfg[a]||{};const stages=c.classStages||{};
+        const nElem=classes.filter(k=>stages[k]==='초등').length,nMid=classes.filter(k=>stages[k]==='중등').length;
+        const card=el('div');card.style.cssText='display:flex;gap:16px;align-items:center;border:1px solid rgba(0,0,0,.1);border-radius:14px;padding:12px 14px;margin-bottom:12px;background:#fff;flex-wrap:wrap';
+        const thumb=el('div');thumb.style.cssText='width:112px;height:80px;flex:0 0 auto;border-radius:10px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#9aa1ad;font-size:12px';
+        const showThumb=()=>{const lg=(cfg[a]&&cfg[a].logo)||'';thumb.innerHTML=lg?('<img src="'+escH(lg)+'" style="max-width:100%;max-height:100%;object-fit:contain">'):'로고 없음';};
+        showThumb();card.appendChild(thumb);
+        const info=el('div');info.style.cssText='flex:1;min-width:180px';
+        info.innerHTML='<div style="font-weight:800;font-size:16px;color:#46508C">'+escH(a||'(학원 이름 없음)')+'</div>'+
+          '<div style="color:#6b7684;font-size:13px;margin-top:3px">학생 '+mine.length+'명 · 반 '+classes.length+'개</div>'+
+          '<div style="color:#6b7684;font-size:13px;margin-top:2px">양식: 초등 '+nElem+'개 · 중등 '+nMid+'개 · 자동 '+(classes.length-nElem-nMid)+'개</div>';
+        card.appendChild(info);
+        const btns=el('div');btns.style.cssText='display:flex;flex-direction:column;gap:6px';
+        const file=el('input');file.type='file';file.accept='image/png,image/jpeg,image/webp,image/svg+xml';file.style.display='none';
+        const lgBtn=el('button','btn ghost','🖼 로고 등록');lgBtn.type='button';lgBtn.style.cssText='padding:6px 12px;font-size:12.5px';
+        const msg=el('div','fx');msg.style.cssText='font-size:12px;margin:0';
+        lgBtn.onclick=()=>file.click();
+        file.onchange=async()=>{
+          const f=file.files&&file.files[0];if(!f)return;
+          lgBtn.disabled=true;msg.className='fx';msg.textContent='올리는 중…';
+          try{const lg=await readReportLogoFile_(f);cfg=await saveReportConfigRemote_(a,{logo:lg});showThumb();msg.className='fx ok';msg.textContent='✅ 로고를 저장했어요.';}
+          catch(e){msg.className='fx no';msg.textContent='저장하지 못했어요: '+e.message+' (서버 업데이트가 배포됐는지 확인해 주세요)';}
+          lgBtn.disabled=false;file.value='';
+        };
+        const setBtn=el('button','btn blue','⚙️ 반 양식 설정');setBtn.type='button';setBtn.style.cssText='padding:6px 12px;font-size:12.5px';
+        setBtn.onclick=()=>viewReportSettings(a);
+        btns.appendChild(lgBtn);btns.appendChild(setBtn);btns.appendChild(msg);btns.appendChild(file);
+        card.appendChild(btns);box.appendChild(card);
+      });
+      return;
+    }
+    // ---------- 한 학원의 상세(로고 + 반별 양식) ----------
+    const cur=focus;
+    w.querySelector('.title').after(Object.assign(el('div','hint'),{textContent:'학원: '+(cur||'(학원 이름 없음)')+' — 반마다 어떤 양식(초등/중등)으로 나올지 정해요. 안 정한 반은 반 레벨·학교 이름을 보고 자동으로 골라요.'}));
+    const panel=el('div');box.appendChild(panel);
+    let logo=(cfg[cur]&&cfg[cur].logo)||'';
+    const stages=Object.assign({},(cfg[cur]&&cfg[cur].classStages)||{});
+    const lg=el('div');lg.style.cssText='border:1px solid rgba(0,0,0,.1);border-radius:14px;padding:14px 16px;margin-bottom:14px;background:#fff';
+    lg.appendChild(el('div',null,'<b>학원 로고</b>'));
+    const prev=el('div');prev.style.cssText='margin:10px 0;min-height:70px;display:flex;align-items:center;gap:14px';
+    const showLogo=()=>{prev.innerHTML=logo?('<img src="'+escH(logo)+'" style="max-height:80px;max-width:180px;object-fit:contain;border:1px solid #eee;border-radius:8px;padding:6px;background:#fff">'):'<span class="hint">아직 등록한 로고가 없어요.</span>';};
+    showLogo();lg.appendChild(prev);
+    const file=el('input');file.type='file';file.accept='image/png,image/jpeg,image/webp,image/svg+xml';
+    const lmsg=el('div','fx');
+    file.onchange=async()=>{const f=file.files&&file.files[0];if(!f)return;try{logo=await readReportLogoFile_(f);showLogo();lmsg.className='fx';lmsg.textContent='아래 저장하기를 눌러야 적용돼요.';}catch(e){lmsg.className='fx no';lmsg.textContent=e.message;}};
+    lg.appendChild(file);
+    const rm=el('button','btn ghost','로고 지우기');rm.type='button';rm.style.cssText='margin-left:8px;padding:6px 12px;font-size:12.5px';rm.onclick=()=>{logo='';showLogo();lmsg.className='fx';lmsg.textContent='아래 저장하기를 눌러야 적용돼요.';};
+    lg.appendChild(rm);lg.appendChild(lmsg);panel.appendChild(lg);
+    const cl=el('div');cl.style.cssText='border:1px solid rgba(0,0,0,.1);border-radius:14px;padding:14px 16px;margin-bottom:14px;background:#fff';
+    cl.appendChild(el('div',null,'<b>반별 리포트 양식</b>'));
+    const classes=[...new Set(students.filter(x=>String(x.academy||'').trim()===cur).map(x=>String(x.cls||'').trim()).filter(Boolean))].sort();
+    if(!classes.length)cl.appendChild(el('div','hint','이 학원에 등록된 반이 아직 없어요. (학생 명단에서 반을 먼저 적어주세요)'));
+    const sels={};
+    classes.forEach(k=>{
+      const row=el('div');row.style.cssText='display:flex;align-items:center;gap:10px;margin-top:8px';
+      const nm=el('div',null,escH(k));nm.style.cssText='min-width:90px;font-weight:700';
+      const sel=el('select','in');sel.style.cssText='padding:7px;font-size:13.5px;border-radius:10px';
+      [['','자동'],['초등','초등 양식'],['중등','중등 양식']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;sel.appendChild(o);});
+      sel.value=stages[k]||'';sels[k]=sel;row.appendChild(nm);row.appendChild(sel);cl.appendChild(row);
+    });
+    panel.appendChild(cl);
+    const row2=el('div');row2.style.cssText='display:flex;gap:10px;flex-wrap:wrap';
+    const save=el('button','btn green','저장하기');save.type='button';
+    const pv1=el('button','btn ghost','초등 양식 미리보기');pv1.type='button';
+    const pv2=el('button','btn ghost','중등 양식 미리보기');pv2.type='button';
+    const msg=el('div','fx');msg.style.marginTop='8px';
+    row2.appendChild(save);row2.appendChild(pv1);row2.appendChild(pv2);panel.appendChild(row2);panel.appendChild(msg);
+    save.onclick=async()=>{
+      const cs={};Object.keys(sels).forEach(k=>{if(sels[k].value)cs[k]=sels[k].value;});
+      Object.keys(stages).forEach(k=>{if(!(k in sels)&&stages[k])cs[k]=stages[k];});
+      save.disabled=true;msg.className='fx';msg.textContent='저장 중…';
+      try{cfg=await saveReportConfigRemote_(cur,{logo,classStages:cs});msg.className='fx ok';msg.textContent='✅ 저장했어요.';}
+      catch(e){msg.className='fx no';msg.textContent='저장하지 못했어요: '+e.message+' (서버 업데이트가 배포됐는지 확인해 주세요)';}
+      save.disabled=false;
+    };
+    const preview=(stage)=>{
+      const win=window.open('','_blank');if(!win){alert('팝업이 차단되어 있어요.');return;}
+      const mid=stage==='중등';
+      const ctx={stage,logo,academy:cur,name:'홍길동 Tom',cls:mid?'중1 A반':'RG2',level:'Level 4',date:mid?'2026.10.02':'2026. 10. 02',topic:'My Morning Routine',
+        rubric:mid?{taskGrade:'A',taskScore:10,formatGrade:'D',formatScore:4,totalScore:14,totalGrade:'B'}:null,
+        sentences:[{text:'I off my alarm clock and go to bathroom for brush my teeth.',errors:[{type:'wrong',wrong:'I off my alarm clock',correct:'I turn off my alarm clock',note:"'off'는 동사가 아니에요. '끄다'는 'turn off'라는 동사구를 써야 해요."},{type:'suggestion',wrong:'my alarm clock',correct:'the alarm clock',note:"영어에서는 보통 'the alarm clock'이라고 해요."}]},{text:'After wash my hands, I dry my hands with towel.',errors:[{type:'wrong',wrong:'After wash my hands',correct:'After washing my hands',note:"'After' 뒤에는 동사-ing가 와야 해요."},{type:'missing',wrong:'with towel',correct:'with a towel',note:"'towel'은 셀 수 있는 명사라서 앞에 'a'를 붙여야 해요."}]}],
+        finalText:'In the morning, I turn off the alarm clock and go to the bathroom to brush my teeth. After washing my hands, I dry my hands with a towel. Finally, I go to school.',
+        comment:'아침 루틴을 시간 순서대로 잘 정리했어요! 연결어를 사용해서 글의 흐름이 자연스러워요. 다만 동사구와 관사 사용을 조금 더 점검해 보세요.',pics:[]};
+      win.document.open();win.document.write(buildWritingReportHtml_(ctx));win.document.close();
+    };
+    pv1.onclick=()=>preview('초등');pv2.onclick=()=>preview('중등');
+  })();
+});}
+
 function printSubmissionReport(s,studentName,studentId,academyName,siblings){
   const fb=parseFeedback(s.feedback);
   const aifb=parseAiFeedback(s.aiFeedback);
@@ -2877,13 +3245,52 @@ function printSubmissionReport(s,studentName,studentId,academyName,siblings){
 }
 /** 문장별 첨삭 항목(errors[]+corrected)을 리포트용 HTML(li 목록)로 그려요 — printSubmissionReport/
  *  printStudentRewriteReport 둘 다에서 "틀린 부분 → 고친 부분" 목록을 똑같은 모양으로 보여줄 때 써요. */
+/** 고친 표현이 "A / B", "A 또는 B", "A (또는 B)"처럼 여러 개로 오면 낱개로 나눠요 — 이 중 하나만 써도 고친 걸로 쳐요. */
+function splitAltCorrects(str){
+  return String(str||'').replace(/\(\s*(?:또는|or)\s+([^)]+)\)/gi,' / $1').split(/\s*\/\s*|\s+또는\s+/).map(x=>x.trim()).filter(Boolean);
+}
+/** 틀린 표현(wrong) → 고친 표현(correct)을 "단어 단위로" 비교해서, 실제로 바뀐 단어에만 색을 입혀요.
+ *  (예: "The boy is ache → The boy is in pain" 에서 The boy is 는 그대로 두고 ache만 빨간 취소선, in pain만 빨강.)
+ *  빨강(wrong)=바뀐/지워진 단어 취소선 + 새 단어 빨강, 파랑(missing)=새로 더한 단어만 파랑, 보라(suggestion)=새 단어 보라.
+ *  고친 표현이 비어 있으면(지우기만) 빨간 취소선만 그어요. "A / B"처럼 대안이 여러 개면 각각 비교해요. */
+function diffPairHtml_(e){
+  const type=e.type||'wrong';
+  const color=type==='missing'?'#1D4ED8':(type==='suggestion'?'#7C3AED':'#B3261E');
+  const nz=t=>String(t||'').toLowerCase().replace(/[^a-z0-9'가-힣]/g,'');
+  const toks=x=>String(x||'').trim().split(/\s+/).filter(Boolean);
+  const wt=toks(e.wrong);
+  const alts=splitAltCorrects(e.correct);
+  const strike='color:#B3261E;text-decoration:line-through';
+  if(!alts.length){
+    return {wrongHtml:wt.map(t=>'<span style="'+strike+'">'+escH(t)+'</span>').join(' '),correctHtml:'',hasCorrect:false};
+  }
+  // LCS로 "그대로 남은" 단어 위치를 찾아요.
+  const lcs=(a,b)=>{
+    const n=a.length,m=b.length,dp=Array.from({length:n+1},()=>new Array(m+1).fill(0));
+    for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)dp[i][j]=(nz(a[i])&&nz(a[i])===nz(b[j]))?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
+    const ka=new Set(),kb=new Set();let i=0,j=0;
+    while(i<n&&j<m){
+      if(nz(a[i])&&nz(a[i])===nz(b[j])){ka.add(i);kb.add(j);i++;j++;}
+      else if(dp[i+1][j]>=dp[i][j+1])i++;else j++;
+    }
+    return {ka,kb};
+  };
+  let keptWrong=null;
+  const cHtml=alts.map(alt=>{
+    const ct=toks(alt),r=lcs(wt,ct);
+    keptWrong=keptWrong?new Set([...keptWrong,...r.ka]):r.ka; // 대안 중 하나라도 그대로 쓴 단어는 안 긋고, 모든 대안에서 사라진 단어만 그어요.
+    return ct.map((t,j)=>r.kb.has(j)?escH(t):'<b style="color:'+color+'">'+(type==='suggestion'&&!r.kb.size&&j===0?'💡':'')+escH(t)+'</b>').join(' ');
+  }).join(' <span style="color:#8A93A5">/</span> ');
+  const wHtml=wt.map((t,i)=>(type==='wrong'&&!keptWrong.has(i))?'<span style="'+strike+'">'+escH(t)+'</span>':escH(t)).join(' ');
+  return {wrongHtml:wHtml,correctHtml:cHtml,hasCorrect:true};
+}
 /** 오류 종류(type)에 따라 색을 다르게 보여줘요 — "wrong"(명백히 틀림)은 빨간 줄+초록 고침,
  *  "missing"(빠진 표현 삽입)은 파란색, "suggestion"(더 나은 표현 제안)은 보라색이에요. */
 function errorPairHtml_(e){
   const type=e.type||'wrong';
-  if(type==='missing')return '<span>'+escH(e.wrong||'')+'</span> → <span class="missing">'+escH(e.correct||'')+'</span><span class="type-tag" style="color:#1D4ED8">(빠진 표현)</span>';
-  if(type==='suggestion')return '<span>'+escH(e.wrong||'')+'</span> → <span class="suggest">💡'+escH(e.correct||'')+'</span><span class="type-tag" style="color:#7C3AED">(제안)</span>';
-  return '<span class="wrong">'+escH(e.wrong||'')+'</span> → <span class="correct">'+escH(e.correct||'')+'</span>';
+  const d=diffPairHtml_(e);
+  const tag=type==='missing'?'<span class="type-tag" style="color:#1D4ED8">(빠진 표현)</span>':type==='suggestion'?'<span class="type-tag" style="color:#7C3AED">(제안)</span>':'';
+  return d.wrongHtml+(d.hasCorrect?(' → '+d.correctHtml):'')+tag;
 }
 function sentenceErrorListHtml(aiEntry){
   if(!aiEntry||typeof aiEntry!=='object')return '';
@@ -3339,7 +3746,8 @@ function renderAiSentenceBlock(aiEntry,label,accent){
     const type=e.type||'wrong';
     const correctColor=type==='missing'?'#1D4ED8':(type==='suggestion'?'#7C3AED':'#B3261E');
     const prefix=type==='suggestion'?'💡':'';
-    html+='<div style="color:#374151">• '+escH(e.wrong)+' → <b style="color:'+correctColor+'">'+prefix+escH(e.correct)+'</b>'+(e.note?('&nbsp;&nbsp;'+escH(e.note)):'')+'</div>';
+    const dp_=diffPairHtml_(e);
+    html+='<div style="color:#374151">• '+dp_.wrongHtml+(dp_.hasCorrect?(' → '+dp_.correctHtml):'')+(e.note?('&nbsp;&nbsp;'+escH(e.note)):'')+'</div>';
   });
   if(aiEntry.corrected){
     html+='<div style="margin-top:4px;color:#15803d">✔ '+escH(aiEntry.corrected)+'</div>';
@@ -3392,6 +3800,9 @@ function viewMyFeedback(){setWide(true);mountView(w=>{
       const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
       printBtn.onclick=()=>printSubmissionReport(s,USER.name,USER.id,USER.academy,subs);
       card.appendChild(printBtn);
+      const wrBtn=el('button','btn ghost','📄 Writing Report');wrBtn.type='button';wrBtn.style.cssText='margin:8px 0 0 6px;padding:5px 12px;font-size:12px';
+      wrBtn.onclick=()=>printWritingReport(s,USER.name,USER.id,USER.academy,subs);
+      card.appendChild(wrBtn);
       const audioBox=renderAudioPlayback(s);if(audioBox)card.appendChild(audioBox);
       const fb=parseFeedback(s.feedback);
       const aifb=parseAiFeedback(s.aiFeedback);
@@ -3583,6 +3994,30 @@ function viewRewriteList(){setWide(true);mountView(w=>{
   })();
 });}
 
+/** 문장 안에서 바로 보여주는 비교 표시 — 바뀐 단어에만 색을 입혀서, 그대로인 단어는 평범하게 두고
+ *  지워진/바뀐 단어는 빨간 취소선, 새로 들어간 단어는 종류 색(빨강=고침, 파랑=더함, 보라=제안)으로 그 자리에 끼워 넣어요. */
+function inlineDiffHtml_(e){
+  const type=e.type||'wrong';
+  const color=type==='missing'?'#1D4ED8':(type==='suggestion'?'#7C3AED':'#B3261E');
+  const nz=t=>String(t||'').toLowerCase().replace(/[^a-z0-9'가-힣]/g,'');
+  const toks=x=>String(x||'').trim().split(/\s+/).filter(Boolean);
+  const wt=toks(e.wrong),alts=splitAltCorrects(e.correct);
+  const strikeRed='<s style="color:#B3261E">',strikeGray='<s style="color:#9AA1AD">';
+  const del=t=>(type==='suggestion'?strikeGray:strikeRed)+escH(t)+'</s>';
+  if(!alts.length)return wt.map(t=>'<s style="color:#B3261E">'+escH(t)+'</s>').join(' ');
+  const bt=toks(alts[0]),n=wt.length,m=bt.length;
+  const dp=Array.from({length:n+1},()=>new Array(m+1).fill(0));
+  for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)dp[i][j]=(nz(wt[i])&&nz(wt[i])===nz(bt[j]))?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
+  const out=[];let i=0,j=0;
+  while(i<n||j<m){
+    if(i<n&&j<m&&nz(wt[i])&&nz(wt[i])===nz(bt[j])){out.push(escH(bt[j]));i++;j++;}
+    else if(i<n&&(j>=m||dp[i+1][j]>=dp[i][j+1])){out.push(del(wt[i]));i++;}
+    else{out.push('<b style="color:'+color+'">'+escH(bt[j])+'</b>');j++;}
+  }
+  let html=out.join(' ');
+  if(alts.length>1)html+=' <span style="color:#8A93A5">/</span> '+alts.slice(1).map(x=>'<b style="color:'+color+'">'+escH(x)+'</b>').join(' <span style="color:#8A93A5">/</span> ');
+  return html;
+}
 /** 문장 안에서 틀린 부분(errors[].wrong)만 찾아 그 자리에만 표시를 하고 바로 옆에 고친/제안 표현을
  *  붙여요(문장 전체를 긋지 않고, 나머지 부분은 그대로 둬요). type에 따라 색만 다르게 표시해요 —
  *  "wrong"(명백히 틀림)은 검정 취소선+빨간색으로 고침, "missing"(빠진 표현 삽입)은 원래 부분은
@@ -3598,14 +4033,7 @@ function renderInlineDiff(sentence,errors){
   found.forEach(({e,idx})=>{
     if(idx<pos)return; // 겹치는 위치는 건너뛰어요 (이미 앞 오류가 그 자리를 덮었어요)
     out+=escH(sentence.slice(pos,idx));
-    const type=e.type||'wrong';
-    if(type==='missing'){
-      out+=escH(e.wrong)+' <b style="color:#1D4ED8">'+escH(e.correct||'')+'</b>';
-    }else if(type==='suggestion'){
-      out+=escH(e.wrong)+' <b style="color:#7C3AED;font-weight:800">💡'+escH(e.correct||'')+'</b>';
-    }else{
-      out+='<s style="color:#B3261E">'+escH(e.wrong)+'</s> <b style="color:#B3261E">'+escH(e.correct||'')+'</b>';
-    }
+    out+=inlineDiffHtml_(e);
     pos=idx+e.wrong.length;
   });
   out+=escH(sentence.slice(pos));
@@ -3613,10 +4041,16 @@ function renderInlineDiff(sentence,errors){
 }
 /** renderInlineDiff로 문장 자체는 다 그린 뒤, 그 문장에 달린 오류들의 "왜 그런지" 설명(note)만
  *  따로 모아서 문장 아래에 줄바꿈된 목록으로 보여줘요(문장 읽기 흐름을 안 끊으려고 분리했어요). */
-function inlineDiffNotesHtml(errorsList){
+function inlineDiffNotesHtml(errorsList,sentence){
   const notes=[];
   (errorsList||[]).forEach(errors=>{
-    (errors||[]).forEach(e=>{ if(e&&e.note)notes.push(e); });
+    (errors||[]).forEach(e=>{
+      if(!e||!e.note)return;
+      // 문장에 실제로 표시되지 않은(원래 표현이 문장에 없거나, 고칠 게 없는) 항목의 설명은 보여주지 않아요.
+      if(sentence!==undefined&&e.wrong&&sentence.indexOf(e.wrong)<0)return;
+      if(e.wrong&&e.correct&&norm(e.wrong)===norm(e.correct))return;
+      notes.push(e);
+    });
   });
   if(!notes.length)return '';
   // 예전엔 회색/보라색 작은 글씨 한 줄로만 나와서 "왜 틀렸는지" 설명이 눈에 잘 안 띈다는 피드백이
@@ -3709,7 +4143,7 @@ function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
           // 정답 문구로 취급해서, 학생이 그 중 하나(A만, 또는 B만)를 써도 "A / B"라는 문자열 그대로는
           // 안 써졌으니 계속 미통과(✕)로 떴어요. 그래서 "/" 로 나눠서 각각을 별도 후보로 다뤄요 —
           // 이러면 아래 test()가 "그중 아무거나 하나"만 확인하면 되니까 하나만 써도 통과돼요.
-          const altCorrects=String(e.correct).split('/').map(x=>x.trim()).filter(Boolean);
+          const altCorrects=splitAltCorrects(e.correct);
           if(!altCorrects.length)return;
           altCorrects.forEach(altCorrect=>{
             if(wrongKey&&looksLikeDeleteNote(altCorrect)){
@@ -3721,6 +4155,10 @@ function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
             }
             const key=norm(altCorrect);
             if(!key)return;
+            // 고칠 게 없는데 "~로 고쳐 쓰기"가 뜨던 경우를 걸러요: ① 고친 표현이 원래 표현과 (대소문자·구두점 빼고) 똑같으면
+            // 실제로 바꿀 게 없고, ② AI가 지적한 원래 표현(wrong)이 학생 글에 아예 없으면 고칠 자리 자체가 없어요.
+            if(wrongKey&&key===wrongKey)return;
+            if(wrongKey&&!norm(sub.text||'').includes(wrongKey))return;
             // ⚠️ Claude/GPT 중 하나는 "틀린 표현(wrong)"까지 알려주고 다른 하나는 안 알려주는 경우
             // (또는 같은 문장에 두 첨삭이 조금씩 다른 wrong 텍스트를 줄 때)가 있는데, 예전엔 이럴 때
             // "고친 표현(correct)"이 완전히 같은데도 서로 다른 groupKey로 갈라져서 체크 목록에
@@ -3746,7 +4184,7 @@ function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
       if(aiObj&&Array.isArray(aiObj.errors)&&aiObj.errors.length)mainLine+='<div>'+renderInlineDiff(sent,aiObj.errors)+'</div>';
       if(aiGptObj&&Array.isArray(aiGptObj.errors)&&aiGptObj.errors.length)mainLine+='<div'+(mainLine?' style="margin-top:4px"':'')+'>'+renderInlineDiff(sent,aiGptObj.errors)+'</div>';
       if(!mainLine)mainLine=escH(sent);
-      mainLine+=inlineDiffNotesHtml([aiObj&&aiObj.errors,aiGptObj&&aiGptObj.errors]);
+      mainLine+=inlineDiffNotesHtml([aiObj&&aiObj.errors,aiGptObj&&aiGptObj.errors],sent);
       let detail='';
       if(c)detail+='<div style="margin-top:2px;color:#b45309;font-size:13px">💬 '+escH(c)+'</div>';
       row.innerHTML=mainLine+(detail?('<div style="margin-top:4px">'+detail+'</div>'):'');
@@ -4132,6 +4570,7 @@ function buildTeacherMenuSidebar(sidebarCol){
     const adminGroup=mkMenuGroup(USER.isAdmin?'운영 관리 (전체 관리자)':'운영 관리 (학원 관리자 · '+(USER.academy||'우리 학원')+')');
     if(USER.isAdmin)adminGroup.row.appendChild(mkMenuBtn('🏷️ 레벨 관리',()=>viewLevelManage()));
     adminGroup.row.appendChild(mkMenuBtn('👥 학생 명단 관리',()=>viewStudentManage()));
+    adminGroup.row.appendChild(mkMenuBtn('🧾 리포트 설정 (로고·양식)',()=>viewReportSettings()));
     adminGroup.row.appendChild(mkMenuBtn('🧑‍🏫 선생님 계정 관리',()=>viewTeacherManage()));
     // ⚠️ Pattern Drill(조건 영작)이 taskText가 아니라 text 필드로도 같이 저장되게 막 고쳤는데,
     // 그 고침 전에 이미 저장된 예전 Pattern Drill 글들은 여전히 text가 비어있어요(그래서 첨삭관리
@@ -4630,6 +5069,9 @@ function viewReportStudentSubmissions(studentId,studentName,subs,backFn){teacher
     const rptBtn=el('button','btn blue','🖨 리포트');rptBtn.type='button';rptBtn.style.cssText='padding:6px 14px;font-size:12.5px;white-space:nowrap;flex:0 0 auto';
     rptBtn.onclick=()=>printSubmissionReport(s,studentName,studentId,s.academy,sorted);
     row.appendChild(rptBtn);
+    const wrBtn2=el('button','btn blue','📄 Writing Report');wrBtn2.type='button';wrBtn2.style.cssText='padding:6px 14px;font-size:12.5px;white-space:nowrap;flex:0 0 auto;margin-left:6px';
+    wrBtn2.onclick=()=>printWritingReport(s,studentName,studentId,s.academy,sorted);
+    row.appendChild(wrBtn2);
     box.appendChild(row);
   });
   w.appendChild(box);
@@ -6650,6 +7092,9 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
       const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기 (학부모님께 보내기 좋아요)');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
       printBtn.onclick=()=>printSubmissionReport(s,studentName,studentId,s.academy,siblings);
       card.appendChild(printBtn);
+      const wrBtn3=el('button','btn blue','📄 Writing Report (학부모님께 보내기)');wrBtn3.type='button';wrBtn3.style.cssText='margin:8px 0 0 6px;padding:5px 12px;font-size:12px';
+      wrBtn3.onclick=()=>printWritingReport(s,studentName,studentId,s.academy,siblings);
+      card.appendChild(wrBtn3);
       const audioBox=renderAudioPlayback(s);if(audioBox)card.appendChild(audioBox);
       if(s.wrongReport){
         const wrongWrap=el('div');wrongWrap.innerHTML=renderDrillWrongReport(parseWrongReport(s.wrongReport));
