@@ -1,0 +1,9025 @@
+// const SUBMIT_URL="https://script.google.com/macros/s/AKfycbwyL3hM4syjOmtxSQ2bxG-XWXYyHhlfxvtAUhleP5hWf2pmcYP5nHxmHmLyz5R1KRgh/exec"; // 옛 백엔드(백업용, 롤백 시 이 줄 주석 해제)
+const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
+/* 새 버전을 GitHub에 올려도, 이미 열려있는 브라우저 탭은(새로고침 전까지는) 예전 코드를 계속
+ * 메모리에서 실행하고 있어요 — 이건 정적 HTML 페이지의 근본적인 특성이라(실행 중인 자바스크립트
+ * 코드 자체를 바꿔치기할 수는 없어요), 지금 보고 있는 그 화면을 "새로고침 없이" 바꿔치기할 방법은
+ * 없어요. 대신, 새 버전이 올라온 걸 자동으로 감지해뒀다가(NEW_VERSION_AVAILABLE) 화면이 바뀌는
+ * 다음 순간(=다른 버튼을 눌러 다른 화면으로 넘어가려는 순간, mountView 참고)에 자동으로 새로고침해서
+ * 최신 코드를 받아오게 했어요 — 사람이 직접 새로고침 버튼을 누를 필요가 없어요. 화면이 안 바뀌고
+ * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
+ * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
+ * (예: 배포 날짜+순번 — "2026-09-17a") */
+const APP_VERSION='2026-10-23t';
+let NEW_VERSION_AVAILABLE=false;
+function checkForNewVersion(){
+  fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
+    const m=html.match(/const APP_VERSION=['"]([^'"]+)['"]/);
+    if(m&&m[1]&&m[1]!==APP_VERSION){
+      NEW_VERSION_AVAILABLE=true;
+      const banner=document.getElementById('updateBanner');
+      if(banner)banner.style.display='block';
+    }
+  }).catch(()=>{});
+}
+(function(){const reloadBtn=document.getElementById('updateReloadBtn');if(reloadBtn)reloadBtn.onclick=()=>location.reload();})();
+setInterval(checkForNewVersion,5*60*1000); // 5분마다 확인
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible')checkForNewVersion(); });
+
+/* ================= Firebase (실시간 연동) =================
+   콘텐츠/제출물을 새로고침 없이 실시간으로 받아오기 위한 설정이에요. 이 값들은 "비밀"이 아니라
+   파이어베이스 콘솔이 공개적으로 내려주는 웹 앱 설정값이라 그대로 코드에 넣어도 안전해요.
+   실제 로그인/데이터 저장은 지금처럼 전부 SUBMIT_URL(Cloud Functions)을 거치고, 여기서는
+   "읽기 전용 실시간 구독"만 Firestore에 직접 연결해요(쓰기는 보안 규칙에서 전부 막혀있어요). */
+const firebaseConfig={
+  apiKey:"AIzaSyDbbyO8DCS6zRXsIpusN9UsWdtCtJ2yx7E",
+  authDomain:"writing-lab-5b8c0.firebaseapp.com",
+  projectId:"writing-lab-5b8c0",
+  storageBucket:"writing-lab-5b8c0.firebasestorage.app",
+  messagingSenderId:"146813935075",
+  appId:"1:146813935075:web:3a1f5e0b4d4ae8acdbd4d6",
+  measurementId:"G-95C5E1KKFC"
+};
+firebase.initializeApp(firebaseConfig);
+const fbAuth=firebase.auth(),fbDb=firebase.firestore();
+/* 로그인에 성공한 "직후"에 서버(mintToken)에서 받아온 커스텀 토큰으로 이 값이 true가 돼요.
+   실시간 구독(onSnapshot)은 로그인한 사용자만 읽을 수 있게 보안 규칙이 걸려있어서, 이 값이
+   true일 때만 시작해요 — false면(네트워크 문제 등으로 토큰 발급에 실패했으면) 지금까지 해오던
+   대로 그냥 한 번씩 새로 받아오는 방식(fetch)만으로 조용히 계속 동작해요. */
+let fbSignedIn=false;
+/* 화면(mountView)이 하나 뜰 때마다 그 화면 전용으로 시작한 실시간 구독들 — 다른 화면으로 넘어가면
+   자동으로 정리돼서, 안 보이는 화면이 계속 데이터를 받아오는 "구독 누수"를 막아줘요. */
+let _viewUnsubs=[];
+function trackViewUnsub(unsub){ if(typeof unsub==='function') _viewUnsubs.push(unsub); }
+function clearViewUnsubs(){ _viewUnsubs.forEach(fn=>{try{fn();}catch(e){}}); _viewUnsubs=[]; }
+fbAuth.onAuthStateChanged(user=>{
+  fbSignedIn=!!user;
+  if(user){ startRealtimeContent(); }
+  else { stopRealtimeContent(); }
+});
+/* 사이트 전체에서 복사·잘라내기·붙여넣기·우클릭 메뉴를 막아요 — 외부(번역기 등)에서 답을 복사해와서
+   붙여넣는 걸 막기 위한 용도예요. 타이핑, 커서 이동, 방향키/백스페이스 등 일반적인 입력은 전혀 지장 없어요.
+   다만 선생님 계정으로 로그인했을 때는(컨텐츠 추가 화면에 텍스트를 붙여넣어야 하는 경우가 많아서)
+   이 제한을 풀어줘요 — USER는 이 코드 아래에서 선언되지만, 실제로 이 이벤트가 발생하는 시점(로그인 이후)에는
+   이미 선언이 끝나 있어서 문제없이 참조할 수 있어요. 로그아웃하면 USER.role이 다시 'student'로 돌아가면서
+   자동으로 다시 막혀요. */
+['copy','cut','paste','contextmenu'].forEach(evt=>document.addEventListener(evt,e=>{ if(typeof USER==='undefined'||(USER.role!=='teacher'&&!USER.isTestAccount)) e.preventDefault(); }));
+/* ================= util ================= */
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+/* 지시문 자동 줄바꿈 — 선생님이 직접 줄바꿈을 넣었으면 그대로 존중하고,
+   "1. ~~ 2. ~~ 3. ~~"처럼 한 줄로 이어붙은 번호 매김 조건이면 번호 앞에서 자동으로 줄을 나눠 예쁘게 보여줘요. */
+const autoFormatPrompt=(text)=>{
+  if(!text)return text;
+  const t=String(text);
+  if(/\n/.test(t))return t; // 이미 줄바꿈이 있으면 그대로 존중
+  const markers=t.match(/\d{1,2}\.\s/g)||[];
+  if(markers.length<2)return t; // 번호 매김이 2개 이상 있을 때만 목록으로 판단
+  return t.replace(/\s+(?=\d{1,2}\.\s)/g,'\n');
+};
+const norm=s=>(s||'').toLowerCase().replace(/[’']/g,"'").replace(/[.,!?;:"]/g,'').replace(/\s+/g,' ').trim();
+/* Pattern Drill의 단어배열·영작·오답 다시 풀기 채점은 대소문자와 문장부호까지 정확히 맞아야 정답으로 인정해요
+   (기존 norm()은 대소문자를 무시하고 문장부호를 아예 지워버려서 너무 관대했어요). 스마트 따옴표만 일반 따옴표로
+   통일하고 공백만 정리할 뿐, 대문자/소문자나 마침표·물음표 등은 그대로 비교해요. */
+const normStrict=s=>(s||'').replace(/[’']/g,"'").replace(/\s+/g,' ').trim();
+const normKo=s=>(s||'').replace(/\s+/g,'').trim();
+/* Pattern Drill에서 "같은 뜻으로 쓰이는 단어/형태"는 맞게 인정하기 위한 목록이에요(예: 과거분사 got/gotten, home/house,
+   영국식·미국식 철자). 한 줄이 한 묶음이고 첫 단어가 대표예요. 더 필요하면 여기에 줄만 추가하면 돼요. 목록에 없는 동의어는
+   영작 채점에서 AI가 따로 판단해요. */
+const WORD_VARIANT_GROUPS=[
+  ['got','gotten'],['home','house'],['learned','learnt'],['burned','burnt'],['dreamed','dreamt'],['spelled','spelt'],
+  ['spilled','spilt'],['smelled','smelt'],['spoiled','spoilt'],['proved','proven'],['dived','dove'],['sneaked','snuck'],
+  ['color','colour'],['colors','colours'],['colored','coloured'],['favorite','favourite'],['favorites','favourites'],['center','centre'],
+  ['neighbor','neighbour'],['neighbors','neighbours'],['mom','mum'],['math','maths'],['soccer','football'],['vacation','holiday'],
+  ['vacations','holidays'],['apartment','flat'],['candy','sweets'],['garbage','rubbish'],['elevator','lift'],['cellphone','mobile']
+];
+const WORD_VARIANT_MAP=(()=>{const m={};WORD_VARIANT_GROUPS.forEach(g=>g.forEach(w=>{m[w]=g;}));return m;})();
+/* 문장 속 변형 단어를 전부 대표 단어로 바꿔요(대소문자 첫 글자는 유지) — 두 문장을 이 상태로 비교하면 got/gotten, home/house가 같은 것으로 처리돼요. */
+function canonVariants(str){
+  return String(str||'').replace(/[A-Za-z]+/g,w=>{
+    const g=WORD_VARIANT_MAP[w.toLowerCase()];if(!g)return w;
+    const c=g[0];
+    return (w[0]!==w[0].toLowerCase()&&w.slice(1)===w.slice(1).toLowerCase())?c[0].toUpperCase()+c.slice(1):c;
+  });
+}
+/* 대소문자·문장부호는 그대로 엄격하게 보되, 변형 단어(got/gotten 등)만 같은 것으로 보는 정답 비교예요. */
+function sameAnswer(a,b){const x=normStrict(a),y=normStrict(b);return x===y||canonVariants(x)===canonVariants(y);}
+/* 글 안의 변형 단어를 하나씩 다른 형태로 바꾼 글들을 만들어요(조건 검사에서 "gotten을 써라"에 got으로 써도 통과시키려고). */
+function wordVariantTexts(text){
+  const t=String(text||'');const out=[];
+  WORD_VARIANT_GROUPS.forEach(g=>{
+    const present=g.filter(w=>new RegExp('\\b'+w+'\\b','i').test(t));
+    if(!present.length)return;
+    g.forEach(target=>{
+      if(present.length===1&&present[0]===target)return;
+      out.push(t.replace(new RegExp('\\b('+g.join('|')+')\\b','gi'),m=>target));
+    });
+  });
+  return out;
+}
+/* norm()으로 다듬은 두 문자열을 그냥 .includes()로 비교하면, 짧은 표현(예: "is","a","go")이 전혀
+   상관없는 다른 단어 속(예: "this","away","going")에 우연히 들어있다는 이유만으로 "포함된다"고 잘못
+   판단할 수 있어요 — Re-Writing에서 "분명 맞게 고쳤는데 완전 다른 단어·문장 때문에 X가 뜬다"는 문제가
+   바로 이거였어요. 그래서 단순 부분 문자열이 아니라, 앞뒤가 글자·숫자로 안 이어지는(=온전한 단어/구
+   경계인) 자리에서만 진짜로 "포함된다"고 인정하도록 이 함수를 써요. */
+const normIncludesPhrase=(hay,phrase)=>{
+  if(!phrase)return false;
+  const esc=phrase.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  try{ return new RegExp('(^|[^a-z0-9])'+esc+'([^a-z0-9]|$)').test(hay); }
+  catch(e){ return hay.includes(phrase); }
+};
+/* normIncludesPhrase와 같은 "온전한 단어/구 경계" 기준으로, 그 표현이 몇 번 나오는지 세어요.
+   Re-Writing "삭제" 조건에서 쓰는데 — 원래 글에 같은 표현이 중복으로(여러 번) 쓰였을 수 있어서,
+   "다시 쓴 글에 아예 하나도 없어야 통과"로 보면 다른 자리에서 정당하게 또 쓴 경우까지 오답(✕) 처리돼요.
+   그래서 "원래보다 더 적게 나오면(=문제가 된 자리를 고쳤으면) 통과"로 비교할 수 있게 횟수를 세줘요. */
+const countPhraseOccurrences=(hay,phrase)=>{
+  if(!phrase)return 0;
+  const esc=phrase.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  let count=0;
+  try{
+    const re=new RegExp('(^|[^a-z0-9])'+esc+'([^a-z0-9]|$)','g');
+    let m,pos=0;
+    while((m=re.exec(hay))){count++;pos=m.index+m[0].length;re.lastIndex=Math.max(pos-1,re.lastIndex);if(re.lastIndex<=m.index)re.lastIndex=m.index+1;}
+  }catch(e){
+    if(!phrase)return 0;
+    count=hay.split(phrase).length-1;
+  }
+  return count;
+};
+/* Story Writing 단어 칸(en|ko 또는 en|ko|img)을 한 줄씩 나눠 담는 곳이에요. 원래는 "|" 구분자만 인정했는데,
+   AI가 가끔 "|" 대신 "/"나 ":", 심지어 " - " 로 답할 때가 있어서(특히 그림에서 단어를 직접 뽑아낼 때) 그런
+   경우 구분이 아예 안 되고 "브러시 / fur"처럼 한글·영어가 뒤섞인 채로 한 칸에 통째로 들어가 버렸어요.
+   그래서 "|"가 없는 줄은 "/", " : ", " - " 순서로도 시도해서 최대한 en/ko를 갈라내요. */
+function parseWordLine(raw){
+  const w=String(raw||'').trim();
+  let parts=w.split('|');
+  if(parts.length<2){
+    const alt=/\s*[\/:]\s*|\s+-\s+/;
+    if(alt.test(w))parts=w.split(alt);
+  }
+  return {en:(parts[0]||'').trim(),ko:(parts[1]||'').trim(),img:(parts[2]||'').trim()};
+}
+/** 단어장 줄(words 텍스트)을 줄바꿈으로 나눈 뒤, "en|ko" 두 쌍이 줄바꿈 대신 실수로 "/"로 한 줄에
+ *  이어 붙은 경우(예: "bathtub|욕조 / water|물")를 원래대로 두 줄("bathtub|욕조", "water|물")로 갈라줘요.
+ *  이 문제가 있으면 parseWordLine이 두 번째 "|" 앞부분("욕조 / water")을 통째로 뜻 칸에 넣어버려서
+ *  카드 뒤집기·짝 연결하기 등에서 "욕조 / water"처럼 뜻이 뒤섞여 보였어요.
+ *  "en|ko|이미지주소"처럼 원래부터 "|"가 2개이고 뒤의 이미지 주소에 "/"가 들어있는 정상 형식은
+ *  건드리지 않도록, "/"로 나눴을 때 조각마다 정확히 "|"가 1개씩만 있을 때만 두 줄로 분리해요. */
+function splitWordLines(raw){
+  const lines=String(raw||'').split('\n').map(s=>s.trim()).filter(Boolean);
+  const out=[];
+  lines.forEach(line=>{
+    // AI가 줄바꿈 대신 쉼표로 이어 붙여 줄 때가 있어요("knitting|뜨개질,kitten|새끼 고양이,yarn") — 쉼표 뒤에 새 영어
+    // 단어가 시작되는 경우에만 갈라요(한국어 뜻 안의 쉼표 "뛰다, 달리다"는 그대로 둬요).
+    if(line.indexOf(',')>-1){
+      const segs=line.split(/\s*,\s*(?=[A-Za-z][A-Za-z '\-]*(?:\||,|$))/).map(x=>x.trim()).filter(Boolean);
+      if(segs.length>1){segs.forEach(sg=>out.push(sg));return;}
+    }
+    const pipeCount=(line.match(/\|/g)||[]).length;
+    if(pipeCount>=2){
+      const candidates=line.split(/\s*\/\s*/).map(s=>s.trim()).filter(Boolean);
+      const looksMerged=candidates.length>=2&&candidates.every(c=>(c.match(/\|/g)||[]).length===1);
+      if(looksMerged){candidates.forEach(c=>out.push(c));return;}
+    }
+    out.push(line);
+  });
+  return out;
+}
+/** 스토리라이팅 "AI로 질문·단어 채우기"에서, 프롬프트로 "색깔 형용사 붙이지 마"라고 시켜도 AI가
+ *  가끔 "green gloves"·"초록 장갑"처럼 색을 붙여서 줄 때가 있어요. 프롬프트만 믿지 않고, 받은 단어의
+ *  맨 앞 단어가 색깔이면 여기서 한 번 더 걸러내요(안전망). 또 색만 다르고 사물은 같은 단어("bucket"과
+ *  "green bucket")가 서로 다른 그림에서 중복으로 안 걸러지던 것도, 색을 떼고 나면 완전히 같은 문자열이
+ *  되어서 다른 그림의 단어 목록(otherWords)과 비교했을 때 더 잘 걸러져요. */
+const COLOR_WORDS_EN=['red','orange','yellow','green','blue','navy','purple','violet','pink','brown','black','white','gray','grey','gold','silver','dark','light'];
+const COLOR_WORDS_KO=['빨간','빨강','빨간색','주황','주황색','노란','노랑','노란색','초록','초록색','연두','연두색','파란','파랑','파란색','남색','보라','보라색','분홍','분홍색','갈색','검은','검정','검은색','하얀','하양','하얀색','흰','회색','은색','금색'];
+function stripColorAdj(text,colorList){
+  const t=String(text||'').trim();
+  if(!t)return t;
+  const parts=t.split(/\s+/);
+  if(parts.length>1&&colorList.indexOf(parts[0].toLowerCase())>-1){
+    const rest=parts.slice(1).join(' ');
+    if(rest)return rest;
+  }
+  return t;
+}
+/* 단어 중복 검사용 — 소문자·색깔 형용사·관사·복수형 차이를 지우고 비교해요("Green bucket"="bucket"="buckets"). */
+function normWordKey(en){
+  let t=stripColorAdj(String(en||'').toLowerCase().replace(/[^a-z '\-]/g,'').trim(),COLOR_WORDS_EN).replace(/^(a|an|the)\s+/,'').trim();
+  if(t.length>3&&/ies$/.test(t))t=t.slice(0,-3)+'y';
+  else if(t.length>3&&/s$/.test(t)&&!/ss$/.test(t))t=t.slice(0,-1);
+  return t;
+}
+/* AI가 질문을 줄바꿈 대신 쉼표로 이어 붙였을 때("...?,How do you...") 줄바꿈으로 되돌려요. */
+function fixQuestionLines(q){
+  return String(q||'').split('\n').map(x=>x.trim()).filter(Boolean).flatMap(line=>line.split(/(?<=[?!.])\s*,\s*(?=[A-Z])/)).map(x=>x.trim()).filter(Boolean).join('\n');
+}
+function stripColorFromWordLine(line){
+  const w=parseWordLine(line);
+  const en=stripColorAdj(w.en,COLOR_WORDS_EN);
+  const ko=stripColorAdj(w.ko,COLOR_WORDS_KO);
+  const parts=[en,ko];if(w.img)parts.push(w.img);
+  return parts.join('|');
+}
+const sc=t=>(t||"").split(/[.?!\n]+/).map(x=>x.trim()).filter(Boolean).length;
+const fmtDur=ms=>{const s=Math.max(0,Math.round((ms||0)/1000));const m=Math.floor(s/60),r=s%60;return m>0?(m+'분 '+r+'초'):(r+'초');};
+const genSubId=()=>(USER.id||'anon')+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
+// ⚠️ 예전엔 제출할 때마다 매번 새 랜덤 subId(genSubId)를 만들어서, 같은 과제를 두 번 내면(더블클릭,
+// 실수로 다시 제출, "수정해서 다시 내기" 등) 문서가 하나 더 늘어났어요. 그래서 서버가 나중에 따로
+// "중복 정리"를 해줘야 했는데, 애초에 "같은 학생 + 같은 챕터 + 같은 제목"이면 항상 똑같은 문서
+// ID가 나오게 만들면 저장할 때 자동으로 그 문서를 덮어써서(overwrite) 중복 자체가 생기지 않아요.
+// (문서 ID로만 쓰이는 값이라 사람이 읽을 일은 없어요 — 특수문자만 안전하게 다듬어요.)
+const submissionDocId=(chapter,point)=>'sub_'+[USER.id||'anon',chapter,point].map(s=>String(s||'').replace(/[^a-zA-Z0-9가-힣_-]/g,'_')).join('__');
+// 글 제출 저장 자체는 서버가 이제 바로 응답하고, AI 첨삭은 이 함수로 따로(기다리지 않고) 요청해요.
+// 제출 저장 fetch가 끝난 뒤(=Firestore에 이미 저장된 뒤)에 불러야, generateFeedbackNow가 그 문서를
+// 찾다가 "아직 없음" 오류를 내는 경우가 없어요. 실패해도(네트워크 문제 등) 조용히 넘어가요 —
+// 선생님 화면의 "⚡ AI 첨삭 지금 생성하기" 버튼으로 언제든 다시 만들 수 있어요.
+function triggerAiFeedbackNow(subId,academy){
+  if(!SUBMIT_URL||!subId)return;
+  fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'generateFeedbackNow',subId,academy:academy||''})}).catch(()=>{});
+}
+const wc=t=>((t||"").trim().match(/[A-Za-z']+/g)||[]).length;
+const store={get(k){try{return localStorage.getItem(k)}catch(e){return (window.__m||{})[k]||null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){(window.__m=window.__m||{})[k]=v}}};
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+function scramble(ans){const w=ans.replace(/[.?!]$/,'').split(/\s+/);if(w.length<2)return w;let s=shuffle(w);let t=0;while(s.join(' ')===w.join(' ')&&t++<6)s=shuffle(w);return s;}
+const undl=s=>s.replace(/\[\[(.+?)\]\]/g,'<u>$1</u>');
+/* 단어 카드를 누르면 영어 발음을 들려줘요 (브라우저 내장 음성 합성 — 별도 서버·API 필요 없어요). */
+function speakWord(text){
+  try{
+    if(!('speechSynthesis' in window))return;
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(String(text||''));
+    u.lang='en-US';u.rate=0.9;
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+/* 학생이 기사 본문 문장을 그대로(단어 순서까지 똑같이) minWords개 이상 이어서 베꼈는지 찾아줘요.
+ * 베낀 부분이 있으면 그 구절을, 없으면 null을 돌려줘요. 붙여넣기 자체는 이미 사이트 전체에서 막혀 있지만,
+ * 그래도 직접 타이핑해서 그대로 옮겨 적는 것까지는 막을 수 없어서, 글 내용을 검사해서 잡아내는 방식이에요. */
+function findCopiedRun(bodyText,summaryText,minWords,excludeWords){
+  minWords=minWords||3;
+  const exSet=(excludeWords&&excludeWords.size)?excludeWords:null;
+  const words=s=>norm(s).split(' ').filter(Boolean).filter(w=>!exSet||!exSet.has(w));
+  const bodyWords=words(bodyText),sumWords=words(summaryText);
+  if(bodyWords.length<minWords||sumWords.length<minWords)return null;
+  const grams=new Set();
+  for(let i=0;i+minWords<=bodyWords.length;i++)grams.add(bodyWords.slice(i,i+minWords).join(' '));
+  for(let i=0;i+minWords<=sumWords.length;i++){
+    if(!grams.has(sumWords.slice(i,i+minWords).join(' ')))continue;
+    let j=i+minWords;
+    while(j<sumWords.length&&grams.has(sumWords.slice(j-minWords+1,j+1).join(' ')))j++;
+    return sumWords.slice(i,j).join(' ');
+  }
+  return null;
+}
+
+/* ================= CONTENT (WRITING 표준 목차) ================= */
+/* point: {id,title,explain(html with .key via {k,note}), quiz[10], arrange[15]{ko,a}, compose[15]{k,a,h,alt}, task{prompt,conds,sample}} */
+
+const P_be1={ id:'L1C1U1', title:'be동사의 긍정문',
+ explain:{lead:[{t:'be동사는 '},{k:'am / are / is',n:'주어에 따라 달라져요. I → am, You/We/They/복수 → are, He/She/It/단수 → is.'},{t:' 세 가지가 있고, "~이다 / ~에 있다"라는 뜻이에요. 주어에 따라 '},{k:'알맞은 형태',n:'I am, You are, He is 처럼 짝이 정해져 있어요.'},{t:'를 골라 써요. 줄여서 '},{k:"I'm, You're, He's",n:"I am→I'm, You are→You're, He is→He's 로 줄일 수 있어요."},{t:' 로도 써요.'}],
+   note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'I ___ a student.',o:['am','are','is','be','do'],a:0,e:'주어가 I 이면 am.'},
+  {q:'She ___ my friend.',o:['am','are','is','be','does'],a:2,e:'He/She/It → is.'},
+  {q:'We ___ happy.',o:['am','is','are','be','do'],a:2,e:'We → are.'},
+  {q:'They ___ in the classroom.',o:['is','am','are','be','does'],a:2,e:'They(복수) → are.'},
+  {q:'It ___ a nice day.',o:['am','are','is','be','do'],a:2,e:'It → is.'},
+  {q:'You ___ very kind.',o:['am','is','are','be','does'],a:2,e:'You → are.'},
+  {q:'Tom and I ___ brothers.',o:['am','is','are','be','does'],a:2,e:'Tom and I(=We) → are.'},
+  {q:'줄임말 [[I\'m]] 은 무엇을 줄인 것일까요?',o:['I are','I is','I am','I be','am I'],a:2,e:"I'm = I am."},
+  {q:'My sister ___ ten years old.',o:['am','are','is','be','do'],a:2,e:'My sister(단수) → is.'},
+  {q:'The books ___ on the desk.',o:['is','am','are','be','does'],a:2,e:'The books(복수) → are.'}
+ ],
+ arrange:[
+  {ko:'나는 학생이다.',a:'I am a student.'},{ko:'너는 친절하다.',a:'You are kind.'},{ko:'그는 나의 형이다.',a:'He is my brother.'},
+  {ko:'그녀는 의사이다.',a:'She is a doctor.'},{ko:'우리는 친구이다.',a:'We are friends.'},{ko:'그들은 교실에 있다.',a:'They are in the classroom.'},
+  {ko:'그것은 고양이다.',a:'It is a cat.'},{ko:'나는 지금 행복하다.',a:'I am happy now.'},{ko:'그 소녀는 귀엽다.',a:'The girl is cute.'},
+  {ko:'나의 부모님은 바쁘시다.',a:'My parents are busy.'},{ko:'이것은 나의 책이다.',a:'This is my book.'},{ko:'그 학생들은 똑똑하다.',a:'The students are smart.'},
+  {ko:'그 강아지는 작다.',a:'The dog is small.'},{ko:'우리 선생님은 상냥하시다.',a:'My teacher is nice.'},{ko:'너와 나는 준비되었다.',a:'You and I are ready.'}
+ ],
+ compose:[
+  {k:'나는 열세 살이다.',a:'I am thirteen years old.',h:'thirteen',alt:["I'm thirteen years old."]},
+  {k:'그녀는 나의 엄마이다.',a:'She is my mother.',h:'mother',alt:["She's my mother."]},
+  {k:'우리는 한국인이다.',a:'We are Korean.',h:'Korean',alt:["We're Korean."]},
+  {k:'그는 훌륭한 축구 선수이다.',a:'He is a great soccer player.',h:'great / soccer player',alt:["He's a great soccer player."]},
+  {k:'그 사과들은 신선하다.',a:'The apples are fresh.',h:'apples / fresh',alt:[]},
+  {k:'나의 방은 깨끗하다.',a:'My room is clean.',h:'room / clean',alt:[]},
+  {k:'그들은 나의 사촌들이다.',a:'They are my cousins.',h:'cousins',alt:["They're my cousins."]},
+  {k:'이 영화는 재미있다.',a:'This movie is interesting.',h:'movie / interesting',alt:[]},
+  {k:'너는 좋은 친구이다.',a:'You are a good friend.',h:'good friend',alt:["You're a good friend."]},
+  {k:'그 아기는 졸리다.',a:'The baby is sleepy.',h:'baby / sleepy',alt:[]},
+  {k:'나의 가방은 무겁다.',a:'My bag is heavy.',h:'bag / heavy',alt:[]},
+  {k:'그 꽃들은 아름답다.',a:'The flowers are beautiful.',h:'flowers / beautiful',alt:[]},
+  {k:'제인과 나는 배가 고프다.',a:'Jane and I are hungry.',h:'Jane / hungry',alt:[]},
+  {k:'그 컴퓨터는 새것이다.',a:'The computer is new.',h:'computer / new',alt:[]},
+  {k:'나의 할아버지는 건강하시다.',a:'My grandfather is healthy.',h:'grandfather / healthy',alt:[]}
+ ],
+ task:{prompt:'be동사로 <b>나를 소개하는 문장 7개</b>를 써요. (이름·나이·나는 어떤 사람인지)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'be동사(am/are/is) 사용',test:t=>/\b(am|are|is)\b/i.test(t)||/'m\b|'re\b/i.test(t)||/\b(he|she|it|this|that|there|here)'s\b/i.test(t)},{label:'I am(=I\'m) 으로 시작하는 문장 포함',test:t=>/\bi ?a?m\b|i'm/i.test(t)}],sample:'I am Sujin. I am fourteen years old. I am a happy student. I am tall for my age. I am kind to my friends. I am good at drawing. I am proud of my family.'}
+};
+
+const P_be2={ id:'L1C1U2', title:'be동사의 부정문과 의문문',
+ explain:{lead:[{t:'부정문은 be동사 뒤에 '},{k:'not',n:"am not, are not(aren't), is not(isn't). I'm not / You aren't / He isn't."},{t:'을 붙여요. 의문문은 '},{k:'be동사를 주어 앞으로',n:'Are you ~? / Is he ~? 처럼 be동사를 문장 맨 앞에 놓아요.'},{t:' 보내고, 대답은 '},{k:'Yes/No + 주어 + be동사',n:'Yes, I am. / No, I\'m not. 처럼 be동사로 답해요.'},{t:' 로 해요.'}],
+   note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'I ___ not tired.',o:['am','are','is','be','do'],a:0,e:'주어 I → am not.'},
+  {q:'She is ___ a teacher. (부정)',o:['no','not','don\'t','never','isn\'t'],a:1,e:'be동사 뒤에는 not.'},
+  {q:'___ you happy?',o:['Is','Am','Are','Do','Be'],a:2,e:'You → Are you ~?'},
+  {q:'___ he your brother?',o:['Are','Am','Is','Do','Does'],a:2,e:'He → Is he ~?'},
+  {q:'They ___ not at home.',o:['is','am','are','be','does'],a:2,e:'They → are not.'},
+  {q:'"Is she a nurse?" 알맞은 긍정 대답은?',o:['Yes, she is.','Yes, she does.','Yes, she are.','No, she isn\'t.','Yes, he is.'],a:0,e:'Is 로 물으면 is 로 답해요.'},
+  {q:'It ___ not cold today.',o:['am','are','is','be','do'],a:2,e:'It → is not.'},
+  {q:'___ we late?',o:['Is','Am','Are','Do','Does'],a:2,e:'We → Are we ~?'},
+  {q:'"Are you students?" 알맞은 부정 대답은?',o:['No, we aren\'t.','No, we don\'t.','No, I\'m not.','Yes, we are.','No, you aren\'t.'],a:0,e:'you(너희) 로 물으면 we 로 답해요.'},
+  {q:'줄임말 [[aren\'t]] 은 무엇을 줄인 것일까요?',o:['are not','am not','is not','do not','was not'],a:0,e:"aren't = are not."}
+ ],
+ arrange:[
+  {ko:'나는 피곤하지 않다.',a:'I am not tired.'},{ko:'그는 학생이 아니다.',a:'He is not a student.'},{ko:'그들은 집에 없다.',a:'They are not at home.'},
+  {ko:'너는 행복하니?',a:'Are you happy?'},{ko:'그녀는 의사이니?',a:'Is she a doctor?'},{ko:'그것은 너의 것이 아니다.',a:'It is not yours.'},
+  {ko:'우리는 늦지 않았다.',a:'We are not late.'},{ko:'그 아이들은 배고프니?',a:'Are the children hungry?'},{ko:'이것은 내 우산이 아니다.',a:'This is not my umbrella.'},
+  {ko:'너의 부모님은 집에 계시니?',a:'Are your parents at home?'},{ko:'그 영화는 지루하지 않다.',a:'The movie is not boring.'},{ko:'그는 화가 났니?',a:'Is he angry?'},
+  {ko:'나는 겁이 나지 않는다.',a:'I am not scared.'},{ko:'그 상자들은 무겁지 않다.',a:'The boxes are not heavy.'},{ko:'너와 톰은 형제이니?',a:'Are you and Tom brothers?'}
+ ],
+ compose:[
+  {k:'나는 지금 바쁘지 않다.',a:'I am not busy now.',h:'busy',alt:["I'm not busy now."]},
+  {k:'그녀는 화가 나 있지 않다.',a:'She is not angry.',h:'angry',alt:["She isn't angry."]},
+  {k:'너는 준비됐니?',a:'Are you ready?',h:'ready',alt:[]},
+  {k:'그들은 나의 친구가 아니다.',a:'They are not my friends.',h:'friends',alt:["They aren't my friends."]},
+  {k:'그 개는 위험하지 않다.',a:'The dog is not dangerous.',h:'dog / dangerous',alt:["The dog isn't dangerous."]},
+  {k:'그는 선생님이니?',a:'Is he a teacher?',h:'teacher',alt:[]},
+  {k:'우리는 틀리지 않았다.',a:'We are not wrong.',h:'wrong',alt:["We aren't wrong."]},
+  {k:'그 커피는 뜨겁지 않다.',a:'The coffee is not hot.',h:'coffee / hot',alt:["The coffee isn't hot."]},
+  {k:'너의 여동생은 귀엽니?',a:'Is your sister cute?',h:'sister / cute',alt:[]},
+  {k:'이 질문들은 어렵지 않다.',a:'These questions are not difficult.',h:'questions / difficult',alt:["These questions aren't difficult."]},
+  {k:'나는 게으르지 않다.',a:'I am not lazy.',h:'lazy',alt:["I'm not lazy."]},
+  {k:'그 가게는 열려 있니?',a:'Is the store open?',h:'store / open',alt:[]},
+  {k:'그들은 캐나다 출신이 아니다.',a:'They are not from Canada.',h:'from Canada',alt:["They aren't from Canada."]},
+  {k:'너는 배고프니?',a:'Are you hungry?',h:'hungry',alt:[]},
+  {k:'그 방은 깨끗하지 않다.',a:'The room is not clean.',h:'room / clean',alt:["The room isn't clean."]}
+ ],
+ task:{prompt:'be동사 <b>의문문 3개</b>로 친구에게 물어보는 글을 써요.',conds:[{label:'의문문 3개 이상',test:t=>(t.match(/\?/g)||[]).length>=3},{label:'Are/Is 로 시작하는 의문문',test:t=>/\b(are|is|am)\b/i.test(t)},{label:'물음표(?) 사용',test:t=>/\?/.test(t)}],sample:'Are you okay? Is this your bag? Are you happy today?'}
+};
+
+const P_can={ id:'L1C4U1', title:'조동사의 기본 형태와 can/may (능력·가능)',
+ explain:{lead:[{t:'can은 '},{k:'~할 수 있다',n:'능력이나 가능을 나타내요. (능력: can swim / 가능: can come)'},{t:'라는 뜻으로, 뒤에는 항상 '},{k:'동사원형',n:'can swim (O) / can swims (X), can to swim (X). can 뒤에는 반드시 동사원형!'},{t:'이 와요. 부정은 '},{k:"can't (cannot)",n:"can not 을 붙여 쓴 cannot, 줄이면 can't 예요."},{t:', 의문문은 '},{k:'Can + 주어 + 동사원형?',n:'Can you swim? / 대답: Yes, I can. / No, I can\'t.'},{t:' 으로 해요.'}],
+   note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'I ___ swim.',o:['can to','can','cans','am can','can swimming'],a:1,e:'can + 동사원형.'},
+  {q:'She can ___ the piano.',o:['plays','playing','play','to play','played'],a:2,e:'can 뒤에는 동사원형 play.'},
+  {q:'___ you help me?',o:['Do','Are','Can','Is','Does'],a:2,e:'can 의문문은 Can 을 앞으로.'},
+  {q:'He ___ speak Chinese. (부정)',o:["doesn't can","can not to","can't","cans not","not can"],a:2,e:"can 부정은 can't/cannot."},
+  {q:'"Can you swim?" 알맞은 부정 대답은?',o:["No, I can't.","No, I don't.","Yes, I can.","No, I amn't.","No, I not."],a:0,e:"Can 질문은 can 으로 답해요."},
+  {q:'Birds ___ fly.',o:['cans','can to','can','is can','are can'],a:2,e:'주어가 복수여도 can 은 그대로.'},
+  {q:'조동사 can 의 뜻으로 알맞은 것은?',o:['~해야 한다','~할 수 있다','~하고 싶다','~일 것이다','~하는 중이다'],a:1,e:'can = ~할 수 있다(능력·가능).'},
+  {q:'We ___ see the stars at night.',o:['cans','can','can to','are can','do can'],a:1,e:'can + 동사원형 see.'},
+  {q:'줄임말 [[cannot]] 을 줄여 쓰면?',o:["can't","can not","can no","cann't","can'nt"],a:0,e:"cannot = can't."},
+  {q:'___ she ride a bike?',o:['Does','Is','Can','Do','Are'],a:2,e:'능력을 묻는 의문문 → Can she ~?'}
+ ],
+ arrange:[
+  {ko:'나는 수영할 수 있다.',a:'I can swim.'},{ko:'그녀는 피아노를 칠 수 있다.',a:'She can play the piano.'},{ko:'그는 중국어를 말할 수 없다.',a:"He can't speak Chinese."},
+  {ko:'너는 나를 도와줄 수 있니?',a:'Can you help me?'},{ko:'우리는 별을 볼 수 있다.',a:'We can see the stars.'},{ko:'새들은 날 수 있다.',a:'Birds can fly.'},
+  {ko:'나는 자전거를 탈 수 있다.',a:'I can ride a bike.'},{ko:'그들은 빨리 달릴 수 있다.',a:'They can run fast.'},{ko:'너는 요리할 수 있니?',a:'Can you cook?'},
+  {ko:'나는 그것을 할 수 없다.',a:"I can't do it."},{ko:'그녀는 영어를 잘할 수 있다.',a:'She can speak English well.'},{ko:'그 아기는 걸을 수 없다.',a:"The baby can't walk."},
+  {ko:'우리는 함께 갈 수 있다.',a:'We can go together.'},{ko:'너는 그 노래를 부를 수 있니?',a:'Can you sing the song?'},{ko:'나는 지금 너를 만날 수 있다.',a:'I can meet you now.'}
+ ],
+ compose:[
+  {k:'나는 높이 점프할 수 있다.',a:'I can jump high.',h:'jump high',alt:[]},
+  {k:'그는 그림을 잘 그릴 수 있다.',a:'He can draw well.',h:'draw / well',alt:[]},
+  {k:'너는 스케이트를 탈 수 있니?',a:'Can you skate?',h:'skate',alt:[]},
+  {k:'나는 매운 음식을 못 먹는다.',a:"I can't eat spicy food.",h:'spicy food',alt:['I cannot eat spicy food.']},
+  {k:'그녀는 세 개 언어를 말할 수 있다.',a:'She can speak three languages.',h:'three languages',alt:[]},
+  {k:'우리는 이 문제를 풀 수 있다.',a:'We can solve this problem.',h:'solve / problem',alt:[]},
+  {k:'그들은 오늘 올 수 없다.',a:"They can't come today.",h:'come / today',alt:['They cannot come today.']},
+  {k:'너는 운전할 수 있니?',a:'Can you drive?',h:'drive',alt:[]},
+  {k:'나의 형은 기타를 칠 수 있다.',a:'My brother can play the guitar.',h:'brother / guitar',alt:[]},
+  {k:'나는 너의 말을 들을 수 없다.',a:"I can't hear you.",h:'hear you',alt:['I cannot hear you.']},
+  {k:'그 새는 노래할 수 있다.',a:'The bird can sing.',h:'bird / sing',alt:[]},
+  {k:'너는 나를 볼 수 있니?',a:'Can you see me?',h:'see me',alt:[]},
+  {k:'나는 자전거를 고칠 수 있다.',a:'I can fix the bike.',h:'fix / bike',alt:[]},
+  {k:'그녀는 지금 전화할 수 없다.',a:"She can't call now.",h:'call / now',alt:['She cannot call now.']},
+  {k:'우리는 영어로 편지를 쓸 수 있다.',a:'We can write a letter in English.',h:'write a letter / in English',alt:[]}
+ ],
+ task:{prompt:'<b>내가 할 수 있는 것과 없는 것</b>을 써요. (can 문장과 can\'t 문장을 섞어서 총 7문장 이상)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'can 사용',test:t=>/\bcan\b/i.test(t)},{label:"can't(cannot) 사용",test:t=>/can(['’]?t|not)\b/i.test(t)}],sample:"I can swim. I can play the piano. I can ride a bike. I can cook simple food. I can speak a little English. I can't drive a car. I can't ski well."}
+};
+
+const P_do1={ id:'L1C2U1', title:'일반동사의 현재형',
+ explain:{lead:[{t:'일반동사는 be동사가 아닌 '},{k:'동작·상태를 나타내는 동사',n:'play, like, go, eat, study 처럼 "무엇을 한다"를 나타내는 동사예요.'},{t:'예요. 주어가 '},{k:'3인칭 단수(He/She/It)',n:'나(I)·너(You)·복수(We/They)가 아닌 한 사람/한 개! 이때만 동사가 바뀌어요.'},{t:'일 때는 동사에 '},{k:'-s / -es',n:'plays, goes(go→goes), studies(study→studies), has(have→has). 3인칭 단수에서만 붙여요!'},{t:'를 붙여요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'I ___ soccer every day.',o:['play','plays','playing','to play','played'],a:0,e:'주어 I → 원형 play.'},
+  {q:'She ___ to school.',o:['go','goes','going','gos','to go'],a:1,e:'3인칭 단수 → go+es = goes.'},
+  {q:'He ___ pizza.',o:['like','likes','liking','to like','liked'],a:1,e:'He → likes.'},
+  {q:'They ___ English hard.',o:['study','studies','studys','studying','to study'],a:0,e:'They(복수) → 원형 study.'},
+  {q:'My mom ___ coffee.',o:['drink','drinks','drinking','to drink','dranks'],a:1,e:'My mom(단수) → drinks.'},
+  {q:'study 의 3인칭 단수 현재형으로 알맞은 것은?',o:['studys','studies','studyes','studioes','study'],a:1,e:'자음+y → y를 i로 고치고 es.'},
+  {q:'We ___ TV after dinner.',o:['watches','watch','watching','to watch','watchs'],a:1,e:'We → 원형 watch.'},
+  {q:'The baby ___ a lot.',o:['cry','crys','cries','crying','cryes'],a:2,e:'자음+y → cries.'},
+  {q:'Tom ___ his homework every day.',o:['do','dos','does','doing','done'],a:2,e:'3인칭 단수 do → does.'},
+  {q:'He [[has]] a dog. 밑줄 친 has 의 원형은?',o:['have','haves','has','haz','having'],a:0,e:'has 의 원형은 have.'}
+ ],
+ arrange:[
+  {ko:'나는 매일 축구를 한다.',a:'I play soccer every day.'},{ko:'그녀는 학교에 간다.',a:'She goes to school.'},{ko:'그는 피자를 좋아한다.',a:'He likes pizza.'},
+  {ko:'우리는 영어를 공부한다.',a:'We study English.'},{ko:'그들은 공원에서 논다.',a:'They play in the park.'},{ko:'나의 엄마는 커피를 마신다.',a:'My mom drinks coffee.'},
+  {ko:'그 아기는 많이 운다.',a:'The baby cries a lot.'},{ko:'톰은 개를 한 마리 가지고 있다.',a:'Tom has a dog.'},{ko:'나는 아침에 우유를 마신다.',a:'I drink milk in the morning.'},
+  {ko:'그녀는 피아노를 친다.',a:'She plays the piano.'},{ko:'우리는 저녁 후에 TV를 본다.',a:'We watch TV after dinner.'},{ko:'그는 숙제를 한다.',a:'He does his homework.'},
+  {ko:'그 새들은 아름답게 노래한다.',a:'The birds sing beautifully.'},{ko:'나의 아빠는 병원에서 일하신다.',a:'My dad works at a hospital.'},{ko:'그 학생들은 열심히 공부한다.',a:'The students study hard.'}
+ ],
+ compose:[
+  {k:'나는 사과를 좋아한다.',a:'I like apples.',h:'like',alt:[]},{k:'그녀는 영어를 가르친다.',a:'She teaches English.',h:'teach',alt:[]},
+  {k:'그는 빠르게 달린다.',a:'He runs fast.',h:'run / fast',alt:[]},{k:'우리는 함께 점심을 먹는다.',a:'We eat lunch together.',h:'eat / lunch',alt:[]},
+  {k:'그 고양이는 우유를 마신다.',a:'The cat drinks milk.',h:'cat / drink',alt:[]},{k:'나의 언니는 노래를 잘한다.',a:'My sister sings well.',h:'sister / sing / well',alt:[]},
+  {k:'그들은 축구를 한다.',a:'They play soccer.',h:'play',alt:[]},{k:'그는 매일 세수를 한다.',a:'He washes his face every day.',h:'wash his face',alt:[]},
+  {k:'나는 버스로 학교에 간다.',a:'I go to school by bus.',h:'go / by bus',alt:[]},{k:'그녀는 그림을 그린다.',a:'She draws pictures.',h:'draw / pictures',alt:['She draws a picture.']},
+  {k:'우리 아빠는 신문을 읽으신다.',a:'My dad reads the newspaper.',h:'dad / read / newspaper',alt:[]},{k:'그 아기는 잘 잔다.',a:'The baby sleeps well.',h:'baby / sleep / well',alt:[]},
+  {k:'톰은 수학을 공부한다.',a:'Tom studies math.',h:'Tom / study / math',alt:[]},{k:'나는 그 노래를 안다.',a:'I know the song.',h:'know',alt:[]},
+  {k:'그녀는 개를 한 마리 가지고 있다.',a:'She has a dog.',h:'have',alt:[]}
+ ],
+ task:{prompt:'일반동사로 <b>나의 하루 일과 7문장</b>을 써요. (3인칭 단수 주어면 -s 잊지 않기!)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'일반동사(현재형) 사용',test:t=>/\b(go|goes|play|plays|eat|eats|like|likes|study|studies|watch|watches|read|reads|drink|drinks|have|has|do|does|get|gets|wake|wakes|wash|washes|run|runs|meet|meets)\b/i.test(t)},{label:'주어로 시작하는 문장(I/We/My... )',test:t=>/\b(i|we|my|he|she|they)\b/i.test(t)}],sample:'I get up at seven. I wash my face and brush my teeth. I eat breakfast with my family. I go to school by bus. I study English in the morning. I play soccer after school. I do my homework before dinner.'}
+};
+
+const P_do2={ id:'L1C2U2', title:'일반동사의 과거형',
+ explain:{lead:[{t:'과거형은 보통 동사에 '},{k:'-ed',n:'played, watched, cleaned. 「e로 끝나면 -d」(like→liked), 「자음+y」는 y→i+ed(study→studied), 「단모음+단자음」은 자음을 하나 더(stop→stopped).'},{t:'를 붙여요. 하지만 자주 쓰는 동사는 '},{k:'불규칙 변화',n:'go→went, have→had, eat→ate, see→saw, do→did, make→made, come→came, get→got, read→read(철자 같음).'},{t:'를 해요. 뜻은 '},{k:'~했다 (과거)',n:'이미 지나간 일을 나타내요. yesterday, last night 같은 표현과 잘 어울려요.'},{t:'예요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'I ___ soccer yesterday.',o:['play','plays','played','playing','plaied'],a:2,e:'play → played.'},
+  {q:'She ___ to the park.',o:['go','goes','goed','went','gone'],a:3,e:'go 의 과거형은 went.'},
+  {q:'We ___ pizza last night.',o:['eat','eated','ate','eaten','eats'],a:2,e:'eat → ate.'},
+  {q:'play 의 과거형으로 알맞은 것은?',o:['played','plaid','plaied','playd','plays'],a:0,e:'모음+y → 그대로 +ed.'},
+  {q:'He ___ a book last week.',o:['readed','read','red','reads','reading'],a:1,e:'read 는 과거형도 read (발음만 다름).'},
+  {q:'study 의 과거형으로 알맞은 것은?',o:['studyed','studied','studed','studies','studyd'],a:1,e:'자음+y → studied.'},
+  {q:'They ___ a movie yesterday.',o:['see','seed','saw','seen','sees'],a:2,e:'see → saw.'},
+  {q:'I ___ my homework last night.',o:['do','did','done','doed','does'],a:1,e:'do → did.'},
+  {q:'stop 의 과거형으로 알맞은 것은?',o:['stoped','stopped','stopd','stops','stopt'],a:1,e:'단모음+단자음 → 자음 하나 더: stopped.'},
+  {q:'We [[had]] lunch together. 밑줄 친 had 의 원형은?',o:['have','has','haved','haz','having'],a:0,e:'had 의 원형은 have.'}
+ ],
+ arrange:[
+  {ko:'나는 어제 축구를 했다.',a:'I played soccer yesterday.'},{ko:'그녀는 공원에 갔다.',a:'She went to the park.'},{ko:'우리는 어젯밤에 피자를 먹었다.',a:'We ate pizza last night.'},
+  {ko:'그는 책을 읽었다.',a:'He read a book.'},{ko:'그들은 영화를 봤다.',a:'They saw a movie.'},{ko:'나는 숙제를 했다.',a:'I did my homework.'},
+  {ko:'그녀는 열심히 공부했다.',a:'She studied hard.'},{ko:'우리는 점심을 먹었다.',a:'We had lunch.'},{ko:'그 버스는 멈췄다.',a:'The bus stopped.'},
+  {ko:'나는 선물을 만들었다.',a:'I made a present.'},{ko:'그는 집에 늦게 왔다.',a:'He came home late.'},{ko:'우리는 좋은 시간을 보냈다.',a:'We had a good time.'},
+  {ko:'그녀는 편지를 썼다.',a:'She wrote a letter.'},{ko:'나는 새 신발을 샀다.',a:'I bought new shoes.'},{ko:'그들은 그 경기에서 이겼다.',a:'They won the game.'}
+ ],
+ compose:[
+  {k:'나는 어제 TV를 봤다.',a:'I watched TV yesterday.',h:'watch',alt:[]},{k:'그녀는 노래를 불렀다.',a:'She sang a song.',h:'sing',alt:[]},
+  {k:'우리는 축구를 했다.',a:'We played soccer.',h:'play',alt:[]},{k:'그는 아침을 먹었다.',a:'He ate breakfast.',h:'eat / breakfast',alt:[]},
+  {k:'나는 물을 마셨다.',a:'I drank water.',h:'drink',alt:[]},{k:'그들은 학교에 갔다.',a:'They went to school.',h:'go',alt:[]},
+  {k:'그녀는 그림을 그렸다.',a:'She drew a picture.',h:'draw',alt:[]},{k:'나는 친구를 만났다.',a:'I met my friend.',h:'meet',alt:[]},
+  {k:'우리는 사진을 찍었다.',a:'We took pictures.',h:'take / pictures',alt:['We took photos.']},{k:'그는 빠르게 달렸다.',a:'He ran fast.',h:'run',alt:[]},
+  {k:'나는 그 책을 끝냈다.',a:'I finished the book.',h:'finish',alt:[]},{k:'그녀는 방을 청소했다.',a:'She cleaned the room.',h:'clean',alt:[]},
+  {k:'우리는 그 소식을 들었다.',a:'We heard the news.',h:'hear',alt:[]},{k:'그는 문을 열었다.',a:'He opened the door.',h:'open',alt:[]},
+  {k:'나는 일찍 일어났다.',a:'I got up early.',h:'get up / early',alt:[]}
+ ],
+ task:{prompt:'<b>지난 주말에 한 일 7문장</b>을 과거형으로 써요.',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'과거형 동사 사용(-ed 또는 불규칙)',test:t=>/\b(\w+ed|went|ate|saw|did|had|made|came|wrote|bought|won|sang|drank|drew|met|took|ran|got|read|heard|felt|found|gave|told|said)\b/i.test(t)},{label:'과거 시간 표현(yesterday / last / ago) 포함',test:t=>/\b(yesterday|last|ago)\b/i.test(t)}],sample:'Last weekend, I went to the park. I played with my friends. We had a great time. We ate ice cream together. I saw a beautiful sunset. I took some pictures. I went home late in the evening.'}
+};
+
+const P_do3={ id:'L1C2U3', title:'일반동사의 부정문과 의문문',
+ explain:{lead:[{t:'일반동사 부정문은 '},{k:"don't / doesn't + 동사원형",n:"현재: I/You/We/They → don't, He/She/It → doesn't. 뒤 동사는 항상 원형! (She doesn't like)"},{t:', 과거는 '},{k:"didn't + 동사원형",n:"과거 부정은 주어에 상관없이 didn't + 원형. (I didn't go)"},{t:'로 만들어요. 의문문은 '},{k:'Do/Does/Did + 주어 + 동사원형?',n:'Do you ~? / Does he ~? / Did they ~? 대답: Yes, I do. / No, she doesn\'t. / Yes, they did.'},{t:' 로 써요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'I ___ like carrots.',o:["don't","doesn't","am not","not","isn't"],a:0,e:'주어 I → don\'t.'},
+  {q:'She ___ eat meat.',o:["don't","doesn't","isn't","didn't","not"],a:1,e:'3인칭 단수 → doesn\'t.'},
+  {q:'___ you like pizza?',o:['Do','Does','Are','Is','Did'],a:0,e:'you → Do you ~?'},
+  {q:'___ he play tennis?',o:['Do','Does','Is','Are','Did'],a:1,e:'he → Does he ~?'},
+  {q:'They ___ go to school on Sunday.',o:["don't","doesn't","aren't","isn't","not"],a:0,e:'They → don\'t.'},
+  {q:'"Does she sing well?" 알맞은 대답은?',o:['Yes, she does.','Yes, she is.','Yes, she sing.',"No, she don't.",'Yes, he does.'],a:0,e:'Does 로 물으면 does 로 답해요.'},
+  {q:"He doesn't ___ TV.",o:['watch','watches','watching','to watch','watched'],a:0,e:"doesn't 뒤에는 동사원형 watch."},
+  {q:'___ they finish the work yesterday?',o:['Do','Does','Did','Are','Was'],a:2,e:'과거 의문문 → Did.'},
+  {q:'I ___ see him yesterday.',o:["don't","doesn't","didn't","wasn't","not"],a:2,e:'과거 부정 → didn\'t.'},
+  {q:"She [[doesn't]] like it. 밑줄 친 doesn't 는 무엇을 줄인 것일까요?",o:['does not','do not','did not','is not','was not'],a:0,e:"doesn't = does not."}
+ ],
+ arrange:[
+  {ko:'나는 당근을 좋아하지 않는다.',a:"I don't like carrots."},{ko:'그녀는 고기를 먹지 않는다.',a:"She doesn't eat meat."},{ko:'너는 피자를 좋아하니?',a:'Do you like pizza?'},
+  {ko:'그는 테니스를 치니?',a:'Does he play tennis?'},{ko:'그들은 일요일에 학교에 가지 않는다.',a:"They don't go to school on Sunday."},{ko:'나는 그를 알지 못한다.',a:"I don't know him."},
+  {ko:'그녀는 커피를 마시지 않는다.',a:"She doesn't drink coffee."},{ko:'너는 개를 가지고 있니?',a:'Do you have a dog?'},{ko:'우리는 그 답을 모른다.',a:"We don't know the answer."},
+  {ko:'그는 채소를 좋아하지 않는다.',a:"He doesn't like vegetables."},{ko:'너는 어제 그를 봤니?',a:'Did you see him yesterday?'},{ko:'나는 그 영화를 보지 않았다.',a:"I didn't watch the movie."},
+  {ko:'그녀는 그 파티에 오지 않았다.',a:"She didn't come to the party."},{ko:'너는 숙제를 했니?',a:'Did you do your homework?'},{ko:'그들은 저녁을 먹지 않았다.',a:"They didn't eat dinner."}
+ ],
+ compose:[
+  {k:'나는 우유를 좋아하지 않는다.',a:"I don't like milk.",h:'like',alt:[]},{k:'그는 안경을 쓰지 않는다.',a:"He doesn't wear glasses.",h:'wear glasses',alt:[]},
+  {k:'너는 운동을 하니?',a:'Do you exercise?',h:'exercise',alt:[]},{k:'그녀는 아침을 먹니?',a:'Does she eat breakfast?',h:'eat breakfast',alt:[]},
+  {k:'우리는 그 규칙을 모른다.',a:"We don't know the rule.",h:'know the rule',alt:[]},{k:'그들은 텔레비전을 많이 보지 않는다.',a:"They don't watch TV much.",h:'watch TV / much',alt:["They don't watch much TV."]},
+  {k:'너는 커피를 마시니?',a:'Do you drink coffee?',h:'drink coffee',alt:[]},{k:'그는 나를 좋아하지 않는다.',a:"He doesn't like me.",h:'like',alt:[]},
+  {k:'나는 어제 자전거를 타지 않았다.',a:"I didn't ride a bike yesterday.",h:'ride a bike',alt:[]},{k:'너는 그 책을 읽었니?',a:'Did you read the book?',h:'read',alt:[]},
+  {k:'그녀는 학교에 오지 않았다.',a:"She didn't come to school.",h:'come to school',alt:[]},{k:'우리는 그 게임을 하지 않았다.',a:"We didn't play the game.",h:'play the game',alt:[]},
+  {k:'그는 방을 청소하니?',a:'Does he clean his room?',h:'clean his room',alt:[]},{k:'나는 매운 것을 먹지 않는다.',a:"I don't eat spicy food.",h:'eat spicy food',alt:[]},
+  {k:'너는 그 소식을 들었니?',a:'Did you hear the news?',h:'hear the news',alt:[]}
+ ],
+ task:{prompt:'친구에게 <b>묻고 싶은 질문과 내가 하지 않는 것</b>을 7문장으로 써요.',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'의문문(Do/Does/Did) 1개 이상',test:t=>/\b(do|does|did)\b/i.test(t)&&/\?/.test(t)},{label:"부정문(don't/doesn't/didn't) 1개 이상",test:t=>/(don't|doesn't|didn't|do not|does not|did not)/i.test(t)}],sample:"Do you like sports? I don't like horror movies. Did you watch the game yesterday? Do you play any instruments? I don't eat spicy food. Does your family have a pet? I didn't finish my homework yet."}
+};
+
+const P_prog={ id:'L1C3U1', title:'현재진행형',
+ explain:{lead:[{t:'현재진행형은 '},{k:'am / are / is + 동사ing',n:'주어에 맞는 be동사(am/are/is) + 「동사+ing」. 예: I am reading / She is singing.'},{t:' 형태로, 뜻은 '},{k:'~하고 있는 중이다',n:'지금 하고 있는 동작을 나타내요. now, right now 와 잘 어울려요.'},{t:'예요. ing를 붙일 때 '},{k:'철자 규칙',n:'e로 끝나면 e 빼고(make→making), 단모음+단자음은 자음 하나 더(run→running, sit→sitting).'},{t:'에 주의해요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'I ___ reading a book now.',o:['am','are','is','do','be'],a:0,e:'주어 I → am.'},
+  {q:'She ___ singing now.',o:['am','are','is','does','be'],a:2,e:'She → is.'},
+  {q:'They ___ playing soccer.',o:['is','am','are','do','be'],a:2,e:'They → are.'},
+  {q:'run 의 -ing형으로 알맞은 것은?',o:['runing','running','runnning','runeing','runs'],a:1,e:'단모음+단자음 → running.'},
+  {q:'make 의 -ing형으로 알맞은 것은?',o:['makeing','making','makking','makeng','makes'],a:1,e:'e 를 빼고 → making.'},
+  {q:'He is ___ his homework.',o:['do','does','doing','done','did'],a:2,e:'do → doing.'},
+  {q:'We ___ watching TV.',o:['is','am','are','do','be'],a:2,e:'We → are.'},
+  {q:'"What are you doing?" 알맞은 대답은?',o:['I am cooking.','I cook.','I am cook.','I cooking.','I do cook.'],a:0,e:'be동사 + -ing 로 답해요.'},
+  {q:'The baby [[is sleeping]] now. 밑줄의 뜻으로 알맞은 것은?',o:['잔다(습관)','자는 중이다','잤다','잘 것이다','자지 않는다'],a:1,e:'현재진행형 = ~하는 중이다.'},
+  {q:'sit 의 -ing형으로 알맞은 것은?',o:['siting','sitting','siteing','sittng','sits'],a:1,e:'단모음+단자음 → sitting.'}
+ ],
+ arrange:[
+  {ko:'나는 책을 읽고 있다.',a:'I am reading a book.'},{ko:'그녀는 지금 노래하고 있다.',a:'She is singing now.'},{ko:'그들은 축구를 하고 있다.',a:'They are playing soccer.'},
+  {ko:'그는 숙제를 하고 있다.',a:'He is doing his homework.'},{ko:'우리는 TV를 보고 있다.',a:'We are watching TV.'},{ko:'그 아기는 자고 있다.',a:'The baby is sleeping.'},
+  {ko:'나는 점심을 먹고 있다.',a:'I am eating lunch.'},{ko:'그녀는 편지를 쓰고 있다.',a:'She is writing a letter.'},{ko:'그들은 공원에서 달리고 있다.',a:'They are running in the park.'},
+  {ko:'그는 음악을 듣고 있다.',a:'He is listening to music.'},{ko:'우리는 저녁을 요리하고 있다.',a:'We are cooking dinner.'},{ko:'나는 너를 기다리고 있다.',a:'I am waiting for you.'},
+  {ko:'그 아이들은 게임을 하고 있다.',a:'The children are playing a game.'},{ko:'그녀는 전화 통화를 하고 있다.',a:'She is talking on the phone.'},{ko:'비가 지금 오고 있다.',a:'It is raining now.'}
+ ],
+ compose:[
+  {k:'나는 그림을 그리고 있다.',a:'I am drawing a picture.',h:'draw',alt:[]},{k:'그는 자전거를 타고 있다.',a:'He is riding a bike.',h:'ride a bike',alt:[]},
+  {k:'그들은 이야기하고 있다.',a:'They are talking.',h:'talk',alt:[]},{k:'그녀는 책을 읽고 있다.',a:'She is reading a book.',h:'read',alt:[]},
+  {k:'우리는 노래를 부르고 있다.',a:'We are singing a song.',h:'sing',alt:[]},{k:'나는 물을 마시고 있다.',a:'I am drinking water.',h:'drink',alt:[]},
+  {k:'그 개는 뛰고 있다.',a:'The dog is running.',h:'dog / run',alt:[]},{k:'그는 편지를 쓰고 있다.',a:'He is writing a letter.',h:'write',alt:[]},
+  {k:'아기가 울고 있다.',a:'The baby is crying.',h:'baby / cry',alt:[]},{k:'우리는 사진을 찍고 있다.',a:'We are taking pictures.',h:'take pictures',alt:['We are taking photos.']},
+  {k:'나는 컴퓨터를 사용하고 있다.',a:'I am using the computer.',h:'use the computer',alt:[]},{k:'그녀는 앉아 있다.',a:'She is sitting.',h:'sit',alt:[]},
+  {k:'그들은 수영하고 있다.',a:'They are swimming.',h:'swim',alt:[]},{k:'그는 문을 열고 있다.',a:'He is opening the door.',h:'open the door',alt:[]},
+  {k:'나는 지금 요리하고 있다.',a:'I am cooking now.',h:'cook / now',alt:[]}
+ ],
+ task:{prompt:'<b>지금 교실(또는 집)의 모습</b>을 현재진행형으로 7문장 써요.',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'be + 동사-ing 형태 사용',test:t=>/\b(am|are|is)\s+\w+ing\b/i.test(t)||/('m|'re)\s+\w+ing\b/i.test(t)||/\b(he|she|it|this|that|there|here)'s\s+\w+ing\b/i.test(t)},{label:'-ing 동사 2개 이상',test:t=>(t.match(/\w+ing\b/gi)||[]).length>=2}],sample:'I am writing in my notebook. My friend is reading a book. The teacher is talking to us. Some students are listening carefully. The sun is shining through the window. A bird is singing outside. We are having a good class.'}
+};
+
+const P_future={ id:'L1C3U2', title:'미래 표현 (will / be going to)',
+ explain:{lead:[{t:'미래는 '},{k:'will + 동사원형',n:'will 뒤에는 항상 동사원형. I will call you. 부정은 will not = won\'t.'},{t:' 또는 '},{k:'be going to + 동사원형',n:'am/are/is going to + 원형. 계획된 미래에 자주 써요. I am going to study.'},{t:' 로 나타내요. 둘 다 뜻은 '},{k:'~할 것이다',n:'앞으로 일어날 일이나 계획을 말해요. tomorrow, next week 와 잘 어울려요.'},{t:'예요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'I ___ call you tomorrow.',o:['will','am','do','is','was'],a:0,e:'미래 → will + 원형.'},
+  {q:'She is going ___ study tonight.',o:['to','for','at','with','of'],a:0,e:'be going to + 원형.'},
+  {q:'will 다음에 오는 동사의 형태는?',o:['원형','-s형','-ing형','과거형','to부정사'],a:0,e:'will + 동사원형.'},
+  {q:'They ___ visit us next week.',o:['will','are','is','does','was'],a:0,e:'will visit.'},
+  {q:'won\'t 은 무엇을 줄인 것일까요?',o:['will not','would not','want not','will no','won not'],a:0,e:"won't = will not."},
+  {q:'He ___ going to buy a car.',o:['is','are','am','will','do'],a:0,e:'He → is going to.'},
+  {q:'"Will you help me?" 알맞은 대답은?',o:['Yes, I will.','Yes, I do.','Yes, I am.','Yes, I going.','Yes, I will do.'],a:0,e:'Will 로 물으면 will 로 답해요.'},
+  {q:'We ___ going to watch a movie.',o:['are','is','am','will','do'],a:0,e:'We → are going to.'},
+  {q:'I [[will]] be a doctor. 밑줄의 뜻으로 알맞은 것은?',o:['~였다','~할 것이다','~하는 중','~해야 한다','~할 수 있다'],a:1,e:'will = ~할 것이다(미래).'},
+  {q:'미래를 나타내지 않는 것은?',o:['will go','is going to eat','are going to play','went yesterday','will study'],a:3,e:'went 는 과거.'}
+ ],
+ arrange:[
+  {ko:'나는 내일 너에게 전화할 것이다.',a:'I will call you tomorrow.'},{ko:'그녀는 오늘 밤 공부할 것이다.',a:'She is going to study tonight.'},{ko:'그들은 다음 주에 우리를 방문할 것이다.',a:'They will visit us next week.'},
+  {ko:'나는 의사가 될 것이다.',a:'I will be a doctor.'},{ko:'우리는 영화를 볼 것이다.',a:'We are going to watch a movie.'},{ko:'그는 차를 살 것이다.',a:'He is going to buy a car.'},
+  {ko:'나는 너를 도와줄 것이다.',a:'I will help you.'},{ko:'비가 올 것이다.',a:'It will rain.'},{ko:'그녀는 파티에 오지 않을 것이다.',a:"She won't come to the party."},
+  {ko:'너는 나와 함께 갈 거니?',a:'Will you go with me?'},{ko:'우리는 다음 달에 이사할 것이다.',a:'We are going to move next month.'},{ko:'나는 최선을 다할 것이다.',a:'I will do my best.'},
+  {ko:'그들은 축구를 할 것이다.',a:'They are going to play soccer.'},{ko:'나는 그것을 잊지 않을 것이다.',a:"I won't forget it."},{ko:'너는 내일 바쁠 거니?',a:'Will you be busy tomorrow?'}
+ ],
+ compose:[
+  {k:'나는 내일 일찍 일어날 것이다.',a:'I will get up early tomorrow.',h:'get up early',alt:['I am going to get up early tomorrow.']},{k:'그녀는 편지를 쓸 것이다.',a:'She will write a letter.',h:'write a letter',alt:['She is going to write a letter.']},
+  {k:'우리는 소풍을 갈 것이다.',a:'We are going to go on a picnic.',h:'go on a picnic',alt:['We will go on a picnic.']},{k:'그는 축구 선수가 될 것이다.',a:'He will be a soccer player.',h:'soccer player',alt:['He is going to be a soccer player.']},
+  {k:'나는 그 책을 읽을 것이다.',a:'I will read the book.',h:'read the book',alt:['I am going to read the book.']},{k:'그들은 새 집을 살 것이다.',a:'They are going to buy a new house.',h:'buy a new house',alt:['They will buy a new house.']},
+  {k:'나는 다시는 늦지 않을 것이다.',a:"I won't be late again.",h:'be late / again',alt:['I will not be late again.']},{k:'너는 내일 올 거니?',a:'Will you come tomorrow?',h:'come',alt:[]},
+  {k:'우리는 함께 저녁을 먹을 것이다.',a:'We are going to have dinner together.',h:'have dinner',alt:['We will have dinner together.']},{k:'그녀는 시험에 합격할 것이다.',a:'She will pass the exam.',h:'pass the exam',alt:['She is going to pass the exam.']},
+  {k:'나는 방을 청소할 것이다.',a:'I am going to clean my room.',h:'clean my room',alt:['I will clean my room.']},{k:'그는 우리를 도와주지 않을 것이다.',a:"He won't help us.",h:'help',alt:['He will not help us.']},
+  {k:'나는 열심히 공부할 것이다.',a:'I will study hard.',h:'study hard',alt:['I am going to study hard.']},{k:'너는 파티에 갈 거니?',a:'Will you go to the party?',h:'go to the party',alt:[]},
+  {k:'그들은 영화를 볼 것이다.',a:'They are going to watch a movie.',h:'watch a movie',alt:['They will watch a movie.']}
+ ],
+ task:{prompt:'<b>이번 주말(또는 방학) 계획</b>을 7문장으로 써요. (will 또는 be going to)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'will 또는 be going to 사용',test:t=>/\bwill\b/i.test(t)||/going to/i.test(t)||/'ll\b/i.test(t)},{label:'미래 시간 표현(tomorrow/next/this weekend) 포함',test:t=>/(tomorrow|next|this weekend|tonight|someday|in the future)/i.test(t)}],sample:'This weekend, I am going to visit my grandparents. I will help them in the garden. We are going to have a big dinner. I will bring them some flowers. My cousins are going to come too. We will play games together. I am going to take a lot of pictures.'}
+};
+
+const P_must={ id:'L1C4U2', title:'must / have to / should',
+ explain:{lead:[{t:'의무를 나타내는 '},{k:'must / have to (~해야 한다)',n:'must + 원형, have to/has to + 원형. 강한 의무를 나타내요.'},{t:'와, 충고를 나타내는 '},{k:'should (~하는 게 좋다)',n:'should + 동사원형. 가벼운 충고·제안이에요.'},{t:'가 있어요. 부정에 주의! '},{k:"must not / don't have to",n:"must not = 하면 안 된다(금지), don't have to = 할 필요 없다. 뜻이 완전히 달라요!"},{t:' 는 뜻이 달라요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'You ___ wear a helmet.',o:['must','musts','must to','are must','do must'],a:0,e:'must + 원형.'},
+  {q:'I ___ finish my homework.',o:['have to','has to','have','am to','having to'],a:0,e:'I → have to.'},
+  {q:'She ___ study for the test.',o:['should','shoulds','should to','is should','do should'],a:0,e:'should + 원형(충고).'},
+  {q:'must 뒤에 오는 동사의 형태는?',o:['원형','-s형','-ing형','과거형','to부정사'],a:0,e:'조동사 뒤에는 동사원형.'},
+  {q:'You ___ run here. (여기서 뛰면 안 된다: 금지)',o:['must not','don\'t have to','should','have to','can'],a:0,e:'금지 → must not.'},
+  {q:'He ___ go now. He has enough time. (갈 필요 없다)',o:["doesn't have to",'must not','should','have to','must'],a:0,e:'할 필요 없다 → doesn\'t have to.'},
+  {q:'should 의 뜻으로 알맞은 것은?',o:['~해야만 한다(강한 의무)','~하는 게 좋다(충고)','~할 수 있다','~할 것이다','~하는 중이다'],a:1,e:'should = 충고.'},
+  {q:'We ___ be quiet in the library.',o:['should','shoulds','should to','are should','do'],a:0,e:'should be quiet.'},
+  {q:"You [[shouldn't]] eat too much. 밑줄 친 shouldn't 는?",o:['should not','shall not','could not','would not','must not'],a:0,e:"shouldn't = should not."},
+  {q:'She has ___ get up early.',o:['to','for','at','of','with'],a:0,e:'has to + 원형.'}
+ ],
+ arrange:[
+  {ko:'너는 헬멧을 써야 한다.',a:'You must wear a helmet.'},{ko:'나는 숙제를 끝내야 한다.',a:'I have to finish my homework.'},{ko:'그녀는 시험공부를 해야 한다.',a:'She should study for the test.'},
+  {ko:'우리는 도서관에서 조용히 해야 한다.',a:'We should be quiet in the library.'},{ko:'너는 여기서 뛰면 안 된다.',a:'You must not run here.'},{ko:'그는 지금 갈 필요가 없다.',a:"He doesn't have to go now."},
+  {ko:'너는 손을 씻어야 한다.',a:'You should wash your hands.'},{ko:'나는 일찍 일어나야 한다.',a:'I have to get up early.'},{ko:'우리는 규칙을 지켜야 한다.',a:'We must follow the rules.'},
+  {ko:'너는 너무 많이 먹으면 안 된다.',a:"You shouldn't eat too much."},{ko:'그녀는 병원에 가야 한다.',a:'She has to go to the hospital.'},{ko:'우리는 서로 도와야 한다.',a:'We should help each other.'},
+  {ko:'너는 걱정할 필요가 없다.',a:"You don't have to worry."},{ko:'학생들은 교복을 입어야 한다.',a:'Students must wear school uniforms.'},{ko:'너는 더 조심해야 한다.',a:'You should be more careful.'}
+ ],
+ compose:[
+  {k:'너는 지금 자는 게 좋다.',a:'You should go to bed now.',h:'go to bed',alt:[]},{k:'나는 약을 먹어야 한다.',a:'I have to take medicine.',h:'take medicine',alt:['I must take medicine.']},
+  {k:'우리는 늦으면 안 된다.',a:'We must not be late.',h:'be late',alt:[]},{k:'그녀는 더 많이 연습해야 한다.',a:'She should practice more.',h:'practice more',alt:[]},
+  {k:'너는 서두를 필요가 없다.',a:"You don't have to hurry.",h:'hurry',alt:[]},{k:'학생들은 규칙을 따라야 한다.',a:'Students must follow the rules.',h:'follow the rules',alt:['Students have to follow the rules.']},
+  {k:'너는 채소를 먹어야 한다.',a:'You should eat vegetables.',h:'eat vegetables',alt:[]},{k:'나는 열심히 일해야 한다.',a:'I have to work hard.',h:'work hard',alt:['I must work hard.']},
+  {k:'우리는 거짓말을 하면 안 된다.',a:'We must not tell a lie.',h:'tell a lie',alt:['We must not lie.']},{k:'그는 그의 방을 청소해야 한다.',a:'He has to clean his room.',h:'clean his room',alt:['He must clean his room.']},
+  {k:'너는 물을 많이 마시는 게 좋다.',a:'You should drink a lot of water.',h:'drink water',alt:['You should drink lots of water.']},{k:'너는 그것을 살 필요가 없다.',a:"You don't have to buy it.",h:'buy it',alt:[]},
+  {k:'우리는 안전벨트를 매야 한다.',a:'We must wear a seat belt.',h:'wear a seat belt',alt:['We have to wear a seat belt.']},{k:'너는 매일 운동하는 게 좋다.',a:'You should exercise every day.',h:'exercise every day',alt:[]},
+  {k:'나는 지금 집에 가야 한다.',a:'I have to go home now.',h:'go home',alt:['I must go home now.']}
+ ],
+ task:{prompt:'<b>우리 반 규칙</b> 또는 <b>건강을 위한 조언</b>을 7문장으로 써요. (must / should / have to)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'must / should / have to 사용',test:t=>/\b(must|should|have to|has to)\b/i.test(t)},{label:'You 또는 We 주어 포함',test:t=>/\b(you|we)\b/i.test(t)}],sample:"We should be kind to each other. You must not run in the classroom. We have to clean our classroom every day. You should listen to the teacher. We must not talk loudly in the library. You have to raise your hand to speak. We should help our classmates."}
+};
+
+const P_noun={ id:'L1C5U1', title:'명사 / 관사',
+ explain:{lead:[{t:'명사는 '},{k:'셀 수 있는 명사 / 셀 수 없는 명사',n:'셀 수 있는 명사(apple, book)는 하나면 a/an, 여러 개면 -s를 붙여요. 셀 수 없는 명사(water, milk, bread)는 a도 못 붙이고 복수도 안 돼요.'},{t:'로 나뉘어요. 관사 '},{k:'a / an',n:'하나(단수)일 때 자음 소리 앞엔 a, 모음 소리(a,e,i,o,u) 앞엔 an. an apple, an hour(h 묵음).'},{t:'와 '},{k:'the',n:'이미 아는 특정한 것, 세상에 하나뿐인 것(the sun, the moon) 앞에 써요.'},{t:'를 상황에 맞게 써요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'I have ___ apple.',o:['a','an','the','x','two'],a:1,e:'모음 소리(a) 앞 → an.'},
+  {q:'She is ___ teacher.',o:['a','an','the','x','some'],a:0,e:'자음 소리 앞 → a.'},
+  {q:'다음 중 셀 수 없는 명사는?',o:['apple','book','water','dog','pen'],a:2,e:'water 는 셀 수 없어요.'},
+  {q:'There are three ___.',o:['book','books','a book','a books','bookes'],a:1,e:'복수 → books.'},
+  {q:'I drink ___ every day. (물)',o:['a water','water','waters','an water','the waters'],a:1,e:'셀 수 없는 명사는 a/복수 없이 water.'},
+  {q:'___ sun is bright.',o:['A','An','The','x','Some'],a:2,e:'세상에 하나뿐 → the sun.'},
+  {q:'an 을 올바르게 쓴 것은?',o:['a apple','an dog','an hour','a hour','an book'],a:2,e:'hour 는 h가 묵음이라 모음 소리 → an.'},
+  {q:'child 의 복수형으로 알맞은 것은?',o:['childs','childes','children','childrens','child'],a:2,e:'불규칙 복수 children.'},
+  {q:'He needs ___ eraser.',o:['a','an','the','some','x'],a:1,e:'eraser 는 모음 소리 → an.'},
+  {q:'I have two [[boxes]]. box 처럼 -es 를 붙이는 경우는?',o:['모든 명사','s, sh, ch, x 로 끝날 때','y 로 끝날 때','불규칙일 때','변화 없음'],a:1,e:'s/sh/ch/x/o 등으로 끝나면 -es.'}
+ ],
+ arrange:[
+  {ko:'나는 사과 한 개를 가지고 있다.',a:'I have an apple.'},{ko:'그녀는 선생님이다.',a:'She is a teacher.'},{ko:'나는 매일 물을 마신다.',a:'I drink water every day.'},
+  {ko:'책상 위에 책 세 권이 있다.',a:'There are three books on the desk.'},{ko:'태양은 밝다.',a:'The sun is bright.'},{ko:'나는 한 시간 동안 공부했다.',a:'I studied for an hour.'},
+  {ko:'그는 지우개가 필요하다.',a:'He needs an eraser.'},{ko:'나는 상자 두 개를 샀다.',a:'I bought two boxes.'},{ko:'아이들이 공원에서 놀고 있다.',a:'The children are playing in the park.'},
+  {ko:'나는 우유 한 잔을 원한다.',a:'I want a glass of milk.'},{ko:'그것은 오래된 집이다.',a:'It is an old house.'},{ko:'나는 개 한 마리와 고양이 두 마리가 있다.',a:'I have a dog and two cats.'},
+  {ko:'그 책은 탁자 위에 있다.',a:'The book is on the table.'},{ko:'나는 아침으로 빵을 먹는다.',a:'I eat bread for breakfast.'},{ko:'그녀는 예쁜 꽃들을 좋아한다.',a:'She likes pretty flowers.'}
+ ],
+ compose:[
+  {k:'나는 우산이 필요하다.',a:'I need an umbrella.',h:'umbrella',alt:[]},{k:'그는 학생이다.',a:'He is a student.',h:'student',alt:[]},
+  {k:'나는 물을 조금 마신다.',a:'I drink some water.',h:'some water',alt:[]},{k:'하늘에 별들이 있다.',a:'There are stars in the sky.',h:'stars / sky',alt:[]},
+  {k:'그 달은 아름답다.',a:'The moon is beautiful.',h:'moon',alt:[]},{k:'나는 사과 세 개가 있다.',a:'I have three apples.',h:'apples',alt:[]},
+  {k:'그녀는 손목시계가 필요하다.',a:'She needs a watch.',h:'watch',alt:[]},{k:'나는 매일 우유를 마신다.',a:'I drink milk every day.',h:'milk',alt:[]},
+  {k:'그는 정직한 사람이다.',a:'He is an honest man.',h:'honest man',alt:[]},{k:'나는 개 두 마리를 가지고 있다.',a:'I have two dogs.',h:'dogs',alt:[]},
+  {k:'그 문은 열려 있다.',a:'The door is open.',h:'door / open',alt:[]},{k:'나는 아침으로 빵을 먹는다.',a:'I eat bread for breakfast.',h:'bread',alt:[]},
+  {k:'그는 한 시간 동안 잤다.',a:'He slept for an hour.',h:'an hour',alt:[]},{k:'아이들이 노래하고 있다.',a:'The children are singing.',h:'children',alt:[]},
+  {k:'나는 연필 한 자루가 필요하다.',a:'I need a pencil.',h:'pencil',alt:[]}
+ ],
+ task:{prompt:'<b>내 방에 있는 물건 7문장</b>을 써요. (a/an/the, 복수형에 주의!)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'a 또는 an 사용',test:t=>/\b(a|an)\b/i.test(t)},{label:'복수형(-s) 명사 포함',test:t=>/\b\w+s\b/i.test(t)}],sample:'There is a desk in my room. I have many books on the shelf. The window is next to my bed. There is a small lamp on the desk. I have a few posters on the wall. The closet is full of clothes. There are two pillows on my bed.'}
+};
+
+const P_there={ id:'L1C5U2', title:'There is / are',
+ explain:{lead:[{t:'"~이 있다"는 '},{k:'There is + 단수 / There are + 복수',n:'뒤에 오는 명사가 하나면 There is, 여러 개면 There are. 셀 수 없는 명사(water)는 There is 로 받아요.'},{t:'로 나타내요. 부정은 '},{k:"is not(isn't) / are not(aren't) / no",n:"There is no ~ / There aren't any ~ 처럼 써요."},{t:', 의문은 '},{k:'Is there ~? / Are there ~?',n:'Is there a bank? / Are there many people? 대답: Yes, there is. / No, there aren\'t.'},{t:' 로 만들어요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'There ___ a cat on the sofa.',o:['is','are','am','be','have'],a:0,e:'단수 → There is.'},
+  {q:'There ___ two books on the desk.',o:['is','are','am','be','has'],a:1,e:'복수 → There are.'},
+  {q:'There ___ some water in the cup.',o:['is','are','am','be','have'],a:0,e:'셀 수 없는 명사 → There is.'},
+  {q:'___ there any milk?',o:['Is','Are','Am','Do','Does'],a:0,e:'milk(셀 수 없음) → Is there ~?'},
+  {q:'There ___ many people in the park.',o:['is','are','am','be','has'],a:1,e:'many people(복수) → are.'},
+  {q:'"Is there a bank near here?" 알맞은 대답은?',o:['Yes, there is.','Yes, there are.','Yes, it is.','Yes, there do.','Yes, is there.'],a:0,e:'Is there ~? → Yes, there is.'},
+  {q:'There ___ not any juice.',o:['is','are','am','do','have'],a:0,e:'juice(셀 수 없음) → is not.'},
+  {q:'___ there many students in the class?',o:['Is','Are','Am','Do','Was'],a:1,e:'many students(복수) → Are there ~?'},
+  {q:'There [[are]] five apples. 뒤에 오는 명사는 어떤 것일까요?',o:['단수','복수','셀 수 없는 명사','동사','형용사'],a:1,e:'There are 뒤에는 복수 명사.'},
+  {q:'There is ___ book on the table.',o:['a','some','two','many','any'],a:0,e:'There is 뒤 단수 → a book.'}
+ ],
+ arrange:[
+  {ko:'소파 위에 고양이 한 마리가 있다.',a:'There is a cat on the sofa.'},{ko:'책상 위에 책 두 권이 있다.',a:'There are two books on the desk.'},{ko:'컵에 물이 조금 있다.',a:'There is some water in the cup.'},
+  {ko:'우유가 조금이라도 있니?',a:'Is there any milk?'},{ko:'공원에 많은 사람들이 있다.',a:'There are many people in the park.'},{ko:'근처에 은행이 있니?',a:'Is there a bank near here?'},
+  {ko:'주스가 없다.',a:'There is not any juice.'},{ko:'교실에 많은 학생들이 있니?',a:'Are there many students in the classroom?'},{ko:'탁자 위에 사과 다섯 개가 있다.',a:'There are five apples on the table.'},
+  {ko:'방에 침대가 하나 있다.',a:'There is a bed in the room.'},{ko:'상자 안에 무언가 있니?',a:'Is there anything in the box?'},{ko:'냉장고에 계란이 조금 있다.',a:'There are some eggs in the refrigerator.'},
+  {ko:'우리 학교에는 도서관이 있다.',a:'There is a library in our school.'},{ko:'정원에 꽃이 많이 있다.',a:'There are many flowers in the garden.'},{ko:'하늘에 구름이 없다.',a:'There are no clouds in the sky.'}
+ ],
+ compose:[
+  {k:'탁자 위에 컵이 하나 있다.',a:'There is a cup on the table.',h:'cup',alt:[]},{k:'방에 의자 세 개가 있다.',a:'There are three chairs in the room.',h:'chairs',alt:[]},
+  {k:'병에 물이 조금 있다.',a:'There is some water in the bottle.',h:'water / bottle',alt:[]},{k:'근처에 공원이 있니?',a:'Is there a park near here?',h:'park',alt:[]},
+  {k:'냉장고에 우유가 없다.',a:'There is no milk in the refrigerator.',h:'milk',alt:["There isn't any milk in the refrigerator."]},{k:'교실에 학생들이 많이 있다.',a:'There are many students in the classroom.',h:'many students',alt:[]},
+  {k:'벽에 그림이 하나 있다.',a:'There is a picture on the wall.',h:'picture / wall',alt:[]},{k:'가방 안에 책들이 있니?',a:'Are there books in the bag?',h:'books / bag',alt:['Are there any books in the bag?']},
+  {k:'접시에 사과 두 개가 있다.',a:'There are two apples on the plate.',h:'apples / plate',alt:[]},{k:'하늘에 새들이 있다.',a:'There are birds in the sky.',h:'birds',alt:[]},
+  {k:'컵에 주스가 없다.',a:'There is no juice in the cup.',h:'juice',alt:["There isn't any juice in the cup."]},{k:'우리 마을에 병원이 있다.',a:'There is a hospital in our town.',h:'hospital / town',alt:[]},
+  {k:'상자 안에 장난감이 많이 있다.',a:'There are many toys in the box.',h:'many toys',alt:[]},{k:'근처에 식당이 있니?',a:'Is there a restaurant near here?',h:'restaurant',alt:[]},
+  {k:'정원에 나무가 한 그루 있다.',a:'There is a tree in the garden.',h:'tree / garden',alt:[]}
+ ],
+ task:{prompt:'<b>우리 교실에 있는 것 7문장</b>을 There is/are 로 써요.',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'There is 또는 There are 사용',test:t=>/there\s+(is|are)/i.test(t)},{label:'There are(복수) 문장 1개 이상',test:t=>/there\s+are/i.test(t)}],sample:'There is a big blackboard in our classroom. There are many desks and chairs. There is a clock on the wall. There are some plants near the window. There is a bookshelf in the corner. There are colorful posters on the wall. There is a computer on the teacher\'s desk.'}
+};
+
+const P_pron={ id:'L1C6U1', title:'인칭대명사',
+ explain:{lead:[{t:'인칭대명사는 자리에 따라 모양이 바뀌어요. '},{k:'주격 (I, you, he, she, it, we, they)',n:'"~은/는/이/가" 자리, 즉 주어 자리에 써요.'},{t:', '},{k:'소유격 (my, your, his, her, our, their)',n:'"~의" 뜻으로 명사 앞에 써요. my book.'},{t:', '},{k:'목적격 (me, you, him, her, us, them)',n:'"~을/를, ~에게" 자리, 동사·전치사 뒤에 써요. She likes me.'},{t:', '},{k:'소유대명사 (mine, yours, his, hers, ours, theirs)',n:'"~의 것" — 소유격+명사를 한 단어로. This is mine.'},{t:' 를 구분해요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'___ am a student.',o:['I','My','Me','Mine','We'],a:0,e:'주어 자리 → 주격 I.'},
+  {q:'This is ___ book.',o:['I','my','me','mine','we'],a:1,e:'명사 앞 "나의" → 소유격 my.'},
+  {q:'She likes ___.',o:['I','my','me','mine','we'],a:2,e:'동사 뒤 "나를" → 목적격 me.'},
+  {q:'This pen is ___.',o:['I','my','me','mine','myself'],a:3,e:'"나의 것" → 소유대명사 mine.'},
+  {q:'___ is my friend.',o:['He','His','Him',"He's",'They'],a:0,e:'주어 → He.'},
+  {q:'I know ___.',o:['he','his','him',"he's",'they'],a:2,e:'"그를" → 목적격 him.'},
+  {q:'their 은 무슨 격일까요?',o:['주격','소유격','목적격','소유대명사','재귀대명사'],a:1,e:'their = 그들의 → 소유격.'},
+  {q:'We love ___.',o:['they','their','them','theirs',"they's"],a:2,e:'"그들을" → 목적격 them.'},
+  {q:'Is this ___ bag?',o:['you','your','yours','yourself',"you're"],a:1,e:'명사 앞 "너의" → your.'},
+  {q:'That is [[hers]]. hers 의 뜻으로 알맞은 것은?',o:['그녀는','그녀의','그녀를','그녀의 것','그녀 자신'],a:3,e:'hers = 그녀의 것(소유대명사).'}
+ ],
+ arrange:[
+  {ko:'나는 학생이다.',a:'I am a student.'},{ko:'이것은 나의 책이다.',a:'This is my book.'},{ko:'그녀는 나를 좋아한다.',a:'She likes me.'},
+  {ko:'이 펜은 내 것이다.',a:'This pen is mine.'},{ko:'그는 나의 친구이다.',a:'He is my friend.'},{ko:'나는 그를 안다.',a:'I know him.'},
+  {ko:'우리는 그들을 사랑한다.',a:'We love them.'},{ko:'이것은 너의 가방이니?',a:'Is this your bag?'},{ko:'그것은 그녀의 것이다.',a:'That is hers.'},
+  {ko:'그들은 우리를 도와준다.',a:'They help us.'},{ko:'나는 그녀의 이름을 안다.',a:'I know her name.'},{ko:'이 개는 그들의 것이다.',a:'This dog is theirs.'},
+  {ko:'그는 우리를 매일 본다.',a:'He sees us every day.'},{ko:'너는 나를 기억하니?',a:'Do you remember me?'},{ko:'이 집은 우리의 것이다.',a:'This house is ours.'}
+ ],
+ compose:[
+  {k:'그들은 우리의 이웃이다.',a:'They are our neighbors.',h:'neighbors',alt:[]},{k:'나는 그녀를 잘 안다.',a:'I know her well.',h:'know / well',alt:[]},
+  {k:'이 우산은 너의 것이니?',a:'Is this umbrella yours?',h:'umbrella / yours',alt:[]},{k:'그는 그의 개를 사랑한다.',a:'He loves his dog.',h:'his dog',alt:[]},
+  {k:'그녀는 우리를 초대했다.',a:'She invited us.',h:'invite',alt:[]},{k:'이것은 나의 자리이다.',a:'This is my seat.',h:'seat',alt:[]},
+  {k:'그 책은 그의 것이다.',a:'The book is his.',h:'his',alt:[]},{k:'우리는 그들을 매주 만난다.',a:'We meet them every week.',h:'meet / every week',alt:[]},
+  {k:'너의 이름은 무엇이니?',a:'What is your name?',h:'name',alt:[]},{k:'나는 그것을 좋아한다.',a:'I like it.',h:'it',alt:[]},
+  {k:'그들은 그들의 숙제를 한다.',a:'They do their homework.',h:'their homework',alt:[]},{k:'그녀는 나에게 선물을 주었다.',a:'She gave me a present.',h:'give / a present',alt:[]},
+  {k:'이 자전거는 그녀의 것이다.',a:'This bike is hers.',h:'bike / hers',alt:[]},{k:'우리는 우리의 선생님을 좋아한다.',a:'We like our teacher.',h:'our teacher',alt:[]},
+  {k:'그는 너를 기다리고 있다.',a:'He is waiting for you.',h:'wait for',alt:[]}
+ ],
+ task:{prompt:'<b>내 친구를 소개하는 글 7문장</b>을 써요. (he/she + his/her + him/her 활용)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'대명사(he/she/they/him/her 등) 사용',test:t=>/\b(he|she|they|him|her|them|us)\b/i.test(t)},{label:'소유격(my/his/her/their) 포함',test:t=>/\b(my|his|her|their|our)\b/i.test(t)}],sample:'This is my friend Mina. She is very kind. I like her a lot. Her hobby is playing the guitar. His name is Jiho, and he is her brother. I often visit their house. Their family is very friendly.'}
+};
+
+const P_this={ id:'L1C6U2', title:'지시대명사와 it',
+ explain:{lead:[{t:'가까운 것은 '},{k:'this (이것) / these (이것들)',n:'these 는 this 의 복수형이에요.'},{t:', 멀리 있는 것은 '},{k:'that (저것) / those (저것들)',n:'those 는 that 의 복수형이에요.'},{t:'로 가리켜요. 한편 '},{k:'it (비인칭 주어)',n:'날씨·시간·요일·거리를 말할 때 뜻 없는 주어 it 을 써요. It is cold. / It is 7 o\'clock.'},{t:'은 날씨·시간 등에도 쓰여요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'___ is my book. (이것)',o:['This','These','Those','They',"It's"],a:0,e:'가까운 하나 → This.'},
+  {q:'___ are my friends. (이들)',o:['This','That','These','It','A'],a:2,e:'가까운 여럿 → These.'},
+  {q:'___ is a nice day. (날씨)',o:['This','That','It','They','Those'],a:2,e:'날씨 → 비인칭 주어 It.'},
+  {q:'Look at ___ stars. (저 별들)',o:['this','that','these','those','it'],a:3,e:'멀리 있는 여럿 → those.'},
+  {q:'What time is ___?',o:['it','this','that','these','those'],a:0,e:'시간 → It.'},
+  {q:'___ books are interesting. (이 책들)',o:['This','That','These','It','A'],a:2,e:'이 책들 → These books.'},
+  {q:'다음 중 비인칭 주어 it 의 쓰임이 아닌 것은?',o:['It is cold.','It is 7 o\'clock.','It is Monday.','It is my pen.','It is far.'],a:3,e:'"It is my pen." 의 it 은 사물을 가리키는 진짜 it.'},
+  {q:'Are ___ your shoes? (저것들)',o:['this','that','these','those','it'],a:3,e:'멀리 있는 여럿 → those.'},
+  {q:'this 의 복수형으로 알맞은 것은?',o:['thises','these','those','thats','this'],a:1,e:'this → these.'},
+  {q:'[[It]] is raining. 여기서 It 은 무엇일까요?',o:['그것(사물)','날씨를 나타내는 비인칭 주어','사람','장소','시간만'],a:1,e:'날씨의 비인칭 주어 It.'}
+ ],
+ arrange:[
+  {ko:'이것은 나의 책이다.',a:'This is my book.'},{ko:'이들은 나의 친구들이다.',a:'These are my friends.'},{ko:'좋은 날씨이다.',a:'It is a nice day.'},
+  {ko:'저 별들을 봐.',a:'Look at those stars.'},{ko:'몇 시니?',a:'What time is it?'},{ko:'이 책들은 재미있다.',a:'These books are interesting.'},
+  {ko:'저것들은 너의 신발이니?',a:'Are those your shoes?'},{ko:'저것은 나의 집이다.',a:'That is my house.'},{ko:'비가 오고 있다.',a:'It is raining.'},
+  {ko:'이것들은 얼마니?',a:'How much are these?'},{ko:'저 사람들은 배우이다.',a:'Those people are actors.'},{ko:'오늘은 월요일이다.',a:'It is Monday today.'},
+  {ko:'이것은 무엇이니?',a:'What is this?'},{ko:'저 건물은 아주 높다.',a:'That building is very tall.'},{ko:'여기서 멀다.',a:'It is far from here.'}
+ ],
+ compose:[
+  {k:'이것은 나의 우산이다.',a:'This is my umbrella.',h:'umbrella',alt:[]},{k:'저것들은 새들이다.',a:'Those are birds.',h:'birds',alt:[]},
+  {k:'밖이 어둡다.',a:'It is dark outside.',h:'dark',alt:[]},{k:'이 꽃들은 아름답다.',a:'These flowers are beautiful.',h:'flowers',alt:[]},
+  {k:'지금 세 시이다.',a:'It is three o\'clock now.',h:'three o\'clock',alt:[]},{k:'저 산은 높다.',a:'That mountain is high.',h:'mountain / high',alt:[]},
+  {k:'이들은 나의 부모님이다.',a:'These are my parents.',h:'parents',alt:[]},{k:'오늘은 덥다.',a:'It is hot today.',h:'hot',alt:[]},
+  {k:'저 차는 빠르다.',a:'That car is fast.',h:'car / fast',alt:[]},{k:'이것은 너의 것이니?',a:'Is this yours?',h:'yours',alt:[]},
+  {k:'학교에서 멀다.',a:'It is far from school.',h:'far / school',alt:[]},{k:'이 신발들은 새것이다.',a:'These shoes are new.',h:'shoes / new',alt:[]},
+  {k:'저것은 무엇이니?',a:'What is that?',h:'what',alt:[]},{k:'봄이다.',a:'It is spring.',h:'spring',alt:[]},
+  {k:'이 사람들은 나의 이웃이다.',a:'These people are my neighbors.',h:'neighbors',alt:[]}
+ ],
+ task:{prompt:'<b>사진 속 장면을 설명하는 글 7문장</b>을 써요. (this/that/these/those + 날씨·시간 it)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'this/that/these/those 중 사용',test:t=>/\b(this|that|these|those)\b/i.test(t)},{label:'날씨·시간을 나타내는 It 문장 1개 포함',test:t=>/\bit is\b/i.test(t)}],sample:'This is my family photo. These are my sisters. It is a sunny day in the picture. That is our old house behind us. Those are the flowers my mom planted. It is around noon in the photo. This is one of my favorite memories.'}
+};
+
+const P_some={ id:'L1C6U3', title:'one, some, any',
+ explain:{lead:[{t:'앞에 나온 명사를 다시 말할 때, 같은 종류의 하나는 '},{k:'one',n:'I lost my pen. I need a new one. (one = a pen)'},{t:'으로 받아요. "약간의"는 '},{k:'some (긍정문·권유)',n:'긍정문과 권유(Would you like ~?)에 써요. I have some money.'},{t:', "조금도/어떤"은 '},{k:'any (부정문·의문문)',n:'부정문과 의문문에 써요. I don\'t have any money. / Do you have any?'},{t:' 로 구분해요.'}],note:'노란 부분을 눌러 설명을 확인하세요.'},
+ quiz:[
+  {q:'I lost my pen. I need a new ___.',o:['one','some','any','it','ones'],a:0,e:'앞의 pen 을 대신 → one.'},
+  {q:'I have ___ money. (긍정, 약간)',o:['some','any','one','a','an'],a:0,e:'긍정문 → some.'},
+  {q:"I don't have ___ money. (부정)",o:['some','any','one','much','a'],a:1,e:'부정문 → any.'},
+  {q:'Do you have ___ questions? (의문)',o:['some','any','one','a','ones'],a:1,e:'의문문 → any.'},
+  {q:'Would you like ___ tea? (권유)',o:['some','any','one','a','the'],a:0,e:'권유는 예외적으로 some.'},
+  {q:"These apples look fresh. I'll take ___. (여러 개)",o:['one','ones','some','any','it'],a:2,e:'여러 개 → some.'},
+  {q:'one 의 쓰임으로 알맞은 것은?',o:['숫자 1만 나타냄','앞에 나온 명사를 대신함','사람 이름','장소','시간'],a:1,e:'one 은 앞에 나온 명사를 대신해요.'},
+  {q:"There aren't ___ books on the shelf.",o:['some','any','one','much','a'],a:1,e:'부정문 → any.'},
+  {q:'I have some pens. Do you need ___?',o:['one','ones','any','it','a'],a:2,e:'의문문 → any.'},
+  {q:"I don't have [[any]] friends here. any 가 부정문에서 뜻하는 것은?",o:['조금 있다','전혀 없다(하나도)','많다','모두','약간'],a:1,e:'부정문의 any = 하나도 (없다).'}
+ ],
+ arrange:[
+  {ko:'나는 새 것이 필요하다.',a:'I need a new one.'},{ko:'나는 돈이 조금 있다.',a:'I have some money.'},{ko:'나는 돈이 조금도 없다.',a:"I don't have any money."},
+  {ko:'너는 질문이 있니?',a:'Do you have any questions?'},{ko:'차 좀 드시겠어요?',a:'Would you like some tea?'},{ko:'나는 몇 개 가져갈게.',a:'I will take some.'},
+  {ko:'선반에 책이 하나도 없다.',a:"There aren't any books on the shelf."},{ko:'나는 펜이 조금 있다.',a:'I have some pens.'},{ko:'물 좀 주세요.',a:'Give me some water, please.'},
+  {ko:'냉장고에 우유가 조금도 없다.',a:"There isn't any milk in the refrigerator."},{ko:'이 사과는 상했어. 좋은 것을 하나 줘.',a:'This apple is bad. Give me a good one.'},{ko:'너는 형제가 있니?',a:'Do you have any brothers?'},
+  {ko:'나는 친구가 조금 있다.',a:'I have some friends.'},{ko:'우리는 시간이 조금도 없다.',a:"We don't have any time."},{ko:'쿠키 좀 먹을래?',a:'Do you want some cookies?'}
+ ],
+ compose:[
+  {k:'나는 도움이 조금 필요하다.',a:'I need some help.',h:'help',alt:[]},{k:'나는 돈이 조금도 없다.',a:"I don't have any money.",h:'money',alt:[]},
+  {k:'물 좀 드시겠어요?',a:'Would you like some water?',h:'water',alt:[]},{k:'너는 애완동물이 있니?',a:'Do you have any pets?',h:'pets',alt:[]},
+  {k:'나는 새 것을 사고 싶다.',a:'I want to buy a new one.',h:'one',alt:[]},{k:'냉장고에 계란이 조금 있다.',a:'There are some eggs in the refrigerator.',h:'eggs',alt:[]},
+  {k:'그는 친구가 하나도 없다.',a:"He doesn't have any friends.",h:'friends',alt:[]},{k:'나는 좋은 것을 원한다.',a:'I want a good one.',h:'one',alt:[]},
+  {k:'나에게 조언 좀 해줘.',a:'Give me some advice.',h:'advice',alt:[]},{k:'상자 안에 아무것도 없다.',a:"There isn't anything in the box.",h:'anything',alt:['There is nothing in the box.']},
+  {k:'너는 계획이 있니?',a:'Do you have any plans?',h:'plans',alt:[]},{k:'나는 쿠키를 좀 먹었다.',a:'I ate some cookies.',h:'cookies',alt:[]},
+  {k:'우리는 우유가 조금도 없다.',a:"We don't have any milk.",h:'milk',alt:[]},{k:'이 펜은 안 나온다. 다른 것을 줘.',a:'This pen does not work. Give me another one.',h:'another one',alt:["This pen doesn't work. Give me another one."]},
+  {k:'질문 있으신가요?',a:'Do you have any questions?',h:'questions',alt:[]}
+ ],
+ task:{prompt:'<b>우리 집 냉장고에 있는 것/없는 것 7문장</b>을 써요. (some / any)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'some 사용',test:t=>/\bsome\b/i.test(t)},{label:'any(부정문 또는 의문문) 사용',test:t=>/\bany\b/i.test(t)}],sample:'There is some milk in the refrigerator. There are some eggs, too. But there isn\'t any juice. There is some cheese on the shelf. There aren\'t any apples left. Is there any bread? There are some vegetables in the drawer.'}
+};
+
+/* 레벨/챕터/포인트 구조 (표준 목차). ready:true 인 point 만 학습 가능 */
+/* 초5(id:'L0')는 Story Writing 전용 레벨이라 Pattern Drill 챕터가 없어요. 다른 레벨(L1/L2/L3)처럼
+   코드에 직접 고정해뒀기 때문에, 스프레드시트의 "레벨" 탭이나 "🔄 사이트에 반영하기"와 상관없이
+   새 index.html을 올리는 즉시 항상 홈 화면에 나타나요. Story Writing 컨텐츠의 "레벨" 칸에는
+   이 고정 id인 "L0"을 그대로 적으면 돼요. */
+const LEVELS=[
+ {id:'L0',name:'초5',book:'WRITING PICTURE',chapters:[]},
+ {id:'L1',name:'초6',book:'WRITING LEVEL 1',chapters:[
+   {id:'L1C1',t:'CHAPTER 01 be동사',points:[P_be1,P_be2]},
+   {id:'L1C2',t:'CHAPTER 02 일반동사',points:[P_do1,P_do2,P_do3]},
+   {id:'L1C3',t:'CHAPTER 03 현재진행형과 미래 표현',points:[P_prog,P_future]},
+   {id:'L1C4',t:'CHAPTER 04 조동사',points:[P_can,P_must]},
+   {id:'L1C5',t:'CHAPTER 05 명사와 관사',points:[P_noun,P_there]},
+   {id:'L1C6',t:'CHAPTER 06 대명사',points:[P_pron,P_this,P_some]},
+   {id:'L1C7',t:'CHAPTER 07 형용사, 부사, 비교',points:[{id:'L1C7U1',title:'형용사',soon:true},{id:'L1C7U2',title:'부사',soon:true},{id:'L1C7U3',title:'비교급과 최상급',soon:true}]},
+   {id:'L1C8',t:'CHAPTER 08 여러 가지 문장 종류',points:[{id:'L1C8U1',title:'명령문, 제안문, 감탄문',soon:true},{id:'L1C8U2',title:'의문사 의문문',soon:true},{id:'L1C8U3',title:'부가의문문, 부정의문문',soon:true}]},
+   {id:'L1C9',t:'CHAPTER 09 문장의 여러 형식',points:[{id:'L1C9U1',title:'SVC (2형식)',soon:true},{id:'L1C9U2',title:'SVOO (4형식)',soon:true},{id:'L1C9U3',title:'SVOC (5형식)',soon:true}]},
+   {id:'L1C10',t:'CHAPTER 10 to부정사와 동명사',points:[{id:'L1C10U1',title:'to부정사의 부사적·형용사적 쓰임',soon:true},{id:'L1C10U2',title:'to부정사의 명사적 쓰임',soon:true},{id:'L1C10U3',title:'동명사의 쓰임',soon:true}]},
+   {id:'L1C11',t:'CHAPTER 11 전치사',points:[{id:'L1C11U1',title:'장소, 위치, 방향 전치사',soon:true},{id:'L1C11U2',title:'시간을 나타내는 전치사',soon:true},{id:'L1C11U3',title:'여러 가지 전치사',soon:true}]},
+   {id:'L1C12',t:'CHAPTER 12 접속사',points:[{id:'L1C12U1',title:'and / but / or',soon:true},{id:'L1C12U2',title:'여러 가지 접속사',soon:true}]}
+ ]},
+ {id:'L2',name:'중1',book:'WRITING LEVEL 2',chapters:[
+   {id:'L2C1',t:'CHAPTER 01 문장의 주요 형식',points:[{id:'L2C1U1',title:'SVC / SVOO',soon:true},{id:'L2C1U2',title:'SVOC – 목적격보어의 종류',soon:true}]},
+   {id:'L2C2',t:'CHAPTER 02 시제',points:[{id:'L2C2U1',title:'현재, 과거, 미래 & 진행형',soon:true},{id:'L2C2U2',title:'현재완료의 개념과 형태',soon:true},{id:'L2C2U3',title:'현재완료의 주요 의미',soon:true}]},
+   {id:'L2C3',t:'CHAPTER 03 조동사',points:[{id:'L2C3U1',title:'can / may / will',soon:true},{id:'L2C3U2',title:'must / have to / should',soon:true},{id:'L2C3U3',title:'had better / would like to / used to',soon:true}]},
+   {id:'L2C4',t:'CHAPTER 04 수동태',points:[{id:'L2C4U1',title:'수동태의 기본 이해',soon:true},{id:'L2C4U2',title:'수동태의 여러 가지 형태',soon:true}]},
+   {id:'L2C5',t:'CHAPTER 05 to부정사',points:[{id:'L2C5U1',title:'to부정사의 명사적 쓰임',soon:true},{id:'L2C5U2',title:'to부정사의 형용사적 쓰임',soon:true},{id:'L2C5U3',title:'to부정사의 부사적 쓰임',soon:true},{id:'L2C5U4',title:'to부정사를 포함한 주요 구문',soon:true}]},
+   {id:'L2C6',t:'CHAPTER 06 동명사',points:[{id:'L2C6U1',title:'명사로 쓰이는 동명사',soon:true},{id:'L2C6U2',title:'동명사 vs. to부정사',soon:true}]},
+   {id:'L2C7',t:'CHAPTER 07 분사',points:[{id:'L2C7U1',title:'명사를 수식하는 분사',soon:true},{id:'L2C7U2',title:'주의해야 할 분사',soon:true}]},
+   {id:'L2C8',t:'CHAPTER 08 대명사',points:[{id:'L2C8U1',title:'부정대명사 I',soon:true},{id:'L2C8U2',title:'부정대명사 II',soon:true},{id:'L2C8U3',title:'재귀대명사',soon:true}]},
+   {id:'L2C9',t:'CHAPTER 09 형용사와 부사',points:[{id:'L2C9U1',title:'형용사',soon:true},{id:'L2C9U2',title:'부사',soon:true}]},
+   {id:'L2C10',t:'CHAPTER 10 비교 표현',points:[{id:'L2C10U1',title:'원급, 비교급, 최상급',soon:true},{id:'L2C10U2',title:'원급, 비교급, 최상급을 이용한 표현',soon:true}]},
+   {id:'L2C11',t:'CHAPTER 11 접속사',points:[{id:'L2C11U1',title:'and, or, but의 주의할 쓰임',soon:true},{id:'L2C11U2',title:'부사절을 이끄는 접속사',soon:true},{id:'L2C11U3',title:'명사절을 이끄는 접속사',soon:true}]},
+   {id:'L2C12',t:'CHAPTER 12 관계대명사',points:[{id:'L2C12U1',title:'who, which, that',soon:true},{id:'L2C12U2',title:'who(m), which, that',soon:true},{id:'L2C12U3',title:'whose, what',soon:true}]}
+ ]},
+ {id:'L3',name:'중2',book:'WRITING LEVEL 3',chapters:[
+   {id:'L3C1',t:'CHAPTER 01 완료 시제',points:[{id:'L3C1U1',title:'현재완료, 현재완료진행',soon:true},{id:'L3C1U2',title:'과거완료',soon:true}]},
+   {id:'L3C2',t:'CHAPTER 02 조동사',points:[{id:'L3C2U1',title:'can / may / will',soon:true},{id:'L3C2U2',title:'must / have to / should',soon:true},{id:'L3C2U3',title:'had better / used to / would',soon:true},{id:'L3C2U4',title:'조동사 + have p.p.',soon:true}]},
+   {id:'L3C3',t:'CHAPTER 03 수동태',points:[{id:'L3C3U1',title:'수동태의 형태',soon:true},{id:'L3C3U2',title:'SVOO / SVOC 문형의 수동태',soon:true},{id:'L3C3U3',title:'주의해야 할 수동태',soon:true}]},
+   {id:'L3C4',t:'CHAPTER 04 부정사',points:[{id:'L3C4U1',title:'명사적 쓰임',soon:true},{id:'L3C4U2',title:'형용사적, 부사적 쓰임',soon:true},{id:'L3C4U3',title:'목적격보어로 쓰이는 부정사',soon:true},{id:'L3C4U4',title:'to부정사의 주요 구문',soon:true}]},
+   {id:'L3C5',t:'CHAPTER 05 동명사',points:[{id:'L3C5U1',title:'동명사의 주어/목적어/보어 역할',soon:true},{id:'L3C5U2',title:'동명사 주요 표현 등',soon:true}]},
+   {id:'L3C6',t:'CHAPTER 06 분사',points:[{id:'L3C6U1',title:'명사를 수식하는 분사',soon:true},{id:'L3C6U2',title:'분사의 보어 역할',soon:true},{id:'L3C6U3',title:'분사구문',soon:true}]},
+   {id:'L3C7',t:'CHAPTER 07 비교 표현',points:[{id:'L3C7U1',title:'원급을 이용한 표현',soon:true},{id:'L3C7U2',title:'비교급을 이용한 표현',soon:true},{id:'L3C7U3',title:'최상급을 이용한 표현',soon:true}]},
+   {id:'L3C8',t:'CHAPTER 08 접속사',points:[{id:'L3C8U1',title:'and/but/or가 이루는 구조',soon:true},{id:'L3C8U2',title:'부사절을 이끄는 접속사',soon:true},{id:'L3C8U3',title:'명사절을 이끄는 접속사',soon:true}]},
+   {id:'L3C9',t:'CHAPTER 09 관계사',points:[{id:'L3C9U1',title:'관계대명사',soon:true},{id:'L3C9U2',title:'주의해야 할 관계대명사의 쓰임',soon:true},{id:'L3C9U3',title:'관계부사',soon:true}]},
+   {id:'L3C10',t:'CHAPTER 10 가정법',points:[{id:'L3C10U1',title:'if 가정법 과거, if 가정법 과거완료',soon:true},{id:'L3C10U2',title:'I wish / as if 가정법',soon:true},{id:'L3C10U3',title:'주의해야 할 가정법',soon:true}]},
+   {id:'L3C11',t:'CHAPTER 11 일치와 화법',points:[{id:'L3C11U1',title:'수일치',soon:true},{id:'L3C11U2',title:'시제 일치',soon:true},{id:'L3C11U3',title:'화법 전환',soon:true}]},
+   {id:'L3C12',t:'CHAPTER 12 특수 구문',points:[{id:'L3C12U1',title:'강조 / 도치',soon:true},{id:'L3C12U2',title:'생략 / 동격 / 부정',soon:true}]}
+ ]}
+];
+/* 선생님이 "🏷️ 레벨 관리" 화면에서 추가하거나 이름을 바꾼 레벨 목록이에요 (id/name/book/seq).
+   "🔄 사이트에 반영하기"를 누르면 이 자리가 최신 내용으로 채워져요. 기존 레벨(L1/L2/L3)은 이름·교재명만
+   덮어쓰고, 새로 추가된 레벨은 Pattern Drill 챕터 없이(Paragraph Writing/Article/수행평가/Re-Writing은 바로
+   가능) LEVELS 맨 뒤에 추가돼요. */
+let LEVELS_DATA=[];
+// 문법 드릴(Pattern Drill) "조건 영작"의 전체 분량 기준 — 코드에 고정된 숫자가 아니라, 스프레드시트
+// '설정' 탭(PATTERN_DRILL_MIN_WORDS·PATTERN_DRILL_MIN_SENTENCES)에서 매번 새로 받아와서 채워요.
+// 서버에서 못 받아오면(네트워크 오류 등) 이 기본값(100단어·8문장)으로 계속 동작해요.
+let DRILL_MIN_WORDS=100,DRILL_MIN_SENTENCES=8;
+function applyLevelsData(){
+  if(!Array.isArray(LEVELS_DATA)||!LEVELS_DATA.length)return;
+  const bySeq=LEVELS_DATA.slice().sort((a,b)=>(a.seq||0)-(b.seq||0));
+  bySeq.forEach(d=>{
+    const existing=LEVELS.find(l=>l.id===d.id);
+    if(existing){ if(d.name)existing.name=d.name; if(d.book)existing.book=d.book; }
+    else{ LEVELS.push({id:d.id,name:d.name||d.id,book:d.book||'',chapters:[]}); }
+  });
+  const order={};bySeq.forEach((d,i)=>{order[d.id]=i;});
+  LEVELS.sort((a,b)=>(order[a.id]!==undefined?order[a.id]:999)-(order[b.id]!==undefined?order[b.id]:999));
+}
+/* 초5(id:'L0')는 Story Writing 전용으로 코드에 고정해둔 레벨이라 "레벨" 시트의 seq 정렬 대상이 아니에요.
+   그래서 위 정렬 뒤에 항상 맨 앞으로 다시 옮겨서, 스프레드시트 순서 설정과 상관없이 늘 첫 번째 탭으로 보이게 해요. */
+function pinStoryLevelFirst(){
+  const idx=LEVELS.findIndex(l=>l.id==='L0');
+  if(idx>0){const [l0]=LEVELS.splice(idx,1);LEVELS.unshift(l0);}
+}
+
+/* 선생님이 "🏷️ 레벨 관리 > Pattern Drill 챕터/유닛" 화면에서 추가한 챕터·유닛 구성이에요.
+   "🔄 사이트에 반영하기"를 누르면 이 자리가 최신 내용으로 채워져요. 기존 챕터(id로 매칭)는 제목만
+   덮어쓰고, 새 챕터는 해당 레벨의 챕터 목록 맨 뒤에 추가돼요. 유닛도 마찬가지로 기존 id는 제목만
+   덮어쓰고(퀴즈/설명 등 실제 컨텐츠는 그대로 유지) 새 id는 "준비 중" 자리로 추가돼서,
+   선생님이 "✏️ 컨텐츠 수정/추가"에서 바로 내용을 채울 수 있어요. */
+let PATTERN_STRUCTURE_DATA=[];
+function applyPatternStructureData(){
+  if(!Array.isArray(PATTERN_STRUCTURE_DATA)||!PATTERN_STRUCTURE_DATA.length)return;
+  PATTERN_STRUCTURE_DATA.slice().sort((a,b)=>(a.seq||0)-(b.seq||0)).forEach(ch=>{
+    const lv=LEVELS.find(l=>l.id===ch.level_id);
+    if(!lv)return;
+    let chap=lv.chapters.find(c=>c.id===ch.id);
+    if(!chap){ chap={id:ch.id,t:ch.title||ch.id,points:[]}; lv.chapters.push(chap); }
+    else if(ch.title){ chap.t=ch.title; }
+    (ch.units||[]).slice().sort((a,b)=>(a.seq||0)-(b.seq||0)).forEach(u=>{
+      const pt=chap.points.find(p=>p&&p.id===u.id);
+      if(!pt){ chap.points.push({id:u.id,title:u.title||u.id,soon:true}); }
+      else if(pt.soon&&u.title){ pt.title=u.title; }
+    });
+  });
+}
+
+/* ===== 파이어스토어(마이그레이션된) 콘텐츠는 "한 줄에 하나씩" 적는 평문 텍스트 필드
+   (quizText/arrangeText/composeText/explainPartsText/taskCondText/vocabText/condText 등)로
+   저장돼요 — 콘텐츠 작성 화면(CONTENT_FORMS)에서 선생님이 입력하는 형식 그대로예요.
+   예전 Apps Script 백엔드는 이 평문을 화면이 바로 쓸 수 있는 배열/객체(quiz:[...] 등)로
+   서버에서 미리 파싱해서 내려줬는데, 그 파싱 코드(Code_full_v2.gs)는 새 백엔드로 안 옮겨왔어요.
+   그래서 여기 클라이언트 쪽에 그 파싱 로직을 그대로 옮겨왔어요 — 이 함수들이 없으면 실시간으로
+   받아온 콘텐츠의 quiz/arrange/compose/task 등이 비어있는 텍스트 상태로 남아서 화면에서
+   "Cannot read properties of undefined" 같은 오류가 나요. */
+function parseCondText(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const bar=line.indexOf('|');
+    const label=(bar>-1?line.slice(0,bar):line).trim();
+    const rest=(bar>-1?line.slice(bar+1):'').trim();
+    const m=rest.match(/^(문장수|regex|정규식)\s*:\s*(.*)$/);
+    if(m)return m[1]==='문장수'?{label,minSentences:Number(m[2])}:{label,regex:m[2]};
+    return {label,regex:rest};
+  });
+}
+/* 학생이 축약형(I'm, she's, we're, I'll, I've, I'd, don't, can't…)이나 곡선 따옴표(’)로 써도 조건 검사가
+   "문법을 안 썼다"고 잘못 판단하지 않게, 글을 풀어쓴 형태로도 한 번 더 검사해요. 조건 정규식이 am/is/are/
+   will/have/would/not 같은 단어를 글자 그대로만 찾는 경우가 많아서(콘텐츠 수십 군데), 정규식을 하나하나
+   고치는 대신 여기서 한꺼번에 보완해요. 's와 'd는 뜻이 둘이라(is/has, would/had) 두 가지로 풀어서 둘 다 확인해요. */
+function expandContractionVariants(text){
+  const base=String(text||'').replace(/[’‘`]/g,"'");
+  const common=s=>s
+    .replace(/\bcan't\b/gi,'cannot').replace(/\bwon't\b/gi,'will not').replace(/\bshan't\b/gi,'shall not')
+    .replace(/\bain't\b/gi,'is not')
+    .replace(/\b(\w+)n't\b/gi,'$1 not')
+    .replace(/\b(\w+)'m\b/gi,'$1 am').replace(/\b(\w+)'re\b/gi,'$1 are')
+    .replace(/\b(\w+)'ve\b/gi,'$1 have').replace(/\b(\w+)'ll\b/gi,'$1 will');
+  const v1=common(base).replace(/\b(he|she|it|that|there|here|what|who|where|how|everyone|everybody|someone|nobody)'s\b/gi,'$1 is').replace(/\b(\w+)'d\b/gi,'$1 would');
+  const v2=common(base).replace(/\b(he|she|it|that|there|here|what|who|where|how|everyone|everybody|someone|nobody)'s\b/gi,'$1 has').replace(/\b(\w+)'d\b/gi,'$1 had');
+  return [base,v1,v2];
+}
+function testWithContractions(test){
+  return t=>{
+    try{ if(test(t))return true; }catch(e){}
+    // 같은 뜻의 변형 단어(got/gotten, home/house 등)로 바꿔 써도 조건을 충족한 것으로 봐요.
+    if(wordVariantTexts(t).some(v=>{try{return test(v);}catch(e){return false;}}))return true;
+    if(!/['’‘`]/.test(String(t||'')))return false;
+    return expandContractionVariants(t).some(v=>{try{return test(v);}catch(e){return false;}});
+  };
+}
+function condsToTests(conds){
+  return (conds||[]).map(c=>{let test;
+    // 라벨에 "10개 이상"처럼 숫자가 적혀 있는데 저장된 문장수 기준(예: 3)이 다르면 라벨이 맞는 거예요
+    // (L1C8U2·L1C8U3·L3C11U1·L3C8U3·L3C9U3가 라벨은 10개인데 기준이 3으로 잘못 저장돼 있었어요).
+    if(typeof c.minSentences==='number'){const lm=String(c.label||'').match(/(\d+)\s*(?:개|문장)\s*이상/);const m=lm?Number(lm[1]):c.minSentences;test=t=>sc(t)>=m;}
+    // (?i) 같은 인라인 플래그는 자바스크립트가 지원하지 않아 컴파일 오류 → 항상 통과로 처리돼 아무것도 검사 못 했어요. 떼어내요(어차피 i 플래그를 붙여요).
+    else if(c.regex){try{const re=new RegExp(String(c.regex).replace(/\(\?i\)/g,''),'i');test=testWithContractions(t=>re.test(t));}catch(e){test=()=>true;}}
+    else test=()=>true;return {label:c.label,test};});
+}
+function parseExplainPartsText(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    let m=line.match(/^텍스트\s*:\s*(.*)$/);
+    if(m)return {t:m[1]};
+    m=line.match(/^키워드\s*:\s*(.*)$/);
+    const rest=m?m[1]:line;
+    const parts=rest.split('|').map(x=>x.trim());
+    return {k:parts[0]||'',n:parts[1]||''};
+  });
+}
+function parseQuizText(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    const o=(parts[1]||'').split(';').map(x=>x.trim()).filter(Boolean);
+    const a=Math.max(0,(parseInt(parts[2],10)||1)-1);
+    return {q:parts[0]||'',o,a,e:parts[3]||''};
+  });
+}
+function parseArrangeText(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return {ko:parts[0]||'',a:parts[1]||''};
+  });
+}
+function parseComposeText(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    const alt=(parts[3]||'').split(';').map(x=>x.trim()).filter(Boolean);
+    return {k:parts[0]||'',a:parts[1]||'',h:parts[2]||'',alt};
+  });
+}
+function parseEnKoLines(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return {en:parts[0]||'',ko:parts[1]||''};
+  });
+}
+function parseSampleText_(text){
+  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return {en:parts[0]||'',ko:parts[1]||'',role:parts[2]||'',layer:parts[3]||''};
+  });
+}
+function buildOrganizerFromFlat_(g){
+  if(g.orgTopic||g.orgS1||g.orgS2||g.orgS3||g.orgConcl)
+    return {topic:g.orgTopic||'',s1:g.orgS1||'',s2:g.orgS2||'',s3:g.orgS3||'',concl:g.orgConcl||''};
+  return g.organizer||null;
+}
+function buildFlowFromFlat_(g){
+  if(g.flowTopic||g.flowS1||g.flowS2||g.flowS3||g.flowConcl)
+    return {topic:g.flowTopic||'',s1:g.flowS1||'',s2:g.flowS2||'',s3:g.flowS3||'',concl:g.flowConcl||''};
+  return g.flow||null;
+}
+
+/* ===== 워크플로우 생성 콘텐츠 (GEN) — id로 LEVELS의 '준비 중' 자리에 병합 ===== */
+let GEN=[];//GEN_INJECT
+function toPoint(g){
+  const explainParts=(g.explainParts&&g.explainParts.length)?g.explainParts:parseExplainPartsText(g.explainPartsText);
+  const quiz=(g.quiz&&g.quiz.length)?g.quiz:parseQuizText(g.quizText);
+  const arrange=(g.arrange&&g.arrange.length)?g.arrange:parseArrangeText(g.arrangeText);
+  const compose=(g.compose&&g.compose.length)?g.compose:parseComposeText(g.composeText);
+  const rawConds=(g.task&&g.task.conds&&g.task.conds.length)?g.task.conds:parseCondText(g.taskCondText);
+  const conds=condsToTests(rawConds);
+  const prompt=(g.task&&g.task.prompt)||g.taskPrompt||'';
+  const sample=(g.task&&g.task.sample)||g.taskSample||'';
+  return {id:g.id,title:g.title,explain:{lead:explainParts,note:g.explainNote||''},
+    quiz,arrange,compose,task:{prompt,sample,conds},images:g.images||''};
+}
+function mergeGen(){const M={};GEN.forEach(g=>{if(g&&g.id)M[g.id]=g;});
+  LEVELS.forEach(l=>l.chapters.forEach(c=>{c.points=c.points.map(p=>(p&&p.soon&&M[p.id])?toPoint(M[p.id]):p);}));}
+
+/* 개념 퀴즈 정답 위치를 ①~⑤ 균등 분배 (특정 번호 쏠림 방지) */
+function balanceQuiz(quiz){const n=quiz.length;if(!n)return;let targets=[];for(let i=0;i<n;i++)targets.push(i%5);targets=shuffle(targets);
+  quiz.forEach((q,i)=>{if(!q.o||q.o.length<2)return;const a=(q.a==null?0:q.a);const correct=q.o[a];const others=q.o.filter((_,j)=>j!==a);
+    const pos=Math.min(targets[i],q.o.length-1);const newo=[];let oi=0;for(let p=0;p<q.o.length;p++){newo[p]=(p===pos)?correct:others[oi++];}q.o=newo;q.a=pos;});}
+function balanceAll(){LEVELS.forEach(l=>l.chapters.forEach(c=>c.points.forEach(p=>{if(p&&p.quiz)balanceQuiz(p.quiz);})));}
+
+/* Paragraph Writing 주제 (배운 문법 연계) */
+const PARA={
+ L1:[{id:'PW-can',level:'L1',grammar:'can',title:'What I Can Do',genre:'설명문',ready:true,
+   note:'배운 문법 <b>can</b>으로, 내가 할 수 있는 것들을 소개하는 글을 써요.',
+   grammarLabel:'can 사용',grammarTest:'\\bcan\\b',
+   sample:[
+    {en:'There are many things I can do.',ko:'내가 할 수 있는 것들이 많이 있다.',role:'ts'},
+    {en:'First, I can ride a bike very well.',ko:'첫째, 나는 자전거를 아주 잘 탈 수 있다. (소개)',role:'ss'},
+    {en:'This is because I practiced hard every day after school.',ko:'이것은 내가 방과 후 매일 열심히 연습했기 때문이다. (설명)',role:'ss'},
+    {en:'Second, I can cook fried rice.',ko:'둘째, 나는 볶음밥을 요리할 수 있다. (소개)',role:'ss'},
+    {en:'For example, I often make it for my family on weekends.',ko:'예를 들어, 나는 주말마다 가족을 위해 그것을 자주 만든다. (설명)',role:'ss'},
+    {en:'I can also play badminton.',ko:'나는 또한 배드민턴을 칠 수 있다. (소개)',role:'ss'},
+    {en:'It is because my dad taught me when I was young.',ko:'그것은 내가 어릴 때 아빠가 나에게 가르쳐 주셨기 때문이다. (설명)',role:'ss'},
+    {en:'I play it almost every weekend now.',ko:'나는 이제 거의 주말마다 그것을 친다.',role:'ss'},
+    {en:"However, I can't swim yet.",ko:'하지만 나는 아직 수영을 할 수 없다.',role:'ss'},
+    {en:'For these reasons, I want to keep learning new things.',ko:'이러한 이유로, 나는 새로운 것들을 계속 배우고 싶다.',role:'cs'}
+   ],
+   expressions:[
+    {en:'I can ~',ko:'나는 ~할 수 있다'},{en:'I can also ~',ko:'나는 또한 ~할 수 있다'},
+    {en:'I am good at ~ing',ko:'나는 ~을 잘한다'},{en:'I know how to ~',ko:'나는 ~하는 법을 안다'},
+    {en:'I learned to ~',ko:'나는 ~하는 법을 배웠다'},{en:"I can't ~ yet",ko:'나는 아직 ~할 수 없다'},
+    {en:'It is because ~',ko:'그것은 ~때문이다 (설명)'},{en:'For example, ~',ko:'예를 들어, ~ (설명)'},
+    {en:'I am able to ~',ko:'나는 ~할 수 있다'},{en:'My favorite thing to do is ~',ko:'내가 가장 좋아하는 일은 ~이다'}
+   ],
+   organizer:{topic:'무엇에 대해 쓸까요? (예: 내가 할 수 있는 것들)',s1:'① 첫 번째로 할 수 있는 것 → ② 이유·예시 (It is because ~ / For example ~)',s2:'① 두 번째로 할 수 있는 것 → ② 이유·예시',s3:'① 세 번째로 할 수 있는 것(또는 못하는 것) → ② 이유·예시',concl:'느낀 점·다짐으로 마무리해요'}
+ }],
+ L2:[{id:'PW-perfect',level:'L2',grammar:'현재완료',title:'My Special Experiences',genre:'경험담',ready:true,
+   note:'배운 문법 <b>현재완료(have/has + p.p.)</b>로, 내가 해 본 특별한 경험을 소개하는 글을 써요.',
+   grammarLabel:'현재완료(have/has + p.p.) 사용',grammarTest:'\\b(have|has)\\s+(been|gone|visited|tried|made|kept|taught|become|learned|had|seen|done|eaten|met|written|read|lived|finished|explored|\\w+ed)\\b',
+   sample:[
+    {en:'I have had many special experiences.',ko:'나는 많은 특별한 경험을 해 왔다.',role:'ts'},
+    {en:'First, I have visited Jeju Island.',ko:'첫째, 나는 제주도를 방문한 적이 있다. (소개)',role:'ss'},
+    {en:'It is because my family loves traveling together.',ko:'그것은 우리 가족이 함께 여행하는 것을 좋아하기 때문이다. (설명)',role:'ss'},
+    {en:'Second, I have tried scuba diving.',ko:'둘째, 나는 스쿠버 다이빙을 해 본 적이 있다. (소개)',role:'ss'},
+    {en:'For example, I explored a beautiful coral reef last summer.',ko:'예를 들어, 나는 지난여름에 아름다운 산호초를 탐험했다. (설명)',role:'ss'},
+    {en:'I have also made a foreign friend online.',ko:'나는 또한 온라인에서 외국인 친구를 사귀었다. (소개)',role:'ss'},
+    {en:'This is because I wanted to practice English.',ko:'이것은 내가 영어를 연습하고 싶었기 때문이다. (설명)',role:'ss'},
+    {en:'We have kept in touch for two years.',ko:'우리는 2년 동안 연락을 이어 왔다.',role:'ss'},
+    {en:'These experiences have taught me to be brave.',ko:'이런 경험들은 나에게 용감해지는 법을 가르쳐 주었다.',role:'ss'},
+    {en:'In conclusion, I hope I will have many more adventures.',ko:'결론적으로, 나는 더 많은 모험을 하기를 바란다.',role:'cs'}
+   ],
+   expressions:[
+    {en:'I have been to ~',ko:'나는 ~에 가 본 적이 있다'},{en:'I have visited ~',ko:'나는 ~을 방문한 적이 있다'},
+    {en:'I have tried ~ing',ko:'나는 ~해 본 적이 있다'},{en:'I have never ~',ko:'나는 결코 ~한 적이 없다'},
+    {en:'It is because ~',ko:'그것은 ~때문이다 (설명)'},{en:'For example, ~',ko:'예를 들어, ~ (설명)'},
+    {en:'Since then, ~',ko:'그때 이후로, ~'},{en:'It has been ~',ko:'그것은 ~해 왔다'},
+    {en:'I have learned ~',ko:'나는 ~을 배웠다'},{en:'I have made ~',ko:'나는 ~을 만들었다/사귀었다'}
+   ],
+   organizer:{topic:'무엇에 대해 쓸까요? (예: 내가 해 본 특별한 경험들)',s1:'① 첫 번째 경험 (현재완료) → ② 이유·예시',s2:'① 두 번째 경험 → ② 이유·예시 (For example ~)',s3:'① 세 번째 경험 → ② 이유·설명',concl:'경험을 통해 느낀 점·바람으로 마무리'}
+ }],
+ L3:[{id:'PW-if',level:'L3',grammar:'가정법',title:'If I Had a Superpower',genre:'상상글',ready:true,
+   note:'배운 문법 <b>가정법 과거(If + 과거동사, would)</b>로, 초능력이 있다면 하고 싶은 일을 상상해서 써요.',
+   grammarLabel:'가정법(If + 과거, would) 사용',grammarTest:'\\bwould\\b',
+   sample:[
+    {en:'If I had a superpower, my life would be very different.',ko:'만약 나에게 초능력이 있다면, 내 삶은 아주 달라질 것이다.',role:'ts'},
+    {en:'First, if I had a superpower, I would fly all around the world.',ko:'첫째, 초능력이 있다면 나는 전 세계를 날아다닐 것이다. (소개)',role:'ss'},
+    {en:'It is because I love to travel and experience various cultures.',ko:'그것은 내가 여행하고 다양한 문화를 경험하는 것을 좋아하기 때문이다. (설명)',role:'ss'},
+    {en:'Second, if I had the power to heal, I would help sick people.',ko:'둘째, 치유하는 힘이 있다면 나는 아픈 사람들을 도울 것이다. (소개)',role:'ss'},
+    {en:'This is because I want to make the world a better place.',ko:'이것은 내가 세상을 더 좋은 곳으로 만들고 싶기 때문이다. (설명)',role:'ss'},
+    {en:'I would also stop time during exams.',ko:'나는 또한 시험 시간 동안 시간을 멈출 것이다. (소개)',role:'ss'},
+    {en:'For example, I could study more without any stress.',ko:'예를 들어, 나는 스트레스 없이 더 많이 공부할 수 있을 것이다. (설명)',role:'ss'},
+    {en:'However, I would use my powers only for good.',ko:'하지만 나는 내 힘을 오직 좋은 일에만 쓸 것이다.',role:'ss'},
+    {en:'It is because great power comes with great responsibility.',ko:'그것은 큰 힘에는 큰 책임이 따르기 때문이다.',role:'ss'},
+    {en:'In conclusion, I wish I could have a superpower someday.',ko:'결론적으로, 언젠가 초능력을 가질 수 있으면 좋겠다.',role:'cs'}
+   ],
+   expressions:[
+    {en:'If I had ~, I would ~',ko:'만약 ~가 있다면, 나는 ~할 것이다'},{en:'If I could ~',ko:'만약 내가 ~할 수 있다면'},
+    {en:'I would ~',ko:'나는 ~할 것이다'},{en:'I wish I could ~',ko:'나는 ~할 수 있으면 좋겠다'},
+    {en:'It is because ~',ko:'그것은 ~때문이다 (설명)'},{en:'For example, ~',ko:'예를 들어, ~ (설명)'},
+    {en:'I would be able to ~',ko:'나는 ~할 수 있을 것이다'},{en:'It would be ~',ko:'그것은 ~일 것이다'},
+    {en:'Imagine if ~',ko:'~라면 상상해 봐'},{en:'I would never ~',ko:'나는 결코 ~하지 않을 것이다'}
+   ],
+   organizer:{topic:'어떤 초능력을 상상할까요? (If I had a superpower ...)',s1:'① 첫 번째로 하고 싶은 일 (If I could ~, I would ~) → ② 이유',s2:'① 두 번째로 하고 싶은 일 → ② 이유·예시',s3:'① 세 번째로 하고 싶은 일 → ② 이유·예시',concl:'소망(I wish I could ~)으로 마무리'}
+ }]
+};
+
+/** Paragraph Writing 주제의 "문법 태그"(grammar)를 그 레벨의 Pattern Drill 챕터 제목과 대조해서,
+ *  몇 챕터에 해당하는지 알아내요(예: 문법 태그가 "조동사"면 "CHAPTER 04 조동사"를 찾아 4를 돌려줘요).
+ *  선생님이 "챕터 번호" 칸을 직접 안 채워도, 문법 태그만 맞게 적어주면 자동으로 챕터 번호가 매겨져요. */
+function inferChapFromPatternDrill(level,grammarTag){
+  const lv=LEVELS.find(l=>l.id===level);
+  const needle=String(grammarTag||'').trim();
+  if(!lv||!lv.chapters||!lv.chapters.length||!needle)return null;
+  for(const ch of lv.chapters){
+    const chTitle=String(ch.t||'').replace(/^CHAPTER\s*\d+\s*/i,'').trim();
+    if(!chTitle)continue;
+    if(chTitle.indexOf(needle)>-1||needle.indexOf(chTitle)>-1){
+      const m=String(ch.id||'').match(/C(\d+)$/);
+      if(m)return Number(m[1]);
+    }
+  }
+  return null;
+}
+/* 생성된 Paragraph 주제 병합 (챕터 문법별) */
+let GENPARA=[];//GENPARA_INJECT
+let GENARTICLE=[];
+function mergePara(){const CHMAP={'PW-can':4,'PW-perfect':2,'PW-if':10};
+  // remergeContent()가 실시간 구독 때문에 반복 호출될 수 있어서, 매번 다시 채우기 전에 지난 번에
+  // 넣어둔 라이브 콘텐츠(_live로 표시해둠)만 골라 비워요 — 안 그러면 새로고침 없이 계속 쌓여서
+  // 같은 문단쓰기 주제가 목록에 중복으로 여러 번 나타나요(코드에 내장된 기본 주제는 그대로 둬요).
+  Object.keys(PARA).forEach(k=>{ PARA[k]=PARA[k].filter(t=>!t._live); });
+  Object.keys(PARA).forEach(k=>PARA[k].forEach(t=>{if(CHMAP[t.id]!=null)t.chap=CHMAP[t.id];}));
+  GENPARA.forEach(t=>{if(t&&t.level&&PARA[t.level]){
+    t.ready=true;t._live=true;
+    // "챕터 번호" 칸을 안 채워서 목록에서 몇 챕터인지 안 보이고 헷갈리던 문제 — 비어있으면
+    // 문법 태그로 Pattern Drill 챕터를 찾아 자동으로 채워요(그래도 못 찾으면 비워둬요).
+    if(t.chap==null||String(t.chap).trim()===''){
+      const inferred=inferChapFromPatternDrill(t.level,t.grammar);
+      if(inferred!=null)t.chap=inferred;
+    }
+    if(!(t.sample&&t.sample.length))t.sample=parseSampleText_(t.sampleText);
+    if(!(t.expressions&&t.expressions.length))t.expressions=parseEnKoLines(t.exprText);
+    if(!t.organizer)t.organizer=buildOrganizerFromFlat_(t);
+    if(!t.flow)t.flow=buildFlowFromFlat_(t);
+    PARA[t.level].push(t);
+  }});
+  Object.keys(PARA).forEach(k=>PARA[k].sort((a,b)=>((a.chap||99)-(b.chap||99))));}
+
+/* ================= ARTICLE (기사 요약) ================= */
+/* 공개 대상(학교/학년/반) 매칭 — 값이 비어있으면 제한 없음(전체 공개), 쉼표로 여러 값 지정 가능 */
+function matchAudience(target,val){
+  const t=String(target||'').trim();
+  if(!t)return true;
+  const list=t.split(/[,，、]/).map(s=>s.trim()).filter(Boolean);
+  const v=String(val||'').trim();
+  if(list.includes(v))return true;
+  // 학년이 "중2"처럼 학교급이 붙어 저장돼도, 예전처럼 대상 학년을 숫자("2")로만 적어둔 콘텐츠가 계속 보이게
+  // 숫자 부분으로도 맞춰봐요(숫자만 적은 대상은 학교급 구분 없이 같은 숫자 학년 전체에 보여요).
+  const m=v.match(/^(?:초|중|고)(\d+)$/);
+  return !!(m&&list.includes(m[1]));
+}
+/* 학교 이름 비교 — 띄어쓰기·대소문자·"학교" 글자 유무("안화중" = "안화중학교" = "안화 중")를 무시해요. */
+function normSchoolName(x){
+  return String(x||'').replace(/\s+/g,'').toLowerCase().replace(/(초등학교|중학교|고등학교)$/,m=>({'초등학교':'초','중학교':'중','고등학교':'고'})[m]);
+}
+function matchAudienceSchool(target,school){
+  const t=String(target||'').trim();
+  if(!t)return true;
+  const v=normSchoolName(school);
+  return t.split(/[,，、]/).map(x=>x.trim()).filter(Boolean).some(x=>normSchoolName(x)===v);
+}
+/* 학년 비교 — 학생 쪽이 "1"(숫자만)·"중1"·"1학년"·"중1학년" 중 어떻게 저장돼 있든, 콘텐츠 대상 학년이 "1"·"중1"·"1학년"
+   어떻게 적혀 있든 맞춰요. 대상에 학교급(초/중/고)이 붙어 있으면 학생의 학교급(학교 이름 끝글자나 학년 값)과도 같아야 하고,
+   학생 쪽 학교급을 알 수 없으면(숫자만 저장된 학생) 숫자만 같으면 맞는 걸로 봐요. */
+function matchAudienceGrade(target,school,grade){
+  const t=String(target||'').trim();
+  if(!t)return true;
+  const sg=String(grade==null?'':grade).replace(/\s+/g,'');
+  const stuNum=(sg.match(/\d+/)||[''])[0];
+  const stage=(stageGrade(school,grade).match(/^(초|중|고)/)||[''])[1]||((sg.match(/^(초|중|고)/)||[''])[1]);
+  return t.split(/[,，、]/).map(x=>x.trim().replace(/\s+/g,'')).filter(Boolean).some(x=>{
+    const m=x.match(/^(초|중|고)?(\d+)(?:학년)?$/);
+    if(!m)return x===sg;
+    if(m[2]!==stuNum)return false;
+    return !m[1]||!stage||m[1]===stage;
+  });
+}
+function visibleToUser(item){
+  // 학생계정 탭에서 "테스트계정" 칸을 표시해둔 계정은, 학교/학년/반으로 공개 대상이 좁혀진 컨텐츠(예:
+  // 특정 학교·학년 전용 수행평가)까지 전부 보여요 — 선생님이 지금 등록된 모든 컨텐츠를 학생 입장에서
+  // 한 번에 둘러보고 테스트하고 싶을 때 쓰라고 만든 계정이에요. (교사 미리보기 중에는 이 계정으로
+  // 로그인한 게 아니라 실제 그 학생 기준으로 봐야 하니 이 예외를 적용하지 않아요.)
+  if(USER.isTestAccount&&!TEACHER_PREVIEW)return true;
+  // 선생님이 학생 화면을 미리보기(TEACHER_PREVIEW) 하는 중이면, 공개 대상 매칭은 지금 로그인한
+  // 선생님 계정(학교/학년/반이 보통 비어있음)이 아니라 "미리보는 그 학생" 기준으로 해야 해요.
+  // 안 그러면 특정 학교/학년/반으로 제한된 컨텐츠(예: 수행평가)가 선생님 화면에서는 아예 안 보여서,
+  // 학생은 실제로 제출했는데 선생님은 그 글을 찾아 들어갈 방법이 없어지는 문제가 생겨요.
+  const school=TEACHER_PREVIEW?TEACHER_PREVIEW.school:USER.school;
+  const grade=TEACHER_PREVIEW?TEACHER_PREVIEW.schoolGrade:USER.schoolGrade;
+  const cls=TEACHER_PREVIEW?TEACHER_PREVIEW.cls:USER.cls;
+  return matchAudienceSchool(item.targetSchool,school)&&matchAudienceGrade(item.targetSchoolGrade,school,grade)&&matchAudience(item.targetClass,cls);
+}
+function toArticlePoint(g){
+  const rawConds=(g.conds&&g.conds.length)?g.conds:parseCondText(g.condText);
+  const conds=condsToTests(rawConds);
+  const vocab=(g.vocab&&g.vocab.length)?g.vocab:parseEnKoLines(g.vocabText);
+  return {id:g.id,level:g.level,title:g.title,source:g.source||'',body:g.body||'',vocab,prompt:g.prompt||'',conds,
+    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||g.targetGrade||'',targetClass:g.targetClass||'',images:g.images||''};
+}
+const ARTICLE={};
+function mergeArticle(){
+  // remergeContent()가 실시간 구독 때문에 반복 호출돼도 목록이 계속 쌓이지 않도록, 다시 채우기
+  // 전에 항상 한 번 비워요(mergeStory와 같은 방식).
+  Object.keys(ARTICLE).forEach(k=>{ delete ARTICLE[k]; });
+  (typeof GENARTICLE!=='undefined'?GENARTICLE:[]).forEach(g=>{
+    if(!g||!g.level)return;
+    (ARTICLE[g.level]=ARTICLE[g.level]||[]).push(toArticlePoint(g));
+  });
+}
+
+/* ================= EXAM (수행평가 대비) ================= */
+let GENEXAM=[];
+function toExamPoint(g){
+  const rawConds=(g.conds&&g.conds.length)?g.conds:parseCondText(g.condText);
+  const conds=condsToTests(rawConds);
+  return {id:g.id,level:g.level,title:g.title,prompt:g.prompt||'',conds,
+    evalCriteria:g.evalCriteria||g.evalAreaText||'',
+    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||g.targetGrade||'',targetClass:g.targetClass||'',images:g.images||'',
+    mindmapText:g.mindmapText||'',tableText:g.tableText||'',frameText:g.frameText||'',grammarSwapText:g.grammarSwapText||''};
+}
+const EXAM={};
+function mergeExam(){
+  // remergeContent()가 실시간 구독 때문에 반복 호출돼도 목록이 계속 쌓이지 않도록, 다시 채우기
+  // 전에 항상 한 번 비워요(mergeStory와 같은 방식).
+  Object.keys(EXAM).forEach(k=>{ delete EXAM[k]; });
+  (typeof GENEXAM!=='undefined'?GENEXAM:[]).forEach(g=>{
+    if(!g)return;
+    // ⚠️ 예전엔 "레벨" 칸이 비어 있는 수행평가는 목록에서 통째로 빠져서(대상 학교·학년을 맞게 적어도) 학생에게 안 보였어요.
+    // 수행평가는 레벨이 아니라 대상 학교·학년·반으로 공개하니, 레벨이 비어 있어도 목록에 넣어줘요.
+    const key=g.level||'_none';
+    (EXAM[key]=EXAM[key]||[]).push(toExamPoint(g));
+  });
+}
+
+/* ================= Story Writing (초5) ================= */
+let GENSTORY=[];
+function toStoryTopic(g){
+  const pics=(g.pics||[]).slice(0,4).map(p=>({
+    imageUrl:p.imageUrl||'',crop:p.crop||'center center',zoom:Number(p.zoom||100)||100,
+    questions:String(p.questions||'').split('\n').map(s=>s.trim()).filter(Boolean),
+    words:splitWordLines(p.words).map(parseWordLine),
+    starter:p.starter||''
+  }));
+  return {id:g.id,level:g.level,title:g.title||'',titleKo:g.titleKo||'',intro:g.intro||'',sampleText:g.sampleText||'',pics,
+    minWords:Number(g.minWords||0)||0,
+    targetSchool:g.targetSchool||'',targetSchoolGrade:g.targetSchoolGrade||g.targetGrade||'',targetClass:g.targetClass||''};
+}
+/** 선생님이 Story Writing 제목 앞에 "[1-2]"처럼 번호를 붙여서 순서를 관리하고 계셔서, 그 번호
+ *  기준으로 정렬해요. 서버에서 받아오는 순서(등록한 순서)가 뒤섞여 있어도 이 번호대로 보이게 해요.
+ *  번호가 없는 제목은 번호 있는 것들 뒤로, 원래 순서 그대로 보여요. */
+function storyTitleSortKey(title){
+  const m=String(title||'').trim().match(/^\[(\d+)\s*-\s*(\d+)\]/);
+  if(m)return [0,Number(m[1]),Number(m[2])];
+  return [1,0,0];
+}
+function sortStoryList(list){
+  return list.map((item,i)=>({item,i})).sort((a,b)=>{
+    const ka=storyTitleSortKey(a.item.title||a.item.titleKo||a.item.id);
+    const kb=storyTitleSortKey(b.item.title||b.item.titleKo||b.item.id);
+    if(ka[0]!==kb[0])return ka[0]-kb[0];
+    if(ka[1]!==kb[1])return ka[1]-kb[1];
+    if(ka[2]!==kb[2])return ka[2]-kb[2];
+    return a.i-b.i;
+  }).map(x=>x.item);
+}
+const STORY={};
+function mergeStory(){
+  // loadLiveContent()는 첫 접속 때뿐 아니라 선생님이 레벨/컨텐츠를 저장한 뒤에도(사이트를 새로고침
+  // 안 해도 바로 보이게 하려고) 다시 호출돼요. 그런데 STORY[레벨]에 그냥 push만 하면, 다시 불릴 때마다
+  // "이미 들어있던 것 + 새로 받아온 것"이 계속 쌓여서 같은 이야기가 화면에 여러 번 중복으로 보이는
+  // 문제가 있었어요(문법 드릴·문단 쓰기 등은 아이디를 key로 쓰는 객체라 다시 불러도 덮어써질 뿐
+  // 안 늘어나는데, Story Writing만 배열에 push하는 방식이라 이 문제가 있었어요). 그래서 매번 다시
+  // 채우기 전에 지금까지 쌓인 내용을 한 번 비우고 시작해요.
+  Object.keys(STORY).forEach(k=>{ delete STORY[k]; });
+  (typeof GENSTORY!=='undefined'?GENSTORY:[]).forEach(g=>{
+    if(!g||!g.level)return;
+    (STORY[g.level]=STORY[g.level]||[]).push(toStoryTopic(g));
+  });
+  Object.keys(STORY).forEach(k=>{ STORY[k]=sortStoryList(STORY[k]); });
+}
+
+/* ================= app state ================= */
+let USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isAcademyAdmin:false,isTestAccount:false},curLevel='L1';
+/* 선생님이 학생 목록에서 학생을 고르면, 그 학생 이름으로 이 값이 채워져요. 이 값이 있는 동안은
+   학생용 홈 화면(viewHome)·각 트랙 메뉴 화면이 "그 학생이 이미 낸 글이 있는지" 보여주는 미리보기
+   모드로 동작해요 — 실제로 문제를 풀거나 글을 쓸 수는 없고, 커리큘럼을 죽 둘러보다가 항목을 누르면
+   그 학생이 그 항목에 낸 글(여러 번 냈으면 최신 글 + "이전 제출 보기")을 볼 수 있어요. */
+let TEACHER_PREVIEW=null;
+/* type/point(제목)만으로 확인해요 — Pattern Drill만 고유 id(챕터란에 유닛 id가 그대로 들어가요)가
+   있고, 나머지(Paragraph/Article/수행평가/Story)는 제출할 때 제목만 저장되기 때문이에요. */
+function teacherPreviewSubsFor(chapterKey,title){
+  if(!TEACHER_PREVIEW)return[];
+  return subsMatchFor(TEACHER_PREVIEW.subs,chapterKey,title);
+}
+/* teacherPreviewSubsFor와 같은 매칭 규칙을, 임의의 제출물 배열(subs)에 대해서 쓸 수 있게 뽑아둔
+   버전이에요 — 아래 reconcileDoneFromServer에서 "내 제출 내역"에 대해 똑같은 규칙으로 매칭할 때 써요. */
+function subsMatchFor(subs,chapterKey,title){
+  return (subs||[]).filter(s=>{
+    if(s.chapter===chapterKey&&(title===undefined||s.point===title))return true;
+    if(title!==undefined&&s.chapter==='Rewriting'&&s.point===title)return true;
+    return false;
+  });
+}
+/* ⚠️ "완료" 표시를 그동안 각 목록 화면(Pattern Drill·Paragraph·Article·수행평가·Story)마다
+ *  이 기기의 localStorage(loadProg)만 보고 켰는데, 이건 "이 브라우저에서 저장한 기록"일 뿐이라
+ *  기기를 바꾸거나, 예전 사이트(마이그레이션 이전)에서 이미 낸 글은 로컬 기록이 없어서 실제로는
+ *  제출했는데도 "안 낸 것"처럼 보이는 문제가 있었어요(Olivia·Cain처럼 마이그레이션 전에 낸 글이
+ *  대표적인 예). 그래서 화면은 우선 로컬 기록으로 빠르게 그리고, 그 아래에서 서버에 실제 저장된
+ *  "내 제출 내역"과 다시 한 번 대조해서 필요하면 완료 표시를 새로 켜줘요(이미 켜져 있으면 건너뛰어요).
+ *  rowsByKey: { 아무_고유키: {row, dot, meta, chapterKey, title, doneLabel} } */
+function reconcileDoneFromServer(rowsByKey){
+  if(!USER||!USER.id||!SUBMIT_URL)return;
+  const keys=Object.keys(rowsByKey||{});
+  if(!keys.length)return;
+  (async()=>{
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      const subs=(data&&data.ok)?(data.submissions||[]):[];
+      if(!subs.length)return;
+      keys.forEach(key=>{
+        const r=rowsByKey[key];
+        if(!r||!r.row||r.row.classList.contains('done'))return;
+        if(!subsMatchFor(subs,r.chapterKey,r.title).length)return;
+        r.row.classList.add('done');
+        if(r.dot)r.dot.textContent='✓';
+        if(r.meta)r.meta.textContent=r.doneLabel||'다시 풀기';
+        // 화면 표시만 "완료"로 바꾸는 게 아니라, onclick이 실제로 참조하는 state.done도 같이
+        // 켜줘야 그 즉시(새로고침 없이) 눌렀을 때 review 모드(마지막 글로 바로 이동)로 들어가요.
+        if(r.state)r.state.done=true;
+      });
+    }catch(e){}
+  })();
+}
+/* AI로 조건 확인하기 — 정규식으로 판단하기 애매한 문법 조건도 AI가 글 전체를 읽고 직접 판단해줘요.
+   너무 자주 누르지 못하도록 클라이언트에서도 쿨다운(초읽기)을 걸어요 (서버에서도 한 번 더 막아줘요). */
+const AI_COND_CHECK_COOLDOWN_SEC=20;
+function addAiCondCheckButton(container,ul,getText,getOriginal){
+  const row=el('div');row.style.cssText='display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap';
+  const aiBtn=el('button','btn ghost','🤖 AI로 조건 확인하기');aiBtn.type='button';aiBtn.style.cssText='padding:6px 14px;font-size:13px';
+  const aiMsg=el('span','fx');
+  row.appendChild(aiBtn);row.appendChild(aiMsg);
+  container.appendChild(row);
+  let cooldownTimer=null;
+  const startCooldown=()=>{
+    let remain=AI_COND_CHECK_COOLDOWN_SEC;
+    aiBtn.disabled=true;
+    const orig='🤖 AI로 조건 확인하기';
+    aiBtn.textContent=orig+' ('+remain+'초)';
+    cooldownTimer=setInterval(()=>{
+      remain--;
+      if(remain<=0){clearInterval(cooldownTimer);aiBtn.disabled=false;aiBtn.textContent=orig;}
+      else aiBtn.textContent=orig+' ('+remain+'초)';
+    },1000);
+  };
+  aiBtn.onclick=async()=>{
+    const text=getText();
+    if(!text||!text.trim()){aiMsg.className='fx no';aiMsg.textContent='먼저 글을 써주세요.';return;}
+    const items=Array.from(ul.querySelectorAll('li'));
+    const labels=items.map(li=>li._c.label);
+    aiBtn.disabled=true;aiMsg.className='fx';aiMsg.textContent='AI가 확인하는 중… (몇 초 걸릴 수 있어요)';
+    try{
+      const original=getOriginal?(getOriginal()||''):'';
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'checkConditionsAI',studentId:USER.id,text,original,conditions:labels})});
+      let data=null;try{data=await res.json();}catch(e){}
+      if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 조건 확인 실패');
+      // ⚠️ 서버 응답은 {result:{results:[{condition,met,note}, ...]}} 형태인데, 예전 코드가
+      // data.results[i](최상위·boolean 취급)를 그대로 읽어서 매번 undefined 배열을 인덱싱하다가
+      // 그대로 오류가 나버렸어요("체크 안 되고 오류남"의 원인). result.results[i].met을 읽도록 고쳤어요.
+      const results=(data.result&&Array.isArray(data.result.results))?data.result.results:[];
+      items.forEach((li,i)=>{const r=results[i];const ok=!!(r&&r.met);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';});
+      aiMsg.className='fx ok';aiMsg.textContent='✅ AI가 조건을 다시 확인했어요.';
+    }catch(e){
+      aiMsg.className='fx no';aiMsg.textContent=String(e.message||e);
+    }finally{
+      startCooldown();
+    }
+  };
+}
+const SESSION_KEY='ewl2_session';
+function saveSession(){try{store.set(SESSION_KEY,JSON.stringify(USER));}catch(e){}}
+function loadSession(){try{const raw=store.get(SESSION_KEY);if(!raw)return null;const u=JSON.parse(raw);if(!u||!u.id)return null;return u;}catch(e){return null;}}
+/* 선생님이 특정 학생 화면(미리보기)을 보다가 새로고침하면 항상 선생님 홈 화면으로 돌아가버리는
+   문제가 있었어요 — 이 사이트는 화면 전환을 URL 없이 자바스크립트로만 하다 보니, 새로고침하면
+   지금 어떤 학생을 보고 있었는지 기억할 방법이 없었어요. 그래서 "지금 어느 학생을 보고 있는지"만
+   따로 저장해뒀다가, 새로고침으로 다시 시작할 때(boot) 선생님 홈 대신 그 학생 화면으로 바로
+   돌아가게 해요. (학생 계정 쪽은 화면을 딱 하나만 더 깊이 들어갈 수 있는 구조가 아니라서 — 예:
+   퀴즈 도중 새로고침 — 여기선 다루지 않고, 레벨 홈 복원은 예전부터 되던 대로 그대로 둬요.) */
+const TEACHER_NAV_KEY='ewl_teacher_nav';
+// subId를 같이 저장해두면, 새로고침했을 때 학생 홈 화면이 아니라 실제로 보고 있던 그 제출물의
+// 첨삭 화면까지 바로 복원할 수 있어요. subId를 생략하면(학생 홈 화면으로 나갈 때) 그 부분만 지워요.
+function saveTeacherNav(studentId,studentName,subId){try{store.set(TEACHER_NAV_KEY,JSON.stringify({studentId,studentName,subId:subId||''}));}catch(e){}}
+function clearTeacherNav(){try{store.set(TEACHER_NAV_KEY,'');}catch(e){}}
+function loadTeacherNav(){try{const raw=store.get(TEACHER_NAV_KEY);if(!raw)return null;const n=JSON.parse(raw);if(!n||!n.studentId)return null;return n;}catch(e){return null;}}
+function clearSession(){try{store.set(SESSION_KEY,'');}catch(e){}}
+function applySessionUI(){
+  document.body.classList.toggle('can-copy',USER.role==='teacher'||!!USER.isTestAccount);
+  if(USER.role==='teacher'){whoEl.textContent=USER.name+' 선생님';}else{whoEl.textContent=USER.name+' 님';}
+  homeBtn.style.display='';logoutBtn.style.display='';
+}
+function enterHome(){if(USER.role==='teacher')viewTeacherHome();else viewHome();}
+const stage=document.getElementById('stage');
+const whoEl=document.getElementById('who'),homeBtn=document.getElementById('homeBtn'),logoutBtn=document.getElementById('logoutBtn');
+const nav=document.getElementById('nav'),prevB=document.getElementById('prev'),nextB=document.getElementById('next'),counter=document.getElementById('counter');
+const prog=document.querySelector('#progress>span');
+const pageEl=document.getElementById('page');
+function setWide(on){pageEl.classList.toggle('wide',!!on);}
+function progKey(){return 'ewl2_'+normKo(USER.id);}
+function loadProg(){try{return JSON.parse(store.get(progKey())||'{}')}catch(e){return {}}}
+function saveDone(pid,detail){const p=loadProg();p[pid]=detail||'완료';store.set(progKey(),JSON.stringify(p));}
+
+/* ================= 임시저장 (시간 안에 다 못 쓰면 이어서 쓰기) ================= */
+function debounce(fn,ms){let t=null;return(...args)=>{if(t)clearTimeout(t);t=setTimeout(()=>fn(...args),ms);};}
+async function fetchDraft(chapter,point){
+  if(!SUBMIT_URL)return null;
+  try{
+    const res=await fetch(SUBMIT_URL+'?view=draft&studentId='+encodeURIComponent(USER.id)+'&chapter='+encodeURIComponent(chapter)+'&point='+encodeURIComponent(point)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+    const data=await res.json();
+    if(data&&data.ok&&data.draft){
+      try{return{obj:JSON.parse(data.draft),savedAt:data.savedAt||''};}catch(e){return null;}
+    }
+  }catch(e){}
+  return null;
+}
+function saveDraftNow(chapter,point,stObj){
+  if(!SUBMIT_URL)return;
+  try{
+    // keepalive:true — 문제를 푼 직후 바로 탭/브라우저를 닫아도 이 저장 요청이 중간에 취소되지 않게 해요
+    // (예전엔 닫는 순간 요청이 끊겨서 방금 푼 문제까지의 진행 상황이 서버에 안 남는 경우가 있었어요).
+    fetch(SUBMIT_URL,{method:'POST',keepalive:true,headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'saveDraft',id:USER.id,name:USER.name,academy:USER.academy||'',chapter:chapter,point:point,draft:JSON.stringify(stObj)})}).catch(()=>{});
+  }catch(e){}
+}
+/* 임시저장 불러왔다는 안내 배너를 slide 맨 위에 붙여줘요. */
+/* 글쓰는 칸 아래에 "지금 몇 단어" 표시 — 칸이 화면에 붙으면 자동으로 아래에 붙고, 값이 코드로 채워져도(이어쓰기 등) 따라가요. */
+function wordCountEn_(v){return (String(v||'').match(/[A-Za-z0-9]+(?:['’\-][A-Za-z0-9]+)*/g)||[]).length;}
+function addWordCount(ta){
+  const c=el('div');c.style.cssText='font-size:12.5px;color:#6b7684;text-align:right;margin-top:4px';
+  let attached=false,tries=0,last=-1;
+  const tick=()=>{
+    if(ta.isConnected){
+      if(!attached){ta.insertAdjacentElement('afterend',c);attached=true;}
+      const n=wordCountEn_(ta.value);if(n!==last){last=n;c.textContent='✍️ '+n+'단어';}
+    }else if(attached||++tries>240){clearInterval(t);}
+  };
+  const t=setInterval(tick,400);ta.addEventListener('input',tick);tick();
+  return ta;
+}
+function draftBanner(savedAt){
+  const b=el('div');b.style.cssText='background:#eef0ff;color:#4338ca;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:10px';
+  b.textContent='🕓 이전에 저장해둔 글을 불러왔어요'+(savedAt?(' ('+String(savedAt).slice(0,16)+' 저장)'):'')+'. 이어서 쓰면 돼요.';
+  return b;
+}
+
+/* view helpers */
+function clearStage(){stage.innerHTML='';}
+let EWL_POPSTATE_BOUND=false;
+/* 브라우저/모바일 기기의 "뒤로가기"를 누르면 화면 안 "◀ 뒤로" 버튼이 아니라 사이트 자체를 나가버리는
+   문제가 있었어요 — 이 사이트는 페이지 이동 없이 화면만 바꿔치기하는 SPA라서, 브라우저 히스토리에
+   아무것도 안 쌓이면 뒤로가기가 곧바로 이 사이트를 열기 전 페이지로 나가버려요. 그래서 화면이 바뀔
+   때마다(mountView가 호출될 때마다) 히스토리를 하나씩 쌓아두고, 뒤로가기(popstate)가 감지되면 지금
+   화면에 이미 있는 "◀ 뒤로" 버튼을 코드로 대신 눌러줘서, 실제로 사이트 안에서 한 단계만 뒤로
+   가게 만들어요. 뒤로가기 버튼이 없는 화면(맨 처음 홈 화면 등)에서는 그대로 사이트를 나가요 —
+   그게 자연스러운 동작이에요. */
+function mountView(build){
+  // 새 버전이 배포된 걸 감지해두었으면(NEW_VERSION_AVAILABLE), 다음 화면 전환 시점에 새 화면을
+  // 그리는 대신 페이지를 통째로 새로고침해서 최신 코드를 받아와요 — "다른 버튼을 누르면 자동으로
+  // 최신 버전이 반영되게" 해달라는 요청을 이렇게 구현했어요. 화면이 바뀌는 순간(=원래도 지금
+  // 화면을 떠나는 시점)에만 일어나서, 한창 입력 중인 화면에서 갑자기 새로고침되는 일은 없어요.
+  if(typeof NEW_VERSION_AVAILABLE!=='undefined'&&NEW_VERSION_AVAILABLE){location.reload();return;}
+  clearStage();nav.classList.remove('on');clearViewUnsubs();const v=el('div','view active');const w=el('div','wrap');v.appendChild(w);stage.appendChild(v);prog.style.width='0';build(w);
+  try{history.pushState({ewlNav:true},'',location.href);}catch(e){}
+  if(!EWL_POPSTATE_BOUND){
+    EWL_POPSTATE_BOUND=true;
+    window.addEventListener('popstate',(ev)=>{
+      if(!ROUTE_PATHMODE&&!(ev.state&&ev.state.ewlNav)&&location.hash)return; // file:// 에서 주소창 #/… 를 직접 바꾼 경우는 hashchange 쪽에서 처리
+      const bk=document.querySelector('.backbtn');
+      if(bk){try{history.pushState({ewlNav:true},'',location.href);}catch(e){} bk.click();}
+    });
+  }
+}
+
+/* ================= LOGIN ================= */
+let ROSTER=null,TEACHERS=null,rosterLoading=null;
+/* 반(class) 이름 -> 레벨 id(L0/L1/L2/L3) 매핑. 선생님이 '반레벨' 탭에 등록해두면, 학생이 로그인하거나
+   새로고침해서 다시 들어올 때 그 학생 반에 맞는 레벨 홈 화면으로 자동으로 맞춰줘요(매번 직접 탭을
+   눌러 바꿀 필요 없이). 매핑이 없는 반은 지금처럼 기본값(L1)이 그대로 유지돼요. */
+let CLASS_LEVELS={};
+function loadRosterCache(){try{return JSON.parse(store.get('ewl2_roster')||'{}')}catch(e){return {}}}
+function saveRosterCache(students,teachers,classLevels){try{store.set('ewl2_roster',JSON.stringify({students:students||[],teachers:teachers||[],classLevels:classLevels||{}}));}catch(e){}}
+/* 커리큘럼 컨텐츠(levels/pattern/paragraph/article/exam/story)도 로스터처럼 로컬에 캐시해둬요.
+ * 예전엔 새로고침할 때마다 이 전체 컨텐츠를 서버에서 다 받아올 때까지 화면이 하얗게 비어있었는데
+ * (보통 1초 정도 걸려요) — 이제 캐시가 있으면 그걸로 즉시 화면부터 그리고, 최신 내용은 뒤에서
+ * 조용히 받아와서 반영해요(remergeContent가 원래도 화면을 억지로 다시 그리진 않아요). */
+function loadContentCache(){try{return JSON.parse(store.get('ewl2_content')||'{}')}catch(e){return {}}}
+function saveContentCache(){
+  try{
+    store.set('ewl2_content',JSON.stringify({
+      levels:LEVELS_DATA,patternStructure:PATTERN_STRUCTURE_DATA,
+      gen:GEN,genpara:GENPARA,genarticle:GENARTICLE,genexam:GENEXAM,story:GENSTORY,
+      drillMinWords:DRILL_MIN_WORDS,drillMinSentences:DRILL_MIN_SENTENCES
+    }));
+  }catch(e){}
+}
+function fetchRoster(){
+  if(rosterLoading)return rosterLoading;
+  rosterLoading=(async()=>{
+    if(!SUBMIT_URL)throw new Error('NO_URL');
+    const res=await fetch(SUBMIT_URL,{method:'GET'});
+    const data=await res.json();
+    if(!data||!data.ok||!Array.isArray(data.students))throw new Error('BAD_DATA');
+    ROSTER=data.students;TEACHERS=Array.isArray(data.teachers)?data.teachers:[];
+    CLASS_LEVELS=(data.classLevels&&typeof data.classLevels==='object')?data.classLevels:{};
+    saveRosterCache(ROSTER,TEACHERS,CLASS_LEVELS);
+    return {students:ROSTER,teachers:TEACHERS};
+  })().catch(err=>{rosterLoading=null;throw err;});
+  return rosterLoading;
+}
+/** 학생의 반(cls)에 등록된 레벨이 있으면 curLevel을 그 레벨로 맞춰줘요. 매핑이 없거나 존재하지 않는
+ *  레벨 id면 아무것도 안 바꿔요(지금처럼 기본값 유지). */
+function applyClassLevel(cls){
+  const id=CLASS_LEVELS[String(cls||'').trim()];
+  if(id&&LEVELS.some(l=>l.id===id))curLevel=id;
+}
+/* 로그인 자체(아이디/비밀번호 대조)는 지금처럼 로컬에서 명단(ROSTER)으로 처리하고, 그 직후에
+   "실시간 구독용" 파이어베이스 로그인을 한 번 더 시도해요. 서버(mintToken)가 아이디·비밀번호를
+   다시 한번 확인한 뒤 커스텀 토큰을 내려주면 그걸로 firebase에도 로그인돼요. 이 과정은 실패해도
+   (네트워크 문제 등) 이미 끝난 로컬 로그인에는 전혀 영향을 안 주고, 그냥 실시간 업데이트 없이
+   지금까지처럼(새로고침해야 최신 내용이 보이는 방식으로) 계속 쓸 수 있어요. */
+async function signInFirebaseRealtime(id,password){
+  try{
+    const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'mintToken',id,password})});
+    const data=await res.json();
+    if(!data||!data.ok||!data.customToken)throw new Error((data&&data.error)||'토큰을 받지 못했어요.');
+    await fbAuth.signInWithCustomToken(data.customToken);
+  }catch(e){
+    console.warn('실시간 연동용 로그인에 실패했어요 — 실시간 업데이트 없이 계속 진행해요:',e);
+  }
+}
+function viewLogin(){setWide(false);mountView(w=>{
+  const box=el('div','login-box');
+  box.appendChild(el('h1','title','로그인'));
+  box.appendChild(el('div','hint','선생님께 받은 아이디와 비밀번호를 입력하세요.'));
+  const f1=el('div','field');f1.appendChild(el('div','fl','아이디'));const ni=el('input','in');ni.placeholder='아이디';ni.autocomplete='username';f1.appendChild(ni);
+  const f2=el('div','field');f2.appendChild(el('div','fl','비밀번호'));const pi=el('input','in');pi.type='password';pi.placeholder='비밀번호';pi.autocomplete='current-password';f2.appendChild(pi);
+  box.appendChild(f1);box.appendChild(f2);
+  const b=el('button','btn','시작하기 ▶');b.style.marginTop='14px';box.appendChild(b);const fx=el('div','fx');box.appendChild(fx);
+  const go=async()=>{
+    const idv=ni.value.trim(),pwv=pi.value;
+    if(!idv){fx.className='fx no';fx.textContent='아이디를 입력하세요.';ni.focus();return;}
+    if(!pwv){fx.className='fx no';fx.textContent='비밀번호를 입력하세요.';pi.focus();return;}
+    b.disabled=true;const prevLabel=b.textContent;b.textContent='확인 중…';fx.className='fx';fx.textContent='';
+    let students=null,teachers=null;
+    try{const r=await fetchRoster();students=r.students;teachers=r.teachers;}
+    catch(e){const c=loadRosterCache();students=c.students||[];teachers=c.teachers||[];}
+    b.disabled=false;b.textContent=prevLabel;
+    if((!students||!students.length)&&(!teachers||!teachers.length)){
+      fx.className='fx no';fx.textContent='계정 목록을 불러올 수 없어요. 인터넷 연결을 확인하거나 선생님께 문의하세요.';return;
+    }
+    const tmatch=(teachers||[]).find(s=>String(s.id||'').toLowerCase()===idv.toLowerCase());
+    if(tmatch){
+      if(String(tmatch.pw||'')!==pwv){fx.className='fx no';fx.textContent='비밀번호가 올바르지 않아요.';pi.value='';pi.focus();return;}
+      USER.id=tmatch.id;USER.name=tmatch.name||tmatch.id;USER.role='teacher';
+      USER.academy=tmatch.academy||'';USER.isAdmin=!!String(tmatch.isAdmin||'').trim();USER.isAcademyAdmin=!!String(tmatch.isAcademyAdmin||'').trim();
+      saveSession();applySessionUI();
+      signInFirebaseRealtime(idv,pwv);
+      fx.className='';fx.textContent='';
+      viewTeacherHome();
+      return;
+    }
+    const match=(students||[]).find(s=>String(s.id||'').toLowerCase()===idv.toLowerCase());
+    if(!match||studentStatus(match)==='퇴원'){fx.className='fx no';fx.textContent='아이디를 확인해주세요.';return;}
+    if(String(match.pw||'')!==pwv){fx.className='fx no';fx.textContent='비밀번호가 올바르지 않아요.';pi.value='';pi.focus();return;}
+    if(studentStatus(match)==='휴원'){fx.className='fx no';fx.textContent='휴원 중이에요. 선생님께 문의해주세요.';return;}
+    USER.id=match.id;USER.name=match.name||match.id;USER.role='student';
+    USER.school=match.school||'';USER.schoolGrade=match.schoolGrade||'';USER.cls=match.cls||'';USER.academy=match.academy||'';
+    USER.isTestAccount=!!String(match.isTestAccount||'').trim();
+    applyClassLevel(USER.cls);
+    saveSession();applySessionUI();
+    signInFirebaseRealtime(idv,pwv);
+    fx.className='';fx.textContent='';
+    viewHome();
+  };
+  b.onclick=go;pi.addEventListener('keydown',e=>{if(e.key==='Enter')go();});ni.addEventListener('keydown',e=>{if(e.key==='Enter')pi.focus();});
+  w.appendChild(box);
+  setTimeout(()=>ni.focus(),60);
+  fetchRoster().catch(()=>{});
+});}
+
+/* ================= HOME ================= */
+function countReady(lv){let done=0,tot=0;const P=loadProg();
+  LEVELS.find(l=>l.id===lv).chapters.forEach(c=>c.points.forEach(p=>{if(!p.soon){tot++;if(P[p.id])done++;}}));
+  return {done,tot};}
+function viewHome(){const _homeBody=w=>{
+  if(TEACHER_PREVIEW){
+    const bk=el('button','backbtn','◀ 학생 목록');bk.onclick=()=>{TEACHER_PREVIEW=null;viewTeacherHome();};w.appendChild(bk);
+    const banner=el('div');banner.style.cssText='background:#eef0ff;border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:13.5px;color:#3730a3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
+    const bannerText=el('div');bannerText.innerHTML='👀 <b>'+escH(TEACHER_PREVIEW.studentName)+'</b> 학생의 학습 현황을 보고 있어요'+(TEACHER_PREVIEW.ctx?' ('+escH(TEACHER_PREVIEW.ctx)+')':'')+'. 커리큘럼을 둘러보다가 항목을 누르면 그 학생이 낸 글을 볼 수 있어요.';
+    banner.appendChild(bannerText);
+    const reportBtn=el('button','btn ghost','📊 첨삭·Re-Writing 종합 리포트');reportBtn.type='button';reportBtn.style.cssText='padding:6px 14px;font-size:12.5px;white-space:nowrap;background:#fff';
+    reportBtn.onclick=()=>openRewriteReportPicker(TEACHER_PREVIEW);
+    banner.appendChild(reportBtn);
+    w.appendChild(banner);
+  }
+  const hero=el('div','hero');
+  const heroName=TEACHER_PREVIEW?(TEACHER_PREVIEW.studentName+' 학생'):(USER.name+' 님');
+  hero.innerHTML='<div class="hero-decor"></div><h1>'+escH(heroName)+'</h1>'+
+    '<div class="hero-art"><div class="ha-card ha1"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5V4.5Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg></div>'+
+    '<div class="ha-card ha2"><svg viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20.5 5 15l10.5-10.5 3.5 3.5L8.5 18.5 3 20.5Z"/><path d="M13.5 6.5 17.5 10.5"/></svg></div>'+
+    '<div class="ha-card ha3"><svg viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.3 12.5l2.4 2.4 5-5"/></svg></div></div>';
+  w.appendChild(hero);
+  const tabs=el('div','leveltabs');
+  LEVELS.forEach(l=>{const t=el('div','lt'+(l.id===curLevel?' on':''),`<b>${l.name}</b><small>${l.book.replace('천일문 WRITING ','')}</small>`);t.onclick=()=>{curLevel=l.id;viewHome();};tabs.appendChild(t);});
+  w.appendChild(tabs);
+  const curLv=LEVELS.find(l=>l.id===curLevel);
+  const curLvName=String(curLv&&curLv.name||'').trim();
+  const storyOnly=curLvName==='초5';
+  // 중3은 학교 수행평가 대비 위주로 준비하는 학년이라, 홈 화면에도 "수행평가 대비"와 "Article Reading"
+  // 두 트랙만 보이면 돼요(Pattern Drill·Paragraph Writing·Re-Writing·Story Writing은 숨겨요).
+  const examArticleOnly=curLvName==='중3';
+  if(!storyOnly&&!examArticleOnly&&!TEACHER_PREVIEW){
+    const {done,tot}=countReady(curLevel);const pct=tot?Math.round(done/tot*100):0;
+    const pr=el('div','prog');pr.appendChild(el('h3',null,'내 진도표 — '+curLv.name+' Pattern Drill'));
+    const pb=el('div','pbar');const ps=el('span');ps.style.width=pct+'%';pb.appendChild(ps);pr.appendChild(pb);
+    pr.appendChild(el('div','pn',`완료 ${done} / ${tot} Unit (${pct}%)`));w.appendChild(pr);
+  }
+  const tr=el('div','tracks');
+  if(examArticleOnly){
+    const ic3='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H17l3 3v11.5A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13Z"/><path d="M8 9h8M8 12.5h8M8 16h5"/></svg></div>';
+    const c3=el('button','track article',ic3+'<div class="tt">Article Reading</div><div class="td">영어 기사 읽고 요약하기 · 핵심 조건 자동 채점 · 선생님 첨삭</div><div class="tk">기사 골라 요약 쓰기</div>');
+    c3.onclick=()=>viewArticleMenu();
+    tr.appendChild(c3);
+    const ic4='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/></svg></div>';
+    const c4=el('button','track exam',ic4+'<div class="tt">수행평가 대비</div><div class="td">학교 수행평가 주제·조건에 맞춰 미리 써보기 · 자동 채점 · 선생님 첨삭</div><div class="tk">주제 골라 연습하기</div>');
+    c4.onclick=()=>viewExamMenu();
+    tr.appendChild(c4);
+  } else if(!storyOnly){
+    const ic1='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5V4.5Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg></div>';
+    const ic2='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20.5 5 15l10.5-10.5 3.5 3.5L8.5 18.5 3 20.5Z"/><path d="M13.5 6.5 17.5 10.5"/></svg></div>';
+    const c1=el('button','track drill',ic1+'<div class="tt">Pattern Drill</div><div class="td">문법 설명 → 개념 퀴즈 → 단어배열·영작 15문장씩 → 조건 영작</div><div class="tk">챕터·Point 골라 학습하기</div>');
+    c1.onclick=()=>viewPointMenu();
+    const c2=el('button','track para',ic2+'<div class="tt">Paragraph Writing</div><div class="td">배운 문법으로 한 문단(10문장+) 쓰기 · 실시간 미리보기 · 자동 채점</div><div class="tk">주제 골라 글쓰기</div>');
+    c2.onclick=()=>viewParaMenu();
+    tr.appendChild(c1);tr.appendChild(c2);
+    const ic3='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H17l3 3v11.5A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13Z"/><path d="M8 9h8M8 12.5h8M8 16h5"/></svg></div>';
+    const c3=el('button','track article',ic3+'<div class="tt">Article Reading</div><div class="td">영어 기사 읽고 요약하기 · 핵심 조건 자동 채점 · 선생님 첨삭</div><div class="tk">기사 골라 요약 쓰기</div>');
+    c3.onclick=()=>viewArticleMenu();
+    tr.appendChild(c3);
+    const ic4='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/></svg></div>';
+    const c4=el('button','track exam',ic4+'<div class="tt">수행평가 대비</div><div class="td">학교 수행평가 주제·조건에 맞춰 미리 써보기 · 자동 채점 · 선생님 첨삭</div><div class="tk">주제 골라 연습하기</div>');
+    c4.onclick=()=>viewExamMenu();
+    tr.appendChild(c4);
+  }
+  // Story Writing은 초5 전용 컨텐츠라, 다른 학년 홈 화면에는 아예 안 보여야 해요(예전엔 여기 있는 카드가
+  // storyOnly 여부와 상관없이 항상 추가돼서 모든 학년에 다 보였던 버그가 있었어요).
+  if(storyOnly){
+    const ic6='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5-4 4-3-3-6 6"/></svg></div>';
+    const c6=el('button','track story',ic6+'<div class="tt">Story Writing</div><div class="td">그림을 보고 영어로 이야기 만들기 · 단어 카드 게임 · 발음 듣기</div><div class="tk">그림 이야기 골라 써보기</div>');
+    c6.onclick=()=>viewStoryMenu();
+    tr.appendChild(c6);
+  }
+  // Re-Writing은 "이미 첨삭받은 내 글을 골라서 다시 쓰기"라는 학생 전용 동작이라, 선생님이 학생 대신
+  // 새로 쓸 수는 없어요(미리보기 모드에서는 건너뛰어요). 예전엔 이 카드가 examArticleOnly(중3)·
+  // storyOnly(초5) 분기 안에는 아예 없어서 그 학년 학생들은 Re-Writing 자체를 못 봤는데, 모든 학년에서
+  // 공통으로 필요한 기본 기능이라 학년/레벨과 상관없이 맨 아래에 항상 뜨도록 바꿨어요.
+  if(!TEACHER_PREVIEW){
+    const ic5='<div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></div>';
+    const c5=el('button','track rewrite',ic5+'<div class="tt">Re-Writing</div><div class="td">첨삭받은 글을 고쳐진 내용대로 처음부터 전체 다시 써보기</div><div class="tk">첨삭 끝난 글 골라 다시 쓰기</div>');
+    c5.onclick=()=>viewRewriteList();
+    tr.appendChild(c5);
+  }
+  w.appendChild(tr);
+  if(!TEACHER_PREVIEW){
+    const fbLink=el('button','btn ghost','📋 내 제출 내역 · 선생님 피드백 보기');fbLink.style.marginTop='18px';
+    fbLink.onclick=()=>viewMyFeedback();w.appendChild(fbLink);
+  }
+};
+  // 선생님이 학생 화면을 미리보기(TEACHER_PREVIEW)할 때는 다른 선생님 화면들처럼 왼쪽에 메뉴
+  // 사이드바가 계속 붙어있도록 teacherMount로 감싸요(예전엔 학생 화면 그대로라 사이드바가 사라지고,
+  // 다른 학생을 보려면 꼭 "◀ 학생 목록"으로 완전히 뒤로 나가야 했어요). 실제 학생 로그인일 때는
+  // 지금처럼 사이드바 없는 학생 화면 그대로 나가요.
+  if(TEACHER_PREVIEW){teacherMount(_homeBody);}else{setWide(false);mountView(_homeBody);}
+}
+
+/* ================= POINT MENU ================= */
+function viewPointMenu(){setWide(false);mountView(w=>{
+  const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
+  const lv=LEVELS.find(l=>l.id===curLevel);
+  w.appendChild(el('h1','title','Pattern Drill · '+lv.name));
+  w.appendChild(el('div','hint',TEACHER_PREVIEW?'Unit을 선택하면 이 학생이 낸 글을 볼 수 있어요.':'챕터에서 Unit을 선택하면 학습이 시작돼요.'));
+  const P=TEACHER_PREVIEW?null:loadProg();
+  const rowsById={};
+  lv.chapters.forEach(c=>{const box=el('div','chapter');box.appendChild(el('div','ch-h',c.t));
+    c.points.forEach(p=>{
+      if(TEACHER_PREVIEW){
+        if(p.soon)return;
+        const matches=teacherPreviewSubsFor(p.id,p.title);
+        const done=!!matches.length;const row=el('div','point'+(done?' done':''));
+        row.appendChild(el('div','dot',done?'✓':'·'));
+        row.appendChild(el('div','pt',p.title));
+        row.appendChild(el('div','meta',done?('제출함'+(matches.length>1?' ('+matches.length+'회)':'')):'아직 제출 안 함'));
+        row.onclick=()=>viewTeacherContentSubmissions(p.title,matches,viewPointMenu);
+        box.appendChild(row);return;
+      }
+      // done을 그냥 지역변수로 캡처해서 onclick에 박아두면, 아래 reconcileDoneFromServer가
+      // 나중에(로컬 기록엔 없지만 서버엔 있는 제출을 찾아서) 화면 표시만 "완료"로 바꿔주고 이
+      // onclick은 그대로 review:false로 남아있는 문제가 있었어요 — 그래서 화면엔 체크·"제출한 글
+      // 보기·수정"이 떠 있는데 눌러보면 처음부터 다시 푸는 것처럼 보였던 거예요. state 객체로
+      // 감싸서 onclick이 클릭하는 "그 순간"의 최신 done 값을 읽도록 고쳤어요.
+      const state={done:!!P[p.id]};
+      const row=el('div','point'+(p.soon?' soon':'')+(state.done?' done':''));
+      const dot=el('div','dot',state.done?'✓':'·');row.appendChild(dot);
+      row.appendChild(el('div','pt',p.title));
+      // 이미 완료한 유닛은 눌러도 퀴즈·배열·영작을 처음부터 다시 푸는 게 아니라, 마지막으로 낸
+      // "조건 영작" 글을 그대로 불러와서 바로 수정할 수 있는 화면으로 들어가요(runDrill의 review
+      // 모드). chapterPoints·pointIndex는 그 화면에서 "◀ 이전 문제 / 다음 문제 ▶"로 같은 챕터의
+      // 다른 유닛으로 바로 넘나들 수 있게 넘겨주는 값이에요.
+      const meta=p.soon?null:el('div','meta',state.done?'제출한 글 보기·수정':'퀴즈10·배열15·영작15');
+      if(meta)row.appendChild(meta);
+      const chapterPoints=c.points.filter(x=>!x.soon);
+      if(!p.soon)row.onclick=()=>runDrill(p,{review:state.done,chapterPoints,pointIndex:chapterPoints.indexOf(p)});
+      box.appendChild(row);
+      if(!p.soon)rowsById[p.id]={row,dot,meta,state,chapterKey:p.id,title:p.title,doneLabel:'제출한 글 보기·수정'};});
+    w.appendChild(box);});
+  if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsById);
+});}
+
+/* ================= PARAGRAPH MENU ================= */
+function viewParaMenu(){setWide(false);mountView(w=>{
+  const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
+  const lv=LEVELS.find(l=>l.id===curLevel);
+  w.appendChild(el('h1','title','Paragraph Writing · '+lv.name));
+  w.appendChild(el('div','hint','배운 문법과 연결된 주제로 한 문단을 완성해요. (10문장 이상 · 자동 채점)'));
+  const list=(PARA[curLevel]||[]);
+  if(!list.length)w.appendChild(el('div','hint','이 레벨의 주제는 준비 중이에요.'));
+  const box=el('div','chapter');box.appendChild(el('div','ch-h','주제 (Topics)'));
+  // ⚠️ 예전엔 이 목록이 "제출했는지"를 아예 확인하지 않아서(다른 콘텐츠 종류들과 달리) 항상
+  // 안 한 것처럼(● 점만) 보였어요. 다른 화면들처럼 우선 이 기기에 저장된 진행 기록(loadProg)으로
+  // 빠르게 표시하고, 그 아래에서 서버에 실제로 저장된 제출물과 다시 한 번 대조해서(다른 기기·
+  // 브라우저에서 제출한 경우도 놓치지 않게) 필요하면 완료 표시를 갱신해요.
+  const P=loadProg();
+  const rowsByTitle={};
+  // 주제만 보고는 Pattern Drill 몇 챕터와 같이 배운 문법인지 헷갈린다는 요청으로, 챕터 번호가
+  // 있으면(선생님이 직접 적었거나, mergePara에서 문법 태그로 자동으로 알아낸 값) 제목 앞에
+  // "[챕터 N]"으로 보여줘요.
+  const chapPrefix=t=>(t.chap!=null&&String(t.chap).trim()!==''?('[챕터 '+t.chap+'] '):'');
+  list.forEach(t=>{
+    if(TEACHER_PREVIEW){
+      if(t.soon)return;
+      const matches=teacherPreviewSubsFor('Paragraph Writing',t.title);
+      const done=!!matches.length;const row=el('div','point'+(done?' done':''));
+      row.appendChild(el('div','dot',done?'✓':'·'));
+      row.appendChild(el('div','pt',chapPrefix(t)+t.title+' — <span style="color:#6b7684;font-weight:600;font-size:13px">'+t.genre+' · 문법: '+t.grammar+'</span>'));
+      row.appendChild(el('div','meta',done?('제출함'+(matches.length>1?' ('+matches.length+'회)':'')):'아직 제출 안 함'));
+      row.onclick=()=>viewTeacherContentSubmissions(t.title,matches,viewParaMenu);
+      box.appendChild(row);return;
+    }
+    const done=!!P['PARA-'+t.id];const row=el('div','point'+(t.soon?' soon':'')+(done?' done':''));
+    const dot=el('div','dot',t.soon?'·':(done?'✓':'●'));row.appendChild(dot);
+    row.appendChild(el('div','pt',chapPrefix(t)+t.title+' — <span style="color:#6b7684;font-weight:600;font-size:13px">'+t.genre+' · 문법: '+t.grammar+'</span>'));
+    const meta=el('div','meta',done?'다시 쓰기':'');row.appendChild(meta);
+    if(!t.soon)row.onclick=()=>runParagraph(t);box.appendChild(row);
+    if(!t.soon)rowsByTitle[t.id]={row,dot,meta,chapterKey:'Paragraph Writing',title:t.title,doneLabel:'다시 쓰기'};});
+  if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsByTitle);
+  w.appendChild(box);
+});}
+
+/* ================= ARTICLE MENU ================= */
+function viewArticleMenu(){setWide(false);mountView(w=>{
+  const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','Article Reading'));
+  w.appendChild(el('div','hint','영어 기사를 읽고 3문장 이상으로 요약해요. (자동 채점 + 선생님 첨삭)'));
+  // 수행평가와 달리 Article Reading은 학교/반으로 대상을 좁히지 않고, 그 학년 학생 전체에게 보여요.
+  const list=Object.values(ARTICLE).flat();
+  if(!list.length)w.appendChild(el('div','hint','지금 볼 수 있는 기사가 없어요.'));
+  const box=el('div','chapter');box.appendChild(el('div','ch-h','기사 (Articles)'));
+  const P=loadProg();
+  const rowsById={};
+  list.forEach(a=>{
+    if(TEACHER_PREVIEW){
+      const matches=teacherPreviewSubsFor('Article Reading',a.title);
+      const done=!!matches.length;const row=el('div','point'+(done?' done':''));
+      row.appendChild(el('div','dot',done?'✓':'·'));
+      row.appendChild(el('div','pt',a.title+' — <span style="color:#6b7684;font-weight:600;font-size:13px">'+(a.source||'')+'</span>'));
+      row.appendChild(el('div','meta',done?('제출함'+(matches.length>1?' ('+matches.length+'회)':'')):'아직 제출 안 함'));
+      row.onclick=()=>viewTeacherContentSubmissions(a.title,matches,viewArticleMenu);
+      box.appendChild(row);return;
+    }
+    const done=!!P['ART-'+a.id];const row=el('div','point'+(done?' done':''));
+    const dot=el('div','dot',done?'✓':'●');row.appendChild(dot);
+    row.appendChild(el('div','pt',a.title+' — <span style="color:#6b7684;font-weight:600;font-size:13px">'+(a.source||'')+'</span>'));
+    const meta=el('div','meta',done?'다시 풀기':'기사 읽기·요약');row.appendChild(meta);
+    row.onclick=()=>runArticle(a);box.appendChild(row);
+    rowsById[a.id]={row,dot,meta,chapterKey:'Article Reading',title:a.title,doneLabel:'다시 풀기'};});
+  if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsById);
+  w.appendChild(box);
+});}
+
+/* ================= EXAM MENU (수행평가 대비) ================= */
+function viewExamMenu(){setWide(false);mountView(w=>{
+  const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','수행평가 대비'));
+  w.appendChild(el('div','hint','주제와 조건에 맞춰 미리 써 보는 연습이에요. (자동 채점 + 선생님 첨삭)'));
+  const all=Object.values(EXAM).flat().filter(visibleToUser);
+  // 제목 맨 앞에 붙인 연도(예: "2026 안화중 …")로 묶어서 드롭다운으로 골라 볼 수 있어요. 연도가 없으면 '기타'.
+  const yearOf=t=>{const m=String(t.title||'').match(/^\s*(20\d\d)(?!\d)/);return m?m[1]:'기타';};
+  const years=[...new Set(all.map(yearOf))].sort((a,b)=>a==='기타'?1:b==='기타'?-1:b.localeCompare(a));
+  if(!window._examYear||(window._examYear!=='전체'&&!years.includes(window._examYear)))window._examYear=years.find(y=>y!=='기타')||'전체';
+  if(years.length>1){
+    const sel=el('select','in');sel.style.cssText='padding:10px;font-size:14px;border-radius:10px;margin:10px 0';
+    [['전체','전체 연도']].concat(years.map(y=>[y,y==='기타'?'연도 없음':y+'년'])).forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;sel.appendChild(o);});
+    sel.value=window._examYear;
+    sel.onchange=()=>{window._examYear=sel.value;viewExamMenu();};
+    w.appendChild(sel);
+  }
+  const list=window._examYear==='전체'?all:all.filter(t=>yearOf(t)===window._examYear);
+  if(!list.length)w.appendChild(el('div','hint','지금 볼 수 있는 주제가 없어요.'));
+  const box=el('div','chapter');box.appendChild(el('div','ch-h','주제 (Topics)'));
+  const P=loadProg();
+  const rowsById={};
+  list.forEach(t=>{
+    if(TEACHER_PREVIEW){
+      const matches=teacherPreviewSubsFor('Performance Assessment',t.title);
+      const done=!!matches.length;const row=el('div','point'+(done?' done':''));
+      row.appendChild(el('div','dot',done?'✓':'·'));
+      row.appendChild(el('div','pt',t.title));
+      row.appendChild(el('div','meta',done?('제출함'+(matches.length>1?' ('+matches.length+'회)':'')):'아직 제출 안 함'));
+      row.onclick=()=>viewTeacherContentSubmissions(t.title,matches,viewExamMenu);
+      box.appendChild(row);return;
+    }
+    const done=!!P['EX-'+t.id];const row=el('div','point'+(done?' done':''));
+    const dot=el('div','dot',done?'✓':'●');row.appendChild(dot);
+    row.appendChild(el('div','pt',t.title));
+    const meta=el('div','meta',done?'다시 풀기':'조건 확인·글쓰기');row.appendChild(meta);
+    row.onclick=()=>runExam(t);box.appendChild(row);
+    rowsById[t.id]={row,dot,meta,chapterKey:'Performance Assessment',title:t.title,doneLabel:'다시 풀기'};});
+  if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsById);
+  w.appendChild(box);
+});}
+
+/* ================= STORY MENU (Story Writing) ================= */
+function viewStoryMenu(){setWide(false);mountView(w=>{
+  const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','Story Writing'));
+  w.appendChild(el('div','hint','그림을 보고 영어로 이야기를 만들어요. (단어 카드 게임 + 발음 듣기)'));
+  // 수행평가와 달리 Story Writing도 학교/반으로 대상을 좁히지 않고, 그 학년 학생 전체에게 보여요.
+  const list=(STORY[curLevel]||[]);
+  if(!list.length)w.appendChild(el('div','hint','지금 볼 수 있는 이야기가 없어요.'));
+  const box=el('div','chapter');box.appendChild(el('div','ch-h','Stories'));
+  const P=loadProg();
+  const rowsById={};
+  list.forEach(s=>{
+    const stTitle=s.title||s.titleKo||s.id;
+    if(TEACHER_PREVIEW){
+      const matches=teacherPreviewSubsFor('Story Writing',stTitle);
+      const done=!!matches.length;const row=el('div','point'+(done?' done':''));
+      row.appendChild(el('div','dot',done?'✓':'·'));
+      row.appendChild(el('div','pt',stTitle+(s.titleKo&&s.title?(' — <span style="color:#6b7684;font-weight:600;font-size:13px">'+escH(s.titleKo)+'</span>'):'')));
+      row.appendChild(el('div','meta',done?('제출함'+(matches.length>1?' ('+matches.length+'회)':'')):'아직 제출 안 함'));
+      row.onclick=()=>viewTeacherContentSubmissions(stTitle,matches,viewStoryMenu);
+      box.appendChild(row);return;
+    }
+    const done=!!P['ST-'+s.id];const row=el('div','point'+(done?' done':''));
+    const dot=el('div','dot',done?'✓':'●');row.appendChild(dot);
+    row.appendChild(el('div','pt',(s.title||s.titleKo||s.id)+(s.titleKo?(' — <span style="color:#6b7684;font-weight:600;font-size:13px">'+escH(s.titleKo)+'</span>'):'')));
+    const meta=el('div','meta',done?'다시 풀기':'그림 보고 이야기 쓰기');row.appendChild(meta);
+    row.onclick=()=>runStory(s);box.appendChild(row);
+    rowsById[s.id]={row,dot,meta,chapterKey:'Story Writing',title:stTitle,doneLabel:'다시 풀기'};});
+  if(!TEACHER_PREVIEW)reconcileDoneFromServer(rowsById);
+  w.appendChild(box);
+});}
+
+/* ================= 첨삭 데이터 도우미 (문장별 코멘트) ================= */
+function escH(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+/** 브레인스토밍·초안 쓰기 화면에서 모르는 단어를 바로 찾아볼 수 있게 해주는 사전 버튼이에요.
+ *  예전엔 네이버 영어사전을 새 창으로 열어줬는데, 그 페이지에 딸린 "문장 통째로 번역하기" 기능을
+ *  일부 학생들이 몰래 번역기처럼 써버리는 문제가 있었어요. 그래서 외부 창 대신, 사이트 안에서
+ *  단어·숙어만 찾을 수 있는 작은 사전으로 바꿨어요 — 단어 수만 세는 방식으로는 "give up"같은
+ *  정상 숙어까지 막히거나, 반대로 "I am so happy today"처럼 짧지만 학생이 지어낸 문장은 통과되는
+ *  허점이 있어서, 서버(lookupWord)에서 AI가 "사전 표제어(단어·숙어)인지 vs 학생이 지어낸 문장인지"를
+ *  직접 판단해서 후자면 거절해요(한국어 검색도 동일하게 판단해요). 여기선 통짜 문단 붙여넣기 같은
+ *  극단적인 경우만 미리 걸러요. */
+function buildWordLookupBody(body,opts){
+  opts=opts||{};
+  const wrap=el('div');
+  wrap.appendChild(el('div','rep hint','모르는 단어나 숙어를 입력해서 뜻을 찾아보세요. (직접 지어낸 문장은 AI가 걸러서 거절할 수 있어요 — 문장 번역기가 아니에요.)'));
+  const row=el('div');row.style.cssText='display:flex;gap:8px;margin-top:10px';
+  const input=el('input','in');input.type='text';input.placeholder='예) apple, give up, 사과, 포기하다';input.style.flex='1';
+  const btn=el('button','btn blue','찾기');btn.type='button';
+  row.appendChild(input);row.appendChild(btn);wrap.appendChild(row);
+  const resultBox=el('div');resultBox.style.cssText='margin-top:14px';wrap.appendChild(resultBox);
+  body.appendChild(wrap);
+  const doLookup=async()=>{
+    const word=input.value.trim();
+    resultBox.innerHTML='';
+    if(!word)return;
+    if(word.length>60){resultBox.innerHTML='<div class="fx no">단어나 숙어(짧은 표현)만 입력해주세요. 문장 전체 번역은 지원하지 않아요.</div>';return;}
+    btn.disabled=true;const prev=btn.textContent;btn.textContent='찾는 중…';
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'lookupWord',word})});
+      const data=await res.json();
+      if(!data.ok)throw new Error(data.error||'조회 실패');
+      const r=data.result||{};
+      // ⚠️ 한국어로 검색해도(예: "사과") 각 항목 제목에는 항상 영어 단어/숙어(wordEn)가 나오고, 그
+      // 아래 한국어 뜻(meaningKo)이 나와요 — 예전엔 wordEn 필드가 없어서 한국어로 검색하면 한국어
+      // 단어가 그대로 제목에 나오고, 정작 찾고 싶었던 영어 표현은 안 나오던 문제가 있었어요.
+      // 한국어 뜻 하나에 영어 단어가 여러 개 대응될 수 있어서(예: "타다" → ride/burn/board), 서버가
+      // entries 배열로 여러 개를 내려주면 그걸 전부 카드로 나열해요(옛 응답 형식이면 1개만 있어요).
+      const entries=Array.isArray(r.entries)&&r.entries.length?r.entries:[r];
+      resultBox.innerHTML=entries.map((e,i)=>
+        '<div style="'+(i>0?'margin-top:14px;padding-top:14px;border-top:1px solid rgba(0,0,0,.08)':'')+'">'+
+        '<div style="font-size:18px;font-weight:700">'+escH(e.wordEn||e.word||word)+(e.partOfSpeech?' <span style="font-size:13px;color:#888;font-weight:400">('+escH(e.partOfSpeech)+')</span>':'')+'</div>'+
+        '<div style="margin-top:6px">'+escH(e.meaningKo||'')+'</div>'+
+        (e.exampleEn?'<div style="margin-top:10px;padding:10px;background:#f6f5fb;border-radius:8px"><div>'+escH(e.exampleEn)+'</div><div style="color:#888;margin-top:4px">'+escH(e.exampleKo||'')+'</div></div>':'')+
+        '</div>'
+      ).join('');
+    }catch(e){
+      resultBox.innerHTML='<div class="fx no">'+escH(e.message||'뜻을 가져오지 못했어요. 다시 시도해주세요.')+'</div>';
+    }
+    btn.disabled=false;btn.textContent=prev;
+  };
+  btn.onclick=doLookup;
+  input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doLookup();}});
+  // ⚠️ 모달로 열릴 때(버튼을 눌러서 여는 경우)는 바로 타이핑할 수 있게 자동 포커스가 편하지만,
+  // 글쓰기 화면 왼쪽에 항상 떠 있는 패널로 쓸 때(opts.autoFocus===false) 화면이 뜨자마자 이 입력
+  // 칸으로 포커스를 뺏어가면 학생이 정작 쓰려던 글쓰기 칸에 커서가 안 가 있게 되니 그때는 끄고 써요.
+  if(opts.autoFocus!==false)setTimeout(()=>input.focus(),50);
+  return {input,doLookup};
+}
+function makeDictBtn(){
+  const btn=el('button','btn ghost','📖 단어 뜻 찾기');btn.type='button';
+  btn.onclick=()=>openGenericModal('단어 뜻 찾기',buildWordLookupBody);
+  return btn;
+}
+/** 글쓰기 화면 왼쪽에 버튼 없이 기본으로 떠 있는 사전 패널이에요(Re-Writing 제외 — Re-Writing은
+ *  이미 왼쪽이 첨삭 참고자료 자리라 따로 안 둬요). buildWordLookupBody와 같은 기능을 그대로 쓰되,
+ *  모달이 아니라 카드 하나로 화면에 바로 그려요. */
+function buildDictPanel(){
+  const panel=el('div');
+  panel.style.cssText='background:#faf9fb;border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-bottom:14px';
+  panel.appendChild(el('div','fl','📖 단어 뜻 찾기'));
+  buildWordLookupBody(panel,{autoFocus:false});
+  return panel;
+}
+/** 예전에 저장된 이미지가 'drive.google.com/uc?export=view&id=...' 형식이면, 구글이 최근 이 방식의
+ *  외부 사이트 삽입(hotlink)을 자주 막아서 <img> 태그 안에서 깨진 이미지로 나와요. 화면에 그릴 때마다
+ *  더 안정적인 썸네일 링크 형식으로 자동 변환해줘서, 예전에 올린 이미지를 다시 올릴 필요 없게 해요. */
+/* 그림 업로드 시 9방향 크롭(잘림) 위치를 고를 때 공통으로 쓰는 값이에요 — CSS object-position/background-position 값과 그대로 대응돼요.
+   (이제는 자유 위치 드래그 크롭 선택기(buildCropPicker)가 기본이지만, 옛 콘텐츠에 저장된 이 9방향 키워드 문자열도
+   CSS object-position 값으로 그대로 유효하기 때문에 별도 변환 없이 계속 잘 표시돼요.) */
+const CROP_OPTS=['left top','center top','right top','left center','center center','right center','left bottom','center bottom','right bottom'];
+/** 저장된 crop 값(9방향 키워드 또는 "X% Y%" 형식)을 [x,y] 퍼센트 숫자로 변환해요. buildCropPicker의 마커 위치 계산에 써요. */
+function cropToPercent(crop){
+  const map={'left top':[0,0],'center top':[50,0],'right top':[100,0],'left center':[0,50],'center center':[50,50],'right center':[100,50],'left bottom':[0,100],'center bottom':[50,100],'right bottom':[100,100]};
+  if(map[crop])return map[crop];
+  const m=String(crop||'').trim().match(/^(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/);
+  if(m)return [parseFloat(m[1]),parseFloat(m[2])];
+  return [50,50];
+}
+/** 저장된 zoom 값(없으면 100)을 30~400 범위로 정리해서 배율(1.0 = 100%)로 바꿔줘요.
+ *  학생 화면·크롭 미리보기 둘 다 이 배율만큼 이미지를 확대/축소해서 보여줘요. */
+function zoomToScale(zoom){
+  let z=Number(zoom);
+  if(!z||isNaN(z))z=100;
+  if(z<30)z=30; if(z>400)z=400;
+  return z/100;
+}
+/** 그림을 어느 부분이 보이도록 자를지, 클릭·드래그로 자유롭게 고를 수 있는 크롭 선택기예요. 확대/축소(줌) 슬라이더도 같이 있어서,
+ *  이미지가 칸보다 작거나 비율이 안 맞을 때도 원하는 만큼 키우거나 줄일 수 있고, 줄여서 남는 여백은 검은색으로 자동으로 채워져요.
+ *  9방향 버튼과 달리 임의의 지점을 고를 수 있어서 원하는 부분이 잘리지 않게 세밀하게 맞출 수 있어요.
+ *  pic: {crop, zoom} 속성을 가진 객체(직접 갱신돼요), getUrl: 현재 이미지 URL을 돌려주는 함수, size: 정사각형 미리보기 한 변(px),
+ *  onChange: 크롭·줌 값이 바뀔 때마다 호출돼요(다시 렌더링·임시저장 등에 씀). */
+function buildCropPicker(pic,getUrl,size,onChange){
+  const outer=el('div');outer.style.cssText='display:flex;flex-direction:column;gap:6px;width:'+size+'px;flex:none';
+  const wrap=el('div');wrap.style.cssText='position:relative;width:'+size+'px;height:'+size+'px;border-radius:10px;overflow:hidden;background:#000;cursor:crosshair;touch-action:none;flex:none';
+  const bg=el('div');bg.style.cssText='position:absolute;inset:0;background-size:cover;background-repeat:no-repeat;';
+  wrap.appendChild(bg);
+  const marker=el('div');marker.style.cssText='position:absolute;width:14px;height:14px;margin-left:-7px;margin-top:-7px;border-radius:50%;background:#fff;border:2px solid #4338ca;box-shadow:0 0 0 2px rgba(0,0,0,.35);pointer-events:none';
+  wrap.appendChild(marker);
+  outer.appendChild(wrap);
+  const zoomRow=el('div');zoomRow.style.cssText='display:flex;align-items:center;gap:6px;font-size:11px;color:#6b7280';
+  zoomRow.appendChild(el('span',null,'🔍'));
+  const zoomSlider=el('input');zoomSlider.type='range';zoomSlider.min='30';zoomSlider.max='400';zoomSlider.step='5';zoomSlider.style.cssText='flex:1';
+  const zoomVal=el('span');zoomVal.style.cssText='min-width:34px;text-align:right';
+  zoomRow.appendChild(zoomSlider);zoomRow.appendChild(zoomVal);
+  outer.appendChild(zoomRow);
+  function render(){
+    const url=getUrl();
+    bg.style.backgroundImage=url?('url('+fixDriveImageUrl(url)+')'):'none';
+    const pos=cropToPercent(pic.crop);
+    bg.style.backgroundPosition=pos[0]+'% '+pos[1]+'%';
+    bg.style.transformOrigin=pos[0]+'% '+pos[1]+'%';
+    const z=Number(pic.zoom)||100;
+    bg.style.transform='scale('+zoomToScale(z)+')';
+    marker.style.left=pos[0]+'%';marker.style.top=pos[1]+'%';
+    zoomSlider.value=String(Math.min(400,Math.max(30,z)));
+    zoomVal.textContent=Math.round(z)+'%';
+  }
+  function setFromEvent(e){
+    const rect=wrap.getBoundingClientRect();
+    const x=Math.max(0,Math.min(100,Math.round((e.clientX-rect.left)/rect.width*100)));
+    const y=Math.max(0,Math.min(100,Math.round((e.clientY-rect.top)/rect.height*100)));
+    pic.crop=x+'% '+y+'%';
+    render();
+    onChange&&onChange();
+  }
+  wrap.addEventListener('pointerdown',e=>{wrap.setPointerCapture(e.pointerId);setFromEvent(e);});
+  wrap.addEventListener('pointermove',e=>{if(e.buttons===1)setFromEvent(e);});
+  zoomSlider.addEventListener('input',()=>{ pic.zoom=Number(zoomSlider.value); render(); onChange&&onChange(); });
+  outer._render=render;
+  render();
+  return outer;
+}
+function fixDriveImageUrl(u){
+  const s=String(u||'').trim();
+  const m=s.match(/drive\.google\.com\/uc\?(?:[^#]*&)?id=([^&#]+)/);
+  if(m)return 'https://drive.google.com/thumbnail?id='+m[1]+'&sz=w1600';
+  return s;
+}
+/** 그림 자르기/줌 기능이 남긴, 그림 가장자리를 채운 순검정 여백(레터박스)을 찾아내요.
+ *  픽셀을 직접 읽어야 해서 다른 서버 이미지는 브라우저 보안 정책(CORS) 때문에 못 읽을 수 있는데,
+ *  그때는 조용히 null을 돌려줘서(원본 그림 그대로 보여주는 쪽으로) 화면이 깨지지 않게 해요.
+ *  결과는 {left,right,top,bottom}(0~1 사이, 그 방향으로 잘라내야 하는 비율)이거나, 의미 있는
+ *  검정 여백이 없으면 null이에요. url별로 결과를 캐시해서 같은 그림을 다시 계산하지 않아요. */
+const __blackBorderCache=new Map();
+function detectBlackBorders(url){
+  if(__blackBorderCache.has(url))return __blackBorderCache.get(url);
+  const p=new Promise(resolve=>{
+    let done=false;const finish=v=>{if(done)return;done=true;resolve(v);};
+    const timer=setTimeout(()=>finish(null),4000);
+    const probe=new Image();
+    probe.crossOrigin='anonymous';
+    probe.onerror=()=>{clearTimeout(timer);finish(null);};
+    probe.onload=()=>{
+      clearTimeout(timer);
+      try{
+        const nw=probe.naturalWidth,nh=probe.naturalHeight;
+        if(!nw||!nh)return finish(null);
+        const scale=Math.min(1,220/Math.max(nw,nh));
+        const cw=Math.max(1,Math.round(nw*scale)),ch=Math.max(1,Math.round(nh*scale));
+        const cvs=document.createElement('canvas');cvs.width=cw;cvs.height=ch;
+        const ctx=cvs.getContext('2d');ctx.drawImage(probe,0,0,cw,ch);
+        const data=ctx.getImageData(0,0,cw,ch).data;
+        const isBlack=(x,y)=>{const i=(y*cw+x)*4;return data[i]<18&&data[i+1]<18&&data[i+2]<18;};
+        const stepX=Math.max(1,Math.floor(cw/60)),stepY=Math.max(1,Math.floor(ch/60));
+        const rowBlackFrac=y=>{let b=0,t=0;for(let x=0;x<cw;x+=stepX){t++;if(isBlack(x,y))b++;}return t?b/t:0;};
+        const colBlackFrac=x=>{let b=0,t=0;for(let y=0;y<ch;y+=stepY){t++;if(isBlack(x,y))b++;}return t?b/t:0;};
+        let top=0;while(top<ch*0.45&&rowBlackFrac(top)>0.9)top++;
+        let bottom=ch-1;while(bottom>ch*0.55&&rowBlackFrac(bottom)>0.9)bottom--;
+        let left=0;while(left<cw*0.45&&colBlackFrac(left)>0.9)left++;
+        let right=cw-1;while(right>cw*0.55&&colBlackFrac(right)>0.9)right--;
+        const res={top:top/ch,bottom:(ch-1-bottom)/ch,left:left/cw,right:(cw-1-right)/cw};
+        if(res.top+res.bottom+res.left+res.right<0.04)return finish(null);
+        finish(res);
+      }catch(e){finish(null);}
+    };
+    probe.src=url;
+  });
+  __blackBorderCache.set(url,p);
+  return p;
+}
+/** 선생님이 컨텐츠 추가/수정 화면에서 올린 이미지들을(한 줄에 URL 하나씩) 화면에 세로로 쌓아 보여줘요.
+ *  이미지가 없으면 null을 돌려줘서, 호출하는 쪽에서 그냥 appendChild를 건너뛰면 돼요. */
+function renderImages(imagesText){
+  const urls=String(imagesText||'').split('\n').map(s=>s.trim()).filter(Boolean);
+  if(!urls.length)return null;
+  const wrap=el('div','content-images');wrap.style.cssText='display:flex;flex-direction:column;gap:10px;margin:12px 0';
+  urls.forEach(u=>{const img=document.createElement('img');img.src=fixDriveImageUrl(u);img.alt='';img.loading='lazy';img.style.cssText='max-width:100%;border-radius:12px;display:block';wrap.appendChild(img);});
+  return wrap;
+}
+function splitSentences(text){
+  const t=String(text||'').trim();
+  if(!t)return[];
+  // P.E., U.S., Mr. 같은 줄임말 뒤의 마침표를 문장 끝으로 잘못 자르지 않도록 처리해요.
+  const ABBR=new Set(['mr','mrs','ms','dr','prof','st','jr','sr','vs','etc','no']);
+  const out=[];let start=0;
+  for(let i=0;i<t.length;i++){
+    const c=t[i];
+    if(c==='!'||c==='?'){
+      let j=i;while(j+1<t.length&&/[.!?]/.test(t[j+1]))j++;
+      out.push(t.slice(start,j+1).trim());i=j;start=i+1;continue;
+    }
+    if(c==='.'){
+      const next=t[i+1];
+      // 마침표 바로 뒤에 공백/줄바꿈이 없으면(예: P.E.) 아직 문장이 안 끝난 걸로 봐요.
+      if(next&&!/\s/.test(next))continue;
+      const wordBefore=(t.slice(0,i).match(/([A-Za-z]+)$/)||[])[1];
+      if(wordBefore&&ABBR.has(wordBefore.toLowerCase()))continue;
+      // 마침표 뒤 다음 단어가 소문자로 시작하면(예: "U.S. now") 아직 문장이 안 끝난 걸로 봐요.
+      let k=i+1;while(k<t.length&&/\s/.test(t[k]))k++;
+      if(k<t.length&&/[a-z]/.test(t[k]))continue;
+      let j=i;while(j+1<t.length&&/[.!?]/.test(t[j+1]))j++;
+      out.push(t.slice(start,j+1).trim());i=j;start=i+1;
+    }
+  }
+  const rest=t.slice(start).trim();
+  if(rest)out.push(rest);
+  const res=out.filter(Boolean);
+  return res.length?res:[t];
+}
+function parseFeedback(raw){
+  if(!raw)return{overall:'',sentences:{}};
+  try{
+    const o=JSON.parse(raw);
+    if(o&&typeof o==='object'&&!Array.isArray(o))return{overall:o.overall||'',sentences:o.sentences||{}};
+  }catch(e){}
+  return{overall:String(raw),sentences:{}};
+}
+/* AI 첨삭은 문장별로 {errors:[{wrong,correct,note}], corrected} 형태라 선생님 첨삭(문자열)과 모양이 달라요. */
+/** 첨삭 종류를 글자 비교로 바로잡아요(서버의 fixErrType_와 같은 규칙) — 이미 저장된 예전 첨삭도 같은 기준으로 보여요.
+ *  빨강(wrong)=틀려서 바꿈/지움, 파랑(missing)=원래 표현은 그대로 두고 단어만 새로 끼워 넣음, 보라(suggestion)=제안. */
+function fixErrType(type,wrong,correct){
+  if(type==='suggestion')return 'suggestion';
+  const tok=x=>String(x||'').toLowerCase().replace(/[^a-z0-9'\s-]/g,' ').split(/\s+/).filter(Boolean);
+  const w=tok(wrong),c=tok(correct);
+  if(!c.length)return 'wrong';
+  if(!w.length)return 'missing';
+  let i=0;c.forEach(t=>{if(i<w.length&&t===w[i])i++;});
+  return (i===w.length&&c.length>w.length)?'missing':'wrong';
+}
+function parseAiFeedback(raw){
+  if(!raw)return{overall:'',sentences:{}};
+  try{
+    const o=JSON.parse(raw);
+    if(o&&typeof o==='object'&&!Array.isArray(o)){
+      const sents=o.sentences||{};
+      Object.keys(sents).forEach(k=>{const e=sents[k];if(e&&typeof e==='object'&&Array.isArray(e.errors))e.errors.forEach(x=>{if(x&&typeof x==='object')x.type=fixErrType(x.type||'wrong',x.wrong,x.correct);});});
+      return{overall:o.overall||'',sentences:sents};
+    }
+  }catch(e){}
+  return{overall:'',sentences:{}};
+}
+/** Pattern Drill 제출물에 담긴 "문항별 결과"(개념퀴즈·단어배열·한글영작 — 맞은 것/틀린 것 전부)를 파싱해요.
+ *  형식: [{type:'퀴즈'|'배열'|'영작', ko: 문제(한글/질문), a: 정답, user: 학생이 고른/쓴 답, correct: true|false}, ...]
+ *  (예전 제출물은 correct 칸이 없을 수 있는데, 그건 옛날 버전이라 "틀린 문항"만 담겨있던 거라 correct는 항상 false로 봐요.) */
+function parseWrongReport(raw){
+  if(!raw)return[];
+  try{const arr=JSON.parse(raw);return Array.isArray(arr)?arr:[];}catch(e){return[];}
+}
+/** Re-Writing 비교 화면("처음 쓴 글 · 지적된 부분")에서, 원본 글에 저장된 첨삭/문항 결과가
+ *  하나도 없을 때 그냥 빈 화면처럼 보이지 않도록 — 선생님 첨삭(feedback)·AI 첨삭(aiFeedback류)·
+ *  문법드릴 문항별 결과(wrongReport) 중 하나라도 있는지 확인해요. 셋 다 없으면(예: 원본에
+ *  첨삭을 아직 한 번도 저장한 적이 없으면) 안내 문구를 보여줘요. */
+function hasAnyOriginalFeedback(sub){
+  if(!sub)return false;
+  const fb=parseFeedback(sub.feedback),aifb=parseAiFeedback(sub.aiFeedback),aifbGpt=parseAiFeedback(sub.aiFeedbackGpt);
+  const hasSentenceMarks=[fb,aifb,aifbGpt].some(f=>f&&f.sentences&&Object.keys(f.sentences).length);
+  const hasOverall=!!(fb.overall||aifb.overall||aifbGpt.overall);
+  const hasWrongReport=!!(sub.wrongReport&&parseWrongReport(sub.wrongReport).length);
+  return hasSentenceMarks||hasOverall||hasWrongReport;
+}
+/** 문법 드릴의 문항별 결과(맞은 것·틀린 것 전부)를 학생·선생님 화면에 똑같이 보여주는 카드 — 문항 종류(퀴즈/배열/영작),
+ *  문제, 학생이 쓴 답, 정답을 나란히 보여줘요. 틀린 문항은 학생 답에 빨간 취소선이 붙고, 맞은 문항은 ✅로 표시돼요. */
+function renderDrillWrongReport(itemArr){
+  if(!itemArr||!itemArr.length)return '';
+  const correctCount=itemArr.filter(w=>w.correct).length;
+  const rows=itemArr.map(w=>{
+    const isCorrect=!!w.correct;
+    const qText=undl(String(w.ko||''));
+    const userAns=String(w.user||'').trim();
+    return '<div style="border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:'+(isCorrect?'#f4faf6':'#faf9fb')+'">'+
+      '<div style="font-size:12px;color:#6b7684;font-weight:700">'+(isCorrect?'✅ ':'❌ ')+escH(w.type||'')+'</div>'+
+      '<div style="font-size:14px;margin-top:2px">'+qText+'</div>'+
+      (userAns?('<div style="font-size:13px;margin-top:4px">'+(isCorrect?escH(userAns):('<s style="color:#dc2626">'+escH(userAns)+'</s>'))+'</div>'):'')+
+      (isCorrect?'':('<div style="font-size:13px;margin-top:2px;color:#059669">✔ '+escH(String(w.a||''))+'</div>'))+
+      '</div>';
+  }).join('');
+  return '<div style="margin-top:8px"><div class="fl" style="margin-bottom:4px">문항별 결과 (맞음 '+correctCount+' / 전체 '+itemArr.length+')</div>'+rows+'</div>';
+}
+/** 제출 화면(Re-Writing·수행평가는 제외)에 붙는 "소리 내어 읽고 녹음하기" 위젯을 만들어요.
+ *  마이크로 녹음 → 바로 들어보기 → (원하면) 다시 녹음할 수 있고, 녹음하지 않아도 제출은 그대로 돼요.
+ *  녹음 화면을 여러 번 재진입(예: 이전/다음으로 왔다갔다)해도 녹음해둔 내용이 사라지지 않도록,
+ *  이 위젯은 화면을 만들 때 딱 한 번만 만들어서 재사용해야 해요(각 제출 화면 코드에서 그렇게 쓰고 있어요).
+ *  getAudio()는 제출 시 호출해서 {base64, mime}(녹음 없으면 null)을 꺼내 써요. */
+function createRecorderWidget(){
+  const wrap=el('div');wrap.style.cssText='margin:14px 0;padding:14px;background:#f6f7fb;border-radius:12px';
+  wrap.appendChild(el('div','fl','🎤 소리 내어 읽고 녹음하기 (선택)'));
+  const hint=el('div','hint','다 쓴 글을 소리 내어 읽고 녹음해서 함께 제출할 수 있어요. 녹음하지 않아도 제출은 가능해요.');
+  wrap.appendChild(hint);
+  const row=el('div');row.style.cssText='display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap';
+  const recBtn=el('button','btn ghost','🎙 녹음 시작');recBtn.type='button';recBtn.style.cssText='padding:8px 16px;font-size:13px';
+  const status=el('span');status.style.cssText='font-size:13px;color:#6b7684';
+  row.appendChild(recBtn);row.appendChild(status);
+  wrap.appendChild(row);
+  const player=document.createElement('audio');player.controls=true;player.style.cssText='display:none;margin-top:10px;width:100%;max-width:360px';
+  wrap.appendChild(player);
+  const rerecBtn=el('button','btn ghost','🔁 다시 녹음');rerecBtn.type='button';rerecBtn.style.cssText='padding:6px 12px;font-size:12px;display:none;margin-top:8px';
+  wrap.appendChild(rerecBtn);
+
+  const supported=!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder);
+  if(!supported){
+    status.textContent='이 브라우저에서는 녹음 기능을 쓸 수 없어요(제출은 그대로 가능해요).';
+    recBtn.disabled=true;
+    return {el:wrap,getAudio:async()=>null};
+  }
+
+  let mediaRecorder=null,chunks=[],blob=null,stream=null;
+
+  const startRec=async()=>{
+    try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+    catch(e){ status.textContent='마이크 권한을 허용해주셔야 녹음할 수 있어요.'; return; }
+    chunks=[];
+    try{ mediaRecorder=new MediaRecorder(stream); }
+    catch(e){ status.textContent='이 브라우저에서는 녹음을 시작할 수 없어요.'; stream.getTracks().forEach(t=>t.stop()); return; }
+    mediaRecorder.ondataavailable=ev=>{if(ev.data&&ev.data.size>0)chunks.push(ev.data);};
+    mediaRecorder.onstop=()=>{
+      blob=new Blob(chunks,{type:mediaRecorder.mimeType||'audio/webm'});
+      player.src=URL.createObjectURL(blob);player.style.display='block';
+      rerecBtn.style.display='inline-block';
+      status.textContent='녹음 완료! 아래에서 들어보고 제출하세요.';
+      if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+    };
+    mediaRecorder.start(250); // 250ms마다 데이터를 흘려보내게 해서, 아주 짧게 녹음해도 빈 파일이 되지 않게 해요.
+    recBtn.textContent='⏹ 녹음 멈추기';status.textContent='녹음 중…';
+    player.style.display='none';rerecBtn.style.display='none';blob=null;
+  };
+  recBtn.onclick=()=>{
+    if(mediaRecorder&&mediaRecorder.state==='recording'){mediaRecorder.stop();recBtn.textContent='🎙 녹음 시작';}
+    else startRec();
+  };
+  rerecBtn.onclick=()=>{blob=null;player.style.display='none';player.removeAttribute('src');rerecBtn.style.display='none';status.textContent='';};
+
+  const getAudio=()=>new Promise(resolve=>{
+    if(!blob){resolve(null);return;}
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const base64=String(reader.result).split(',')[1]||'';
+      resolve(base64?{base64,mime:blob.type||'audio/webm'}:null);
+    };
+    reader.onerror=()=>resolve(null);
+    reader.readAsDataURL(blob);
+  });
+
+  return {el:wrap,getAudio};
+}
+/** 제출물에 학생이 소리 내어 읽고 녹음한 파일(audioUrl)이 있으면, 바로 들어볼 수 있는 작은 재생 박스를
+ *  만들어 돌려줘요(없으면 null). 학생 본인의 "내 제출 내역"과 선생님의 제출물 상세 화면 양쪽에서 같이 써요. */
+function renderAudioPlayback(s){
+  if(!s.audioUrl)return null;
+  const wrap=el('div');wrap.style.cssText='margin-top:10px;padding:10px 12px;background:#f6f7fb;border-radius:10px';
+  wrap.appendChild(el('div','fl','🎤 소리 내어 읽은 녹음'));
+  const link=el('a');link.href=s.audioUrl;link.target='_blank';link.rel='noopener';link.textContent='🔊 녹음 파일 열기 (새 탭)';
+  link.style.cssText='display:inline-block;margin-top:4px;font-size:13px;color:var(--accent);font-weight:700;text-decoration:none';
+  wrap.appendChild(link);
+  return wrap;
+}
+/** printSubmissionReport / printStudentRewriteReport 두 리포트가 함께 쓰는 기본 스타일이에요.
+ *  사이트 본문에서 쓰는 색감(주황 accent, 보라 violet, 민트 blue, 초록 green)을 그대로 가져와서
+ *  인쇄해도(PDF로 저장해도) 사이트와 같은 느낌이 나는 카드형 리포트로 보이게 해요. */
+// 리포트는 window.open으로 완전히 새 문서를 여는 거라, 사이트 본문 폰트를 그대로 이어받지 못하고
+// 브라우저 기본 글꼴로 떨어져 밋밋해 보였어요. Gmarket Sans(두껍고 장난스러움) → Pretendard(가로폭이
+// 너무 넓어 보임) 순으로 시도했다가, 지금은 실제 사무 문서·보고서에서 가장 흔히 쓰이는, 자간이
+// 좁고 단정한 맑은 고딕(Windows)/애플 산돌고딕(Mac) 계열을 우선 쓰도록 바꿨어요 — 별도로 내려받지
+// 않아도 대부분의 PC에 이미 깔려있어서 더 빠르고, 폭도 좁아서 보고서 느낌에 잘 어울려요. 혹시 그
+// 글꼴이 없는 기기(오래된 기기 등)를 위한 안전망으로만 구글 폰트 Noto Sans KR을 같이 불러와요.
+const REPORT_FONT_LINKS=
+  '<link rel="preconnect" href="https://fonts.googleapis.com">'+
+  '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'+
+  '<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800;900&display=swap" rel="stylesheet">';
+const REPORT_FONT_FAMILY="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',system-ui,sans-serif";
+// 학원별로 리포트 왼쪽 위에 로고를 넣고 싶으면, 아래에 '학원 이름': '로고 이미지 URL' 형태로 한 줄씩
+// 추가해주세요. 학원 이름은 학생 계정에 등록된 academy 값(교사 화면 상단에 보이는 이름)과 정확히
+// 똑같아야 하고, 이미지 URL은 인터넷 어디서든 접근 가능한 링크(예: 학원 홈페이지에 올린 로고 이미지
+// 주소)여야 해요. 등록 안 한 학원은 로고 없이 지금처럼 나와요.
+const ACADEMY_LOGOS={
+  // 예시: '이베스트 어학원': 'https://example.com/logo.png',
+};
+function academyLogoHtml(academyName){
+  const url=ACADEMY_LOGOS[String(academyName||'').trim()];
+  return url?('<div class="logo-box"><img src="'+escH(url)+'" alt="로고"></div>'):'';
+}
+const REPORT_BASE_CSS=
+  "*{box-sizing:border-box}"+
+  "body{margin:0;font-family:"+REPORT_FONT_FAMILY+";color:#2B2733;"+
+  "background:#EDEDF1;padding:32px 18px;line-height:1.65;"+
+  "-webkit-print-color-adjust:exact;print-color-adjust:exact}"+
+  '.page{max-width:840px;margin:6px auto}'+
+  // 학습지/시험지에서 자주 보이는 "이중 테두리 카드 + 테두리 친 제목 박스" 느낌으로 꾸몄어요
+  // (바깥은 은은한 민트색 테두리, 안쪽은 진한 남색 테두리, 제목은 가운데 정렬된 테두리 박스 안에).
+  '.sheet{background:#fff;border-radius:22px;border:3px solid #46508C;box-shadow:0 0 0 5px #DCEFE9;overflow:hidden}'+
+  // 겉(카드 전체)만 둥글게 두고, 안쪽 요소들(배너·박스·표)은 전부 각지게(border-radius:0) 정리했어요 —
+  // 원 안에 번호가 들어간 뱃지만 예외로 동그란 채로 남겨뒀어요(교재의 ①②③ 번호 스타일이라서).
+  // 색도 그라데이션 없이 전부 단색으로 통일했어요.
+  '.hero{background:#46508C;padding:16px 22px;color:#fff;display:flex;align-items:center;gap:14px}'+
+  '.hero .logo-box{background:#fff;border-radius:0;padding:6px;flex:0 0 auto;width:54px;height:54px;display:flex;align-items:center;justify-content:center}'+
+  '.hero .logo-box img{max-width:100%;max-height:100%;object-fit:contain;display:block}'+
+  '.hero .unit-tag{background:rgba(255,255,255,.22);border:1.5px solid rgba(255,255,255,.8);border-radius:0;padding:8px 14px;font-size:11px;font-weight:800;letter-spacing:.04em;text-align:center;line-height:1.3;white-space:nowrap;flex:0 0 auto}'+
+  '.hero h1{margin:0;font-size:16.5px;font-weight:800}'+
+  '.hero .sub{font-size:11.5px;opacity:.94;margin-top:3px}'+
+  '.body-pad{counter-reset:secnum;padding:22px 30px 30px}'+
+  '.meta-grid{display:flex;flex-wrap:wrap;gap:8px 10px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px dashed #DEDCE4}'+
+  '.meta-chip{background:#FAFAFC;border:1px solid #E2E2E8;border-radius:0;padding:6px 12px;font-size:12.5px;font-weight:700;color:#2B2733}'+
+  '.meta-chip b{color:#8D8298;font-weight:700;margin-right:5px}'+
+  '.meta-chip.score{background:#2B2733;border-color:#2B2733;color:#fff}.meta-chip.score b{color:rgba(255,255,255,.75)}'+
+  'h2.sec{font-size:14px;font-weight:800;color:#2B2733;margin:24px 0 12px;display:flex;align-items:center;gap:9px}'+
+  "h2.sec::before{counter-increment:secnum;content:counter(secnum);width:23px;height:23px;min-width:23px;border-radius:50%;"+
+  "background:#46508C;color:#fff;font-size:12px;font-weight:800;display:inline-flex;align-items:center;justify-content:center}"+
+  '.essay p{margin:0 0 8px;font-size:14px}'+
+  '.fb-box{border-radius:0;padding:13px 16px;margin-bottom:10px;font-size:13.5px;border:1px solid #E2E2E8;border-left:4px solid}'+
+  '.fb-a{background:#F7F5FF;border-left-color:#9678EE}.fb-b{background:#F1FBFA;border-left-color:#1FA3AC}.fb-c{background:#F2FBF6;border-left-color:#3FBE87}'+
+  '.wrong-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;border:1px solid #E2E2E8}'+
+  '.wrong-table th{background:#FAFAFC;color:#2B2733;font-weight:800;padding:8px 10px;text-align:left;border-bottom:1px solid #E2E2E8}'+
+  '.wrong-table td{padding:7px 10px;border-top:1px solid #EFEFF3}'+
+  // 문장별 "틀린 부분 → 고친 부분" 표시
+  '.osent-wrap,.rsent-wrap{font-size:13.5px}'+
+  'p.osent{margin:0 0 2px;background:#EEF0FA;border-radius:0;padding:5px 10px;display:inline-block;font-weight:700}'+
+  '.rsent-wrap p{margin:0 0 4px}'+
+  '.err-list{margin:4px 0 6px;padding-left:18px;font-size:12.5px}'+
+  '.err-list li{margin-bottom:7px;break-inside:avoid;page-break-inside:avoid}'+
+  '.err-pair{line-height:1.5}'+
+  '.wrong{color:#B3261E;text-decoration:line-through}'+
+  '.correct{color:#B3261E;font-weight:700}'+
+  '.missing{color:#1D4ED8;font-weight:700}'+
+  '.suggest{color:#7C3AED;font-weight:800}'+
+  '.type-tag{font-size:11px;font-weight:700;margin-left:4px}'+
+  '.note{display:block;color:#8D8298;margin-top:2px;line-height:1.5}'+
+  '.corrected-full{font-size:12.5px;color:#2B2733;margin:2px 0 8px;background:#F1FBFA;border-radius:0;padding:5px 10px}'+
+  '.cmt{font-size:12px;color:#9A5B12;margin:0 0 8px}'+
+  '.overall{background:#F2FBF6;border-radius:0;padding:11px 14px;font-size:13px;margin:10px 0 0;white-space:pre-line;border:1px solid #DCF0E3;border-left:4px solid #3FBE87;break-inside:avoid;page-break-inside:avoid}'+
+  '.procblock{margin-top:14px}'+
+  '.prochead{font-size:12px;font-weight:800;color:#8D8298;margin-bottom:6px}'+
+  '.proccard{background:#FAFAFC;border:1px solid #E2E2E8;border-radius:0;padding:8px 10px;margin-bottom:6px;font-size:12.5px;break-inside:avoid;page-break-inside:avoid}'+
+  '.proccard .pk{font-weight:800;color:#2B2733;margin-bottom:2px}'+
+  '.proccard .pv{color:#4A4552;white-space:pre-line}'+
+  // "틀린 글 / 고친 글"을 창(window)처럼 나란히 보여주는 비교 레이아웃 — 브라우저 창/코드 에디터 같은
+  // 느낌의 타이틀바(점 3개)를 얹어서, 리포트가 문서처럼 정돈돼 보이면서도 원본↔수정본 대비가 한눈에 들어와요.
+  '.compare{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px}'+
+  '@media (max-width:640px){.compare{grid-template-columns:1fr}}'+
+  '.win{border:1px solid #E2E2E8;border-radius:0;overflow:hidden;background:#fff;display:flex;flex-direction:column;break-inside:avoid;page-break-inside:avoid}'+
+  '.win-bar{display:flex;align-items:center;gap:8px;padding:9px 12px;background:#FAFAFC;border-bottom:1px solid #E2E2E8;font-weight:800;font-size:12.5px}'+
+  '.win-dots{display:inline-flex;gap:4px;flex:0 0 auto}'+
+  '.win-dots span{width:7px;height:7px;border-radius:50%;background:#DDDCE3;display:inline-block}'+
+  '.win.orig .win-bar{color:#B3261E;background:#FDEDEC}.win.orig .win-bar .win-dots span:nth-child(1){background:#E8ADA9}'+
+  '.win.fixed .win-bar{color:#1C7A4D;background:#EAF7EF}.win.fixed .win-bar .win-dots span:nth-child(1){background:#A9DABE}'+
+  '.win-body{padding:14px 16px;flex:1}'+
+  '.win.fixed .win-body{background:#FBFEFC}'+
+  '.noprint{margin-top:26px;text-align:center;padding-bottom:6px}'+
+  '.noprint button{padding:11px 24px;font-size:14px;font-weight:800;border-radius:0;border:none;'+
+  'background:#2B2733;color:#fff;cursor:pointer}'+
+  // 성적표 스타일 섹션(Title/Class Level/Writing Level 표 + 평가영역 그래프 + 총점 박스) — 참고한
+  // 예전 리포트(PDF)의 보라색 대신, 이 사이트의 기존 남색/무채색 톤에 맞춰서 새로 꾸몄어요.
+  '.rubric-sec{display:grid;grid-template-columns:1.1fr 1fr;gap:18px;margin-top:6px}'+
+  '@media (max-width:640px){.rubric-sec{grid-template-columns:1fr}}'+
+  '.rubric-table{width:100%;border-collapse:collapse;font-size:13px;border:1px solid #E2E2E8}'+
+  '.rubric-table th{background:#FAFAFC;color:#8D8298;font-weight:800;text-align:left;padding:9px 12px;width:34%;border-bottom:1px solid #E2E2E8;border-right:1px solid #E2E2E8}'+
+  '.rubric-table td{padding:9px 12px;font-weight:700;color:#2B2733;border-bottom:1px solid #E2E2E8}'+
+  '.rubric-table tr:last-child th,.rubric-table tr:last-child td{border-bottom:none}'+
+  '.rubric-score-box{margin-top:10px;background:#2B2733;color:#fff;padding:18px 16px;display:flex;align-items:center;justify-content:space-between;min-height:78px;break-inside:avoid;page-break-inside:avoid}'+
+  '.rubric-score-box .rsb-label{font-size:14.5px;color:rgba(255,255,255,.92);font-weight:800}'+
+  '.rubric-score-box .rsb-val{font-size:38px;font-weight:900;line-height:1}'+
+  '.rubric-score-box .rsb-val span{font-size:17px;font-weight:800;margin-left:6px;color:rgba(255,255,255,.85)}'+
+  '.rubric-bars{border:1px solid #E2E2E8;padding:14px 16px;break-inside:avoid;page-break-inside:avoid}'+
+  '.rubric-bars .rb-title{font-size:11.5px;font-weight:800;color:#8D8298;margin-bottom:10px}'+
+  '.rb-row{margin-bottom:10px}'+
+  '.rb-row:last-child{margin-bottom:0}'+
+  '.rb-row .rb-head{display:flex;justify-content:space-between;font-size:12px;font-weight:700;color:#2B2733;margin-bottom:4px}'+
+  '.rb-track{background:#EDEDF1;height:10px;position:relative}'+
+  '.rb-fill{background:#46508C;height:10px}'+
+  '.rubric-donut-wrap{border:1px solid #E2E2E8;padding:14px 16px;margin-top:14px;display:flex;align-items:center;gap:16px;break-inside:avoid;page-break-inside:avoid}'+
+  '.rubric-donut-wrap .rb-title{font-size:11.5px;font-weight:800;color:#8D8298;margin-bottom:2px}'+
+  '.rubric-donut-wrap .rd-num{font-size:20px;font-weight:900;color:#2B2733}'+
+  '.rb-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}'+
+  '.rd-legend{margin-top:4px;display:flex;gap:10px;font-size:10.5px;color:#8D8298;font-weight:700}'+
+  // 인쇄/PDF에서는 "처음 쓴 글"·"고쳐 쓴 글" 두 창을 화면처럼 나란히(그리드 2열) 두면, 왼쪽/오른쪽
+  // 내용 길이가 서로 달라서 페이지가 넘어갈 때 그리드가 두 열의 높이를 억지로 맞추려다 상자 테두리가
+  // 중간에 잘리고 다음 페이지에 빈 여백이 남는 문제가 있었어요. 그래서 인쇄할 때만 한 줄씩(1열) 세로로
+  // 쌓이게 바꾸고, 각 상자(.win/.overall/성적표 박스들)에는 break-inside:avoid를 줘서 박스 하나가
+  // 페이지 중간에서 잘리지 않고 다음 페이지로 통째로 넘어가게 했어요.
+  '@media print{body{background:#fff;padding:0}.page{max-width:100%}.sheet{box-shadow:none;border-radius:0}.noprint{display:none}'+
+  '.compare{grid-template-columns:1fr;gap:12px}.compare .win{margin-bottom:2px}'+
+  '.rubric-sec{grid-template-columns:1fr;gap:12px}'+
+  // display:flex + overflow:hidden인 요소는 크로미움 인쇄 엔진이 break-inside:avoid를 잘 지키지 않는
+  // 경우가 있어서(알려진 버그), 인쇄할 때만 .win을 block/overflow:visible로 바꿔서 확실히 안 잘리게 했어요.
+  '.win{display:block;overflow:visible}'+
+  'h2.sec{break-after:avoid;page-break-after:avoid}}';
+/** 제출물 하나를 학부모님께 보내기 좋은 리포트 형태(새 탭 → 인쇄/PDF 저장)로 열어줘요.
+ *  학생이 쓴 글 + 선생님 첨삭(있으면 AI 첨삭도 함께)을 깔끔하게 정리해서 보여주고,
+ *  버튼을 누르면 브라우저 인쇄창이 뜨는데, 거기서 "PDF로 저장"을 고르면 파일로도 받을 수 있어요. */
+/** 제출물 하나(s)의 텍스트를 문장별로 나눠서, 그 문장에 달린 AI/선생님 첨삭(errors[]+corrected, 문장별
+ *  코멘트)이 있으면 "틀린 부분 → 고친 부분"까지 문장 바로 아래에 함께 그려요. 첨삭이 하나도 없는 문장은
+ *  그냥 문장만 보여요. printSubmissionReport에서 "애가 뭘 틀렸는지 안 보인다"는 문제를 고치기 위해,
+ *  기존엔 총평(overall)만 보여주던 걸 printStudentRewriteReport처럼 문장 단위로도 보여주게 했어요. */
+function annotatedSentencesHtml(s){
+  const fb=parseFeedback(s.feedback);
+  const aifb=parseAiFeedback(s.aiFeedback);
+  const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
+  const sents=s.text?splitSentences(s.text):[];
+  if(!sents.length)return '<p style="color:#888">(작성한 글이 없어요)</p>';
+  return sents.map((sent,i)=>{
+    const c=fb.sentences[i]||fb.sentences[String(i)];
+    const ai=aifb.sentences[i]||aifb.sentences[String(i)];
+    const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
+    let html='<p class="osent">'+escH(sent)+'</p>';
+    html+=sentenceErrorListHtml(ai);
+    html+=sentenceErrorListHtml(aiGpt);
+    if(c&&typeof c==='string')html+='<div class="cmt">'+escH(c)+'</div>';
+    return html;
+  }).join('');
+}
+/* 평가 영역(과제완성/형식)마다 고정된 색을 하나씩 줘서 — 등급이 같아도(예: 둘 다 B) 그래프가 한 가지
+ * 색으로만 보이지 않게 해요. 처음엔 보라·청록을 썼는데, 종합 점수 박스(초록~파랑 계열)·hero 배너(남색)까지
+ * 합쳐지면 온통 파랑·초록·보라 계열(cool tone)로만 보인다는 의견이 있어서, 그것과 뚜렷이 대비되는
+ * 따뜻한 색(노랑·로즈핑크)으로 바꿨어요 — 그라데이션은 여전히 안 쓰고 전부 단색이에요. */
+const RUBRIC_AREA_COLORS={task:'#FFDD3C',format:'#E85D75'};
+/** 점수 정보가 있는 제출물이면(rb!=null — 선생님이 직접 입력했거나 autoComputeRubric으로 자동
+ *  계산됐거나), 예전에 쓰던 성적표 형태(Title/Class Level/Writing Level/이름 표 + 평가영역 막대그래프 +
+ *  수행 완성도 도넛그래프 + 총점 박스)를 그대로 흉내내서 그려줘요. 점수 자체가 없는 제출물만 이 섹션이
+ *  안 나와요(기존 리포트 그대로). 차트는 외부 라이브러리 없이 CSS 막대 + SVG 원(stroke-dasharray)만으로
+ *  그려서 인쇄/PDF에도 그대로 나와요. 막대는 평가 영역마다 고정된 색(노랑·로즈핑크)을 쓰고, 도넛은 그 두
+ *  영역의 점수를 그대로 이어붙인 두 색 링(+ 못 채운 나머지는 회색)으로 그려서 한 가지 색으로 밋밋해
+ *  보이지 않게 했어요. 종합 점수 박스만 등급(A~F)에 따라 초록~빨강으로 따로 색이 바뀌어요. */
+function rubricSectionHtml(rb,title,studentName){
+  if(!rb)return '';
+  const taskPct=Math.round((rb.taskScore||0)/10*100);
+  const fmtPct=Math.round((rb.formatScore||0)/10*100);
+  const totalPct=rb.totalPercent!=null?rb.totalPercent:Math.round(((rb.taskScore||0)+(rb.formatScore||0))/20*100);
+  const totalColor=rubricTotalGradeColor(rb.totalGrade);
+  const taskColor=RUBRIC_AREA_COLORS.task,fmtColor=RUBRIC_AREA_COLORS.format;
+  // 도넛을 "과제완성 점수(보라) + 형식 점수(청록) + 남은 부분(회색)" 세 구간을 이어붙인 링으로 그려요
+  // (20점 만점 기준 — 예: 10+8이면 절반은 보라, 40%는 청록, 나머지 10%는 회색).
+  const r=30,circ=2*Math.PI*r;
+  const taskFrac=Math.max(0,Math.min(1,(rb.taskScore||0)/20)),fmtFrac=Math.max(0,Math.min(1,(rb.formatScore||0)/20));
+  const taskLen=circ*taskFrac,fmtLen=circ*fmtFrac;
+  return '<h2 class="sec">성적표 요약'+(rb.auto?' <span style="font-size:10.5px;font-weight:700;color:#8D8298;vertical-align:middle">(점수 기반 자동 계산)</span>':'')+'</h2>'+
+    '<div class="rubric-sec">'+
+      '<div>'+
+        '<table class="rubric-table"><tbody>'+
+          '<tr><th>Title</th><td>'+escH(title||'')+'</td></tr>'+
+          '<tr><th>Class Level</th><td>'+escH(rb.classLevel||'-')+'</td></tr>'+
+          '<tr><th>Writing Level</th><td>'+escH(rb.writingLevel||'-')+'</td></tr>'+
+          '<tr><th>Name</th><td>'+escH(studentName||'')+'</td></tr>'+
+        '</tbody></table>'+
+        '<div class="rubric-score-box" style="background:'+totalColor+'"><span class="rsb-label">종합 점수</span><span class="rsb-val">'+(rb.totalScore!=null?rb.totalScore:'-')+'<span>/20 ('+escH(rb.totalGrade||'-')+')</span></span></div>'+
+      '</div>'+
+      '<div>'+
+        '<div class="rubric-bars">'+
+          '<div class="rb-title">평가 영역별 점수</div>'+
+          '<div class="rb-row"><div class="rb-head"><span><i class="rb-dot" style="background:'+taskColor+'"></i>과제완성</span><span style="color:'+taskColor+'">'+escH(rb.taskGrade||'-')+' · '+(rb.taskScore!=null?rb.taskScore:'-')+'/10</span></div>'+
+            '<div class="rb-track"><div class="rb-fill" style="width:'+taskPct+'%;background:'+taskColor+'"></div></div></div>'+
+          '<div class="rb-row"><div class="rb-head"><span><i class="rb-dot" style="background:'+fmtColor+'"></i>형식</span><span style="color:'+fmtColor+'">'+escH(rb.formatGrade||'-')+' · '+(rb.formatScore!=null?rb.formatScore:'-')+'/10</span></div>'+
+            '<div class="rb-track"><div class="rb-fill" style="width:'+fmtPct+'%;background:'+fmtColor+'"></div></div></div>'+
+        '</div>'+
+        '<div class="rubric-donut-wrap">'+
+          '<svg width="76" height="76" viewBox="0 0 76 76">'+
+            '<circle cx="38" cy="38" r="'+r+'" fill="none" stroke="#EDEDF1" stroke-width="10"/>'+
+            '<circle cx="38" cy="38" r="'+r+'" fill="none" stroke="'+fmtColor+'" stroke-width="10" '+
+              'stroke-dasharray="'+fmtLen.toFixed(2)+' '+circ.toFixed(2)+'" stroke-dashoffset="'+(-taskLen).toFixed(2)+'" '+
+              'transform="rotate(-90 38 38)" stroke-linecap="butt"/>'+
+            '<circle cx="38" cy="38" r="'+r+'" fill="none" stroke="'+taskColor+'" stroke-width="10" '+
+              'stroke-dasharray="'+taskLen.toFixed(2)+' '+circ.toFixed(2)+'" stroke-dashoffset="0" '+
+              'transform="rotate(-90 38 38)" stroke-linecap="butt"/>'+
+          '</svg>'+
+          '<div><div class="rb-title">수행 완성도</div><div class="rd-num" style="color:'+totalColor+'">'+totalPct+'%</div>'+
+            '<div class="rd-legend"><span><i class="rb-dot" style="background:'+taskColor+'"></i>과제완성</span><span><i class="rb-dot" style="background:'+fmtColor+'"></i>형식</span></div>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+}
+/* ================= Writing Report (초등/중등 양식) =================
+   학원·반마다 "초등 양식"/"중등 양식"을 골라 쓰고, 학원별 로고도 올려서 쓰는 한 장짜리 학부모용 리포트예요.
+   설정(로고·반별 양식)은 서버(ewl_report_config)에 학원별로 저장돼요 — 🧾 리포트 설정 화면에서 바꿔요. */
+let REPORT_CFG=null,reportCfgLoading=null;
+function fetchReportConfig(force){
+  if(REPORT_CFG&&!force)return Promise.resolve(REPORT_CFG);
+  if(reportCfgLoading&&!force)return reportCfgLoading;
+  reportCfgLoading=(async()=>{
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=reportConfig&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      REPORT_CFG=(data&&data.ok&&data.configs&&typeof data.configs==='object')?data.configs:{};
+    }catch(e){REPORT_CFG=REPORT_CFG||{};}
+    reportCfgLoading=null;return REPORT_CFG;
+  })();
+  return reportCfgLoading;
+}
+function reportAcademyCfg_(cfg,academy){
+  const a=String(academy||'').trim();
+  return (cfg&&(cfg[a]||cfg['']))||{};
+}
+/** 그 학생(반)에게 쓸 양식: 학원이 반별로 지정해 둔 게 있으면 그걸, 없으면 반 레벨·학교·학년 이름에서 초/중을 가늠해요(못 찾으면 중등). */
+function reportStageFor_(s,cfg){
+  const c=reportAcademyCfg_(cfg,s&&s.academy);
+  const m=c.classStages&&c.classStages[String((s&&s.cls)||'').trim()];
+  if(m==='초등'||m==='중등')return m;
+  const st=schoolStageFromText(levelDisplayName(s&&s.cls)||'')||schoolStageFromText(s&&s.school)||schoolStageFromText(s&&s.schoolGrade);
+  return st==='초'?'초등':'중등';
+}
+function findStoryTopicByTitle_(title){
+  const t=String(title||'').trim();if(!t)return null;
+  for(const k of Object.keys(STORY||{})){const f=(STORY[k]||[]).find(x=>String(x.title||'').trim()===t);if(f)return f;}
+  return null;
+}
+/** 제출물 s와 짝이 되는 원본/다시쓰기 제출물을 찾아요(s가 어느 쪽이어도 돼요). */
+function writingReportPair_(s,siblings){
+  const key=s.point||s.chapter||'';
+  const sib=(siblings||[]).filter(x=>x!==s&&(x.point||x.chapter||'')===key);
+  const desc=(a,b)=>String(a.datetime||'')<String(b.datetime||'')?1:-1;
+  if(submissionTypeLabel(s)==='Re-Writing'){
+    return {original:sib.filter(x=>submissionTypeLabel(x)!=='Re-Writing').sort(desc)[0]||null,rewrite:s};
+  }
+  return {original:s,rewrite:sib.filter(x=>submissionTypeLabel(x)==='Re-Writing').sort(desc)[0]||null};
+}
+/** 한 제출물의 문장별 첨삭(Claude+GPT+선생님 코멘트)을 [{text,errors,comment}]로 모아요. 틀린 곳이 없는 문장은 빼요. */
+function writingReportSentences_(sub){
+  if(!sub||!sub.text)return [];
+  const fb=parseFeedback(sub.feedback),a1=parseAiFeedback(sub.aiFeedback),a2=parseAiFeedback(sub.aiFeedbackGpt);
+  const out=[];
+  splitSentences(sub.text).forEach((sent,i)=>{
+    const errs=[],seen={};
+    [a1,a2].forEach(a=>{
+      const e=a.sentences[i]||a.sentences[String(i)];
+      if(e&&typeof e==='object'&&Array.isArray(e.errors))e.errors.forEach(x=>{
+        if(!x||(!x.wrong&&!x.correct))return;
+        const k=norm(x.wrong||'')+'|'+norm(x.correct||'');
+        if(seen[k])return;seen[k]=1;errs.push({type:x.type||'wrong',wrong:x.wrong||'',correct:x.correct||'',note:x.note||''});
+      });
+    });
+    const c=fb.sentences[i]||fb.sentences[String(i)];
+    const comment=(typeof c==='string')?c:'';
+    if(errs.length||comment)out.push({text:sent,errors:errs,comment});
+  });
+  return out;
+}
+function writingReportComment_(subs){
+  const seen={},parts=[];
+  subs.filter(Boolean).forEach(x=>{
+    [parseAiFeedback(x.aiFeedback).overall,parseAiFeedback(x.aiFeedbackGpt).overall,parseFeedback(x.feedback).overall].forEach(t=>{
+      t=String(t||'').trim();if(t&&!seen[t]){seen[t]=1;parts.push(t);}
+    });
+  });
+  return parts.join('\n\n');
+}
+function wrDateStr_(dt,sep){
+  const m=String(dt||'').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  return m?(m[1]+sep+String(m[2]).padStart(2,'0')+sep+String(m[3]).padStart(2,'0')):String(dt||'');
+}
+const WR_FONTS=
+  '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'+
+  '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;700;800;900&family=Jua&family=Noto+Sans+KR:wght@400;500;700;800;900&display=swap" rel="stylesheet">';
+function wrErrHtml_(e,tpl){
+  const type=e.type||'wrong';
+  const chip=type==='suggestion'?'<span class="chip s">제안</span>':type==='missing'?'<span class="chip m">빠진 표현</span>':'';
+  const d=diffPairHtml_(e,{collapse:true});
+  const el_=tpl==='초등';
+  // 한 줄에 "틀린 표현 → 고친 표현"을 다 넣으면 길 때 줄바꿈이 애매하게 꺾여서, 틀린 표현 줄 / 고친 표현 줄로 나눠요.
+  const l1='<div class="l1">'+(el_?'<span class="ic ic-x">✕</span>':'')+'<span>'+d.wrongHtml+'</span></div>';
+  const l2=d.hasCorrect?('<div class="l2">'+(el_?'<span class="ic ic-ok">✓</span>':'<span class="arr">→</span>')+'<span>'+d.correctHtml+'</span>'+chip+'</div>'):'';
+  const noteIcon=el_?'<span class="ic ic-q">?</span>':'';
+  return '<div class="wr-err"><div class="wr-pair">'+l1+l2+'</div>'+
+    (e.note?('<div class="wr-note">'+noteIcon+'<span>'+escH(e.note)+'</span></div>'):'')+'</div>';
+}
+const WR_LEGEND='<div class="wr-legend"><span style="color:#C62828">● 고칠 표현</span><span style="color:#1D4ED8">● 더해야 할 표현</span><span style="color:#7C3AED">● 더 자연스러운 제안</span></div>';
+function wrSentencesHtml_(sents,tpl){
+  if(!sents.length)return '<div class="wr-empty">지적된 문장이 없어요. 잘 썼어요!</div>';
+  return WR_LEGEND+sents.map((x,i)=>'<div class="wr-sent"><div class="no">'+String(i+1).padStart(2,'0')+'</div><div class="bd"><div class="orig">'+escH(x.text)+'</div>'+
+    x.errors.map(e=>wrErrHtml_(e,tpl)).join('')+(x.comment?('<div class="wr-note"><span>'+escH(x.comment)+'</span></div>'):'')+'</div></div>').join('');
+}
+function wrParagraphs_(t){return String(t||'').trim().split(/\n{2,}/).map(p=>'<p>'+escH(p).replace(/\n/g,'<br>')+'</p>').join('');}
+function wrGradeColor_(g){return /^[AB]/.test(g||'')?'#1B4A8A':/^C/.test(g||'')?'#6C9AD0':'#E07B2A';}
+const WR_CSS_COMMON=
+  "*{box-sizing:border-box}body{margin:0;background:#E9EBF0;padding:24px 12px;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-family:'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#1F2430;line-height:1.6}"+
+  ".wr-page{max-width:794px;margin:0 auto;background:#fff;padding:0 0 22px}"+
+  ".wr-sent{display:flex;gap:14px;break-inside:avoid;page-break-inside:avoid}"+
+  ".wr-err{margin:6px 0 10px}.wr-pair{font-size:14.5px}.wr-pair .l1,.wr-pair .l2{display:flex;flex-wrap:wrap;align-items:center;gap:6px}.wr-pair .l2{margin-top:4px}"+
+  ".arr{color:#8A93A5}.chip{font-size:11px;font-weight:700;padding:1px 7px;border-radius:5px;border:1px solid currentColor;margin-left:4px}"+
+  ".wr-note{font-size:13px;color:#4A5262;margin-top:2px;line-height:1.55;display:flex;gap:6px}"+
+  ".wr-legend{break-after:avoid;page-break-after:avoid;display:flex;gap:14px;justify-content:flex-end;font-size:11.5px;font-weight:700;margin:-4px 0 8px}.wr-empty{padding:14px 4px;color:#6B7486;font-size:14px}"+
+  ".noprint{text-align:center;margin:22px 0 4px}.noprint button{padding:11px 26px;font-size:14px;font-weight:800;border:none;border-radius:8px;background:#1B2A49;color:#fff;cursor:pointer}"+
+  "@page{size:A4;margin:10mm}@media print{body{background:#fff;padding:0}.wr-page{max-width:100%;box-shadow:none}.noprint{display:none}.wr-final,.wr-cmt,.wr-err,.wr-par,.wr-score,.wr-card{break-inside:avoid;page-break-inside:avoid}}";
+const WR_CSS_MID=
+  ".wr-hero{background:#1B4A8A;padding:28px 34px 26px;color:#fff;position:relative;border-bottom:14px solid #7BA3D6}"+
+  ".wr-hero .eyebrow{font-family:Inter,sans-serif;font-size:11px;font-weight:700;letter-spacing:.18em;display:flex;align-items:center;gap:10px}"+
+  ".wr-hero .eyebrow::before{content:'';width:26px;height:4px;background:#E07B2A;display:inline-block}"+
+  ".wr-hero h1{font-family:Inter,'Noto Sans KR',sans-serif;font-size:40px;font-weight:800;margin:6px 0 4px;letter-spacing:-.02em}.wr-hero h1 span{color:#9FC0EA}"+
+  ".wr-hero .sub{font-size:13px;opacity:.92}.wr-hero .logo{position:absolute;right:34px;top:26px;width:84px;height:84px;display:flex;align-items:center;justify-content:center}"+
+  ".wr-hero .logo img{max-width:100%;max-height:100%;object-fit:contain}.wr-hero .logo.txt{font-weight:800;font-size:14px;text-align:center}"+
+  ".wr-in{padding:0 34px}"+
+  ".wr-meta{border-top:2px solid #1B4A8A;margin-top:18px}.wr-meta .row{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid #D3D8E1}"+
+  ".wr-meta .row.topic{grid-template-columns:1fr}.wr-meta .c{padding:9px 12px;border-right:1px solid #D3D8E1;min-width:0}.wr-meta .c:last-child{border-right:none}"+
+  ".wr-meta .k{font-family:Inter,sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.14em;color:#6B7486;line-height:1.1}.wr-meta .k b{display:block;font-family:'Noto Sans KR';font-size:11px;letter-spacing:0;color:#1F2430;margin-top:1px}"+
+  ".wr-meta .v{font-size:15px;font-weight:700;margin-top:2px;word-break:break-word}.wr-meta .topic .v{font-size:19px;font-weight:800}.wr-meta .topic .c{display:flex;gap:26px;align-items:baseline}"+
+  ".wr-h{break-after:avoid;page-break-after:avoid;display:flex;align-items:baseline;gap:9px;margin:26px 0 10px;border-bottom:1.5px solid #1F2430;padding-bottom:6px}.wr-h .n{font-family:Inter,sans-serif;font-size:23px;font-weight:800;color:#1B4A8A}.wr-h .t{font-size:16.5px;font-weight:800}.wr-h .e{font-family:Inter,sans-serif;font-size:9.5px;font-weight:700;letter-spacing:.16em;color:#8A93A5}"+
+  ".wr-score{display:grid;grid-template-columns:1fr 250px;gap:22px;align-items:center}.wr-score .bar{margin-bottom:14px}.wr-score .bh{display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:5px}.wr-score .bh b{font-family:Inter,sans-serif;color:#1B4A8A}"+
+  ".wr-score .tr{height:9px;background:#E9EDF4}.wr-score .fl{height:9px}.wr-total{background:#1B4A8A;color:#fff;padding:16px 20px}.wr-total .l{font-family:Inter,sans-serif;font-size:10px;letter-spacing:.16em;color:#B9CDEA}.wr-total .l b{display:block;font-family:'Noto Sans KR';font-size:14px;letter-spacing:0;color:#fff}"+
+  ".wr-total .v{font-family:Inter,sans-serif;font-size:46px;font-weight:800;text-align:right;line-height:1}.wr-total .v small{font-size:15px;font-weight:700;color:#B9CDEA;margin-left:4px}"+
+  ".wr-sent{padding:14px 0;border-bottom:1px solid #D3D8E1}.wr-sent .no{font-family:Inter,sans-serif;font-size:17px;font-weight:800;color:#7BA3D6;min-width:30px}"+
+  ".wr-sent .orig{background:#EAF1FA;border-left:4px solid #1B4A8A;padding:9px 14px;font-weight:700;font-size:15px;margin-bottom:8px}.wr-sent .bd{flex:1;min-width:0}"+
+  ".wr-wrong{color:#C62828;text-decoration:line-through;font-weight:500}.wr-plain{color:#1F2430}.wr-ok{color:#C62828;font-weight:800}.wr-miss{color:#1D4ED8;font-weight:800}.wr-sug{color:#7C3AED;font-weight:800}.chip{background:#fff}.chip.m{color:#1D4ED8}.chip.s{color:#7C3AED}"+
+  ".wr-final{border:1.5px solid #1B4A8A;padding:20px 24px;break-inside:avoid}.wr-final h3{font-family:Inter,'Noto Sans KR',sans-serif;color:#1B4A8A;font-size:18px;font-weight:800;margin:0 0 10px}.wr-final p{margin:0 0 6px;font-size:15px;line-height:1.85}"+
+  ".wr-cmt{background:#EAF1FA;border-top:3px solid #E07B2A;padding:16px 22px 12px;font-size:14.5px;line-height:1.8;break-inside:avoid}.wr-cmt p{margin:0 0 8px}.wr-sign{text-align:right;font-size:13px;color:#4A5262;margin-top:8px}.wr-sign i{display:inline-block;width:130px;border-bottom:1px solid #1F2430;margin-left:8px}"+
+  ".wr-foot{margin:24px 34px 0;border-top:1px solid #D3D8E1;padding-top:8px;display:flex;justify-content:space-between;font-family:Inter,sans-serif;font-size:10px;font-weight:700;letter-spacing:.12em;color:#6B7486}.wr-foot b{color:#E07B2A}";
+const WR_CSS_ELEM=
+  "body{background:#F4EFE6}.wr-page{background:#FFFDF9;padding:34px 34px 22px;border-radius:0}"+
+  ".wr-head{display:flex;align-items:flex-start;justify-content:space-between}.wr-head .dots{display:flex;gap:6px;margin-bottom:6px}.wr-head .dots i{width:11px;height:11px;border-radius:50%;display:block}"+
+  ".wr-head .eyebrow{font-family:'Noto Sans KR';font-size:10px;font-weight:700;letter-spacing:.2em;color:#8A8274}.wr-head h1{font-family:Jua,'Noto Sans KR',sans-serif;font-size:42px;font-weight:400;margin:0;line-height:1.15}"+
+  ".wr-head .logo{width:84px;height:84px;display:flex;align-items:center;justify-content:center;flex:0 0 auto}.wr-head .logo img{max-width:100%;max-height:100%;object-fit:contain}.wr-head .logo.txt{font-weight:800;font-size:14px;text-align:center}"+
+  ".wr-card{border:1.5px solid #DDD6C8;border-radius:14px;padding:6px 16px;margin-top:16px;background:#fff}.wr-card .r{display:flex;gap:10px;padding:10px 0;align-items:baseline}.wr-card .r+.r{border-top:1px solid #E7E1D4}"+
+  ".wr-card .r.g{display:grid;grid-template-columns:1.6fr 1fr 1fr 1.3fr}.wr-card .k{font-family:Jua,sans-serif;font-size:14px;color:#6E675A;margin-right:10px}.wr-card .v{font-size:15px;font-weight:700}.wr-card .topic .v{font-family:Jua,'Noto Sans KR',sans-serif;font-size:20px;font-weight:400}"+
+  ".wr-h{break-after:avoid;page-break-after:avoid;font-family:Jua,'Noto Sans KR',sans-serif;font-size:22px;font-weight:400;margin:24px 0 10px}.wr-h b{font-weight:400;color:#8A8274;margin-left:2px}"+
+  ".wr-pics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.wr-pics .p{border:1.5px solid #DDD6C8;border-radius:14px;padding:5px;background:#fff;aspect-ratio:4/3}.wr-pics .p div{width:100%;height:100%;border-radius:10px;overflow:hidden}.wr-pics img{width:100%;height:100%;object-fit:cover;display:block}"+
+  ".wr-final{border:2px solid #4DB380;border-radius:16px;padding:18px 22px;background:#fff;break-inside:avoid}.wr-final h3{font-family:Jua,'Noto Sans KR',sans-serif;font-weight:400;color:#0E6B3A;font-size:20px;margin:0 0 8px}.wr-final p{margin:0 0 6px;font-size:15px;line-height:1.85}"+
+  ".wr-cmt{background:#EAF2FD;border-radius:16px;padding:16px 20px;font-size:14.5px;line-height:1.85;break-inside:avoid}.wr-cmt p{margin:0 0 8px}"+
+  ".wr-card2{margin-bottom:12px}.wr-card2 .wr-sent{border:1.5px solid #DDD6C8;border-radius:16px;padding:12px 16px 4px;margin-bottom:10px;background:#fff}.wr-sent .no{font-family:Jua,sans-serif;font-size:17px;color:#9A917F;min-width:30px}"+
+  ".wr-sent .orig{background:#F4EFE6;border-radius:10px;padding:9px 14px;font-weight:800;font-size:15px;margin-bottom:8px}.wr-sent .bd{flex:1;min-width:0}"+
+  ".ic{display:inline-flex;width:20px;height:20px;border-radius:50%;align-items:center;justify-content:center;font-size:11px;font-weight:900;flex:0 0 auto}.ic-x{background:#F9C9C4;color:#B3261E}.ic-ok{background:#BFE8CF;color:#0E6B3A}.ic-q{background:#BFD8F7;color:#1B4A8A;margin-top:2px}"+
+  ".wr-wrong{color:#C62828;text-decoration:line-through;font-weight:500}.wr-plain{color:#1F2430}.wr-ok{color:#C62828;font-weight:800}.wr-miss{color:#1D4ED8;font-weight:800}.wr-sug{color:#7C3AED;font-weight:800}.chip{background:#fff;border-radius:999px;padding:1px 9px}.chip.m{color:#1D4ED8;background:#E3ECFF;border:none}.chip.s{color:#7C3AED;background:#EFE8FF;border:none}"+
+  ".wr-par{margin-top:18px;margin-left:auto;width:300px;border:1.5px solid #DDD6C8;border-radius:14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:flex-end;font-family:Jua,sans-serif;color:#6E675A;break-inside:avoid}.wr-par i{display:inline-block;width:110px;border-bottom:1px solid #6E675A;margin-left:8px}"+
+  ".wr-foot{margin-top:14px;font-size:10px;letter-spacing:.12em;color:#9A917F;font-weight:700}";
+function wrLogoHtml_(ctx){
+  if(ctx.logo)return '<div class="logo"><img src="'+escH(ctx.logo)+'" alt="logo"></div>';
+  return ctx.academy?('<div class="logo txt" style="'+(ctx.stage==='초등'?'color:#6E675A':'color:#fff')+'">'+escH(ctx.academy)+'</div>'):'';
+}
+function buildWritingReportHtml_(ctx){
+  const e=ctx.stage==='초등';
+  const sentsHtml=wrSentencesHtml_(ctx.sentences,ctx.stage);
+  const cmtHtml=ctx.comment?wrParagraphs_(ctx.comment):'<p style="color:#8A93A5">아직 등록된 선생님 코멘트가 없어요.</p>';
+  const title=escH(ctx.name)+' - '+escH(ctx.topic)+' Writing Report';
+  const printBtn='<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div>';
+  let body;
+  if(!e){
+    const r=ctx.rubric;
+    const scoreHtml=r?('<div class="wr-h"><span class="n">01</span><span class="t">성적 요약</span><span class="e">SCORE</span></div>'+
+      '<div class="wr-score"><div>'+
+        [['과제 완성',r.taskGrade,r.taskScore],['형식',r.formatGrade,r.formatScore]].map(x=>
+          '<div class="bar"><div class="bh"><span>'+x[0]+'</span><b>'+escH(String(x[1]||'-'))+' · '+escH(String(x[2]!=null?x[2]:'-'))+' / 10</b></div><div class="tr"><div class="fl" style="width:'+Math.max(0,Math.min(100,(Number(x[2])||0)*10))+'%;background:'+wrGradeColor_(x[1])+'"></div></div></div>').join('')+
+      '</div><div class="wr-total"><div class="l">TOTAL<b>종합 점수</b></div><div class="v">'+escH(String(r.totalScore!=null?r.totalScore:'-'))+'<small>/ 20 · '+escH(String(r.totalGrade||''))+'</small></div></div></div>'):'';
+    const n=(k)=>String(r?k:k-1).padStart(2,'0');
+    body='<div class="wr-hero"><div class="eyebrow">WRITING-LAB · REPORT</div><h1>Writing <span>Report</span></h1><div class="sub">제출한 영작과 첨삭, 다시 쓴 글을 정리한 학습 리포트입니다.</div>'+wrLogoHtml_(ctx)+'</div>'+
+      '<div class="wr-in"><div class="wr-meta"><div class="row topic"><div class="c"><div class="k">TOPIC<b>주제</b></div><div class="v">'+escH(ctx.topic)+'</div></div></div>'+
+      '<div class="row"><div class="c"><div class="k">NAME<b>이름</b></div><div class="v">'+escH(ctx.name)+'</div></div><div class="c"><div class="k">CLASS<b>반</b></div><div class="v">'+escH(ctx.cls||'-')+'</div></div><div class="c"><div class="k">LEVEL<b>레벨</b></div><div class="v">'+escH(ctx.level||'-')+'</div></div><div class="c"><div class="k">DATE<b>날짜</b></div><div class="v">'+escH(ctx.date)+'</div></div></div></div>'+
+      scoreHtml+
+      '<div class="wr-h"><span class="n">'+(r?'02':'01')+'</span><span class="t">문장별 첨삭</span><span class="e">FEEDBACK</span></div>'+sentsHtml+
+      (ctx.finalText?('<div class="wr-h"><span class="n">'+(r?'03':'02')+'</span><span class="t">다시 쓴 글</span><span class="e">FINAL DRAFT</span></div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+wrParagraphs_(ctx.finalText)+'</div>'):'')+
+      '<div class="wr-h"><span class="n">'+(r?(ctx.finalText?'04':'03'):(ctx.finalText?'03':'02'))+'</span><span class="t">선생님 코멘트</span><span class="e">TEACHER\'S COMMENT</span></div><div class="wr-cmt">'+cmtHtml+'<div class="wr-sign">담당 선생님<i></i></div></div></div>'+
+      '<div class="wr-foot"><span>'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</span><b>MIDDLE SCHOOL</b></div>';
+  }else{
+    const picsHtml=(ctx.pics&&ctx.pics.length)?('<div class="wr-h">01. 그림 보고 쓰기</div><div class="wr-pics">'+ctx.pics.map(p=>'<div class="p"><div><img src="'+escH(p.imageUrl)+'" style="object-position:'+escH(p.crop||'center center')+';transform:scale('+((Number(p.zoom)||100)/100)+')" alt=""></div></div>').join('')+'</div>'):'';
+    const k=ctx.pics&&ctx.pics.length?1:0;
+    body='<div class="wr-head"><div><div class="dots"><i style="background:#E8736B"></i><i style="background:#3DB56F"></i><i style="background:#4C9BE8"></i></div><div class="eyebrow">WRITING-LAB · REPORT</div><h1>Writing Report</h1></div>'+wrLogoHtml_(ctx)+'</div>'+
+      '<div class="wr-card"><div class="r topic"><span class="k">주제</span><span class="v">'+escH(ctx.topic)+'</span></div><div class="r g"><div><span class="k">이름</span><span class="v">'+escH(ctx.name)+'</span></div><div><span class="k">반</span><span class="v">'+escH(ctx.cls||'-')+'</span></div><div><span class="k">레벨</span><span class="v">'+escH((ctx.level||'-').replace(/^Level\s*/i,''))+'</span></div><div><span class="k">날짜</span><span class="v">'+escH(ctx.date)+'</span></div></div></div>'+
+      picsHtml+
+      '<div class="wr-h">'+String(k+1).padStart(2,'0')+'. 다시 쓴 글</div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 다시 쓴 글이 없어요)</p>')+'</div>'+
+      '<div class="wr-h">'+String(k+2).padStart(2,'0')+'. 선생님 코멘트</div><div class="wr-cmt">'+cmtHtml+'</div>'+
+      '<div class="wr-h">'+String(k+3).padStart(2,'0')+'. 문장별 첨삭</div><div class="wr-card2">'+sentsHtml+'</div>'+
+      '<div class="wr-par">부모님 확인<span>(서명)<i></i></span></div><div class="wr-foot">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div>';
+  }
+  return '<!doctype html><html><head><meta charset="utf-8"><title>'+title+'</title>'+WR_FONTS+'<style>'+WR_CSS_COMMON+(e?WR_CSS_ELEM:WR_CSS_MID)+'</style></head><body><div class="wr-page">'+body+'</div>'+printBtn+'</body></html>';
+}
+/** 제출물 하나(원본 또는 다시쓰기)로 Writing Report를 새 창에 열어줘요. 양식(초등/중등)·로고는 학원 설정을 따라요. */
+async function printWritingReport(s,studentName,studentId,academyName,siblings,forceStage){
+  const win=window.open('','_blank');
+  if(!win){alert('팝업이 차단되어 있어요. 브라우저 팝업 차단을 해제한 뒤 다시 시도해주세요.');return;}
+  win.document.open();win.document.write('<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;padding:40px;color:#555">리포트를 만드는 중이에요…</body>');win.document.close();
+  try{
+    const cfg=await fetchReportConfig();
+    const pair=writingReportPair_(s,siblings);
+    const base=pair.original||s,rw=pair.rewrite;
+    const acad=String(s.academy||academyName||'').trim();
+    const stage=forceStage||reportStageFor_(Object.assign({},s,{academy:acad}),cfg);
+    const ac=reportAcademyCfg_(cfg,acad);
+    const rubric=parseRubricEval(s.rubric)||parseRubricEval(base.rubric)||autoComputeRubric(base);
+    const topicName=s.point||s.chapter||'';
+    const st=stage==='초등'&&String(base.chapter||s.chapter||'')==='Story Writing'?findStoryTopicByTitle_(topicName):null;
+    const pics=st?(st.pics||[]).filter(p=>p.imageUrl):[];
+    const finalSrc=rw||(submissionTypeLabel(s)==='Re-Writing'?s:null);
+    const ctx={stage,logo:ac.logo||ACADEMY_LOGOS[acad]||'',academy:acad,name:studentName||s.name||'',cls:s.cls||'',
+      level:(rubric&&rubric.writingLevel)||'',date:wrDateStr_(base.datetime||s.datetime,stage==='초등'?'. ':'.'),
+      topic:topicName,rubric,sentences:writingReportSentences_(base),
+      finalText:finalSrc?String(finalSrc.final||finalSrc.text||''):(stage==='초등'?String(base.text||''):''),comment:writingReportComment_([base,rw]),pics};
+    win.document.open();win.document.write(buildWritingReportHtml_(ctx));win.document.close();
+  }catch(e){try{win.document.body.textContent='리포트를 만들지 못했어요: '+(e&&e.message||e);}catch(_){}}
+}
+
+/** 로고 이미지 파일 → 작게 줄인 이미지 데이터(data URL). SVG는 그대로, 나머지는 긴 변 360px로 줄여요. */
+function readReportLogoFile_(f){
+  return new Promise((resolve,reject)=>{
+    const rd=new FileReader();
+    rd.onerror=()=>reject(new Error('파일을 읽지 못했어요.'));
+    rd.onload=()=>{
+      const src=String(rd.result||'');
+      if(/^data:image\/svg/.test(src)){ if(src.length>400000)reject(new Error('로고 파일이 너무 커요.')); else resolve(src); return; }
+      const img=new Image();
+      img.onload=()=>{
+        const sc=Math.min(1,360/Math.max(img.width,img.height));
+        const cv=document.createElement('canvas');cv.width=Math.round(img.width*sc);cv.height=Math.round(img.height*sc);
+        cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
+        let out=cv.toDataURL('image/png');
+        if(out.length>430000)out=cv.toDataURL('image/jpeg',0.85);
+        resolve(out);
+      };
+      img.onerror=()=>reject(new Error('이미지를 읽지 못했어요.'));
+      img.src=src;
+    };
+    rd.readAsDataURL(f);
+  });
+}
+async function saveReportConfigRemote_(academy,fields){
+  const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(Object.assign({action:'saveReportConfig',role:'teacher',requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||'',academy},fields))});
+  const data=await res.json();if(!data||data.ok===false)throw new Error((data&&data.error)||'실패');
+  return fetchReportConfig(true);
+}
+/** 🧾 리포트 설정 — 첫 화면은 학원 목록(전체 관리자는 모든 학원, 학원 관리자는 자기 학원)이고, 학원마다 로고를
+ *  바로 등록할 수 있어요. "반 양식 설정"을 누르면 그 학원의 반별 초등/중등 양식을 정하는 화면으로 들어가요. */
+function viewReportSettings(focus){teacherMount(w=>{
+  const detail=(typeof focus==='string');
+  const bk=el('button','backbtn',detail?'◀ 학원 목록':'◀ 선생님 홈');
+  bk.onclick=()=>{ if(detail)viewReportSettings(); else viewTeacherHome(); };w.appendChild(bk);
+  w.appendChild(el('h1','title','🧾 리포트 설정'));
+  const box=el('div');box.style.marginTop='14px';w.appendChild(box);
+  box.appendChild(el('div','hint','불러오는 중…'));
+  (async()=>{
+    let students=[],cfg={};
+    try{const r=await fetchRoster();students=(r&&r.students)||[];}catch(e){}
+    cfg=await fetchReportConfig(true);
+    box.innerHTML='';
+    // ---------- 학원 목록 ----------
+    if(!detail){
+      w.querySelector('.title').after(Object.assign(el('div','hint'),{textContent:'학원마다 Writing Report에 넣을 로고를 등록하고, 반마다 초등/중등 양식을 정해요.'}));
+      let academies=[...new Set(students.map(x=>String(x.academy||'').trim()))];
+      if(!USER.isAdmin)academies=[String(USER.academy||'').trim()];
+      else if(!academies.length)academies=[''];
+      academies.sort((a,b)=>a.localeCompare(b,'ko'));
+      academies.forEach(a=>{
+        const mine=students.filter(x=>String(x.academy||'').trim()===a&&!isInactiveStudent(x));
+        const classes=[...new Set(mine.map(x=>String(x.cls||'').trim()).filter(Boolean))];
+        const c=cfg[a]||{};const stages=c.classStages||{};
+        const nElem=classes.filter(k=>stages[k]==='초등').length,nMid=classes.filter(k=>stages[k]==='중등').length;
+        const card=el('div');card.style.cssText='display:flex;gap:16px;align-items:center;border:1px solid rgba(0,0,0,.1);border-radius:14px;padding:12px 14px;margin-bottom:12px;background:#fff;flex-wrap:wrap';
+        const thumb=el('div');thumb.style.cssText='width:112px;height:80px;flex:0 0 auto;border-radius:10px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#9aa1ad;font-size:12px';
+        const showThumb=()=>{const lg=(cfg[a]&&cfg[a].logo)||'';thumb.innerHTML=lg?('<img src="'+escH(lg)+'" style="max-width:100%;max-height:100%;object-fit:contain">'):'로고 없음';};
+        showThumb();card.appendChild(thumb);
+        const info=el('div');info.style.cssText='flex:1;min-width:180px';
+        info.innerHTML='<div style="font-weight:800;font-size:16px;color:#46508C">'+escH(a||'(학원 이름 없음)')+'</div>'+
+          '<div style="color:#6b7684;font-size:13px;margin-top:3px">학생 '+mine.length+'명 · 반 '+classes.length+'개</div>'+
+          '<div style="color:#6b7684;font-size:13px;margin-top:2px">양식: 초등 '+nElem+'개 · 중등 '+nMid+'개 · 자동 '+(classes.length-nElem-nMid)+'개</div>';
+        card.appendChild(info);
+        const btns=el('div');btns.style.cssText='display:flex;flex-direction:column;gap:6px';
+        const file=el('input');file.type='file';file.accept='image/png,image/jpeg,image/webp,image/svg+xml';file.style.display='none';
+        const lgBtn=el('button','btn ghost','🖼 로고 등록');lgBtn.type='button';lgBtn.style.cssText='padding:6px 12px;font-size:12.5px';
+        const msg=el('div','fx');msg.style.cssText='font-size:12px;margin:0';
+        lgBtn.onclick=()=>file.click();
+        file.onchange=async()=>{
+          const f=file.files&&file.files[0];if(!f)return;
+          lgBtn.disabled=true;msg.className='fx';msg.textContent='올리는 중…';
+          try{const lg=await readReportLogoFile_(f);cfg=await saveReportConfigRemote_(a,{logo:lg});showThumb();msg.className='fx ok';msg.textContent='✅ 로고를 저장했어요.';}
+          catch(e){msg.className='fx no';msg.textContent='저장하지 못했어요: '+e.message+' (서버 업데이트가 배포됐는지 확인해 주세요)';}
+          lgBtn.disabled=false;file.value='';
+        };
+        const setBtn=el('button','btn blue','⚙️ 반 양식 설정');setBtn.type='button';setBtn.style.cssText='padding:6px 12px;font-size:12.5px';
+        setBtn.onclick=()=>viewReportSettings(a);
+        btns.appendChild(lgBtn);btns.appendChild(setBtn);btns.appendChild(msg);btns.appendChild(file);
+        card.appendChild(btns);box.appendChild(card);
+      });
+      return;
+    }
+    // ---------- 한 학원의 상세(로고 + 반별 양식) ----------
+    const cur=focus;
+    w.querySelector('.title').after(Object.assign(el('div','hint'),{textContent:'학원: '+(cur||'(학원 이름 없음)')+' — 반마다 어떤 양식(초등/중등)으로 나올지 정해요. 안 정한 반은 반 레벨·학교 이름을 보고 자동으로 골라요.'}));
+    const panel=el('div');box.appendChild(panel);
+    let logo=(cfg[cur]&&cfg[cur].logo)||'';
+    const stages=Object.assign({},(cfg[cur]&&cfg[cur].classStages)||{});
+    const lg=el('div');lg.style.cssText='border:1px solid rgba(0,0,0,.1);border-radius:14px;padding:14px 16px;margin-bottom:14px;background:#fff';
+    lg.appendChild(el('div',null,'<b>학원 로고</b>'));
+    const prev=el('div');prev.style.cssText='margin:10px 0;min-height:70px;display:flex;align-items:center;gap:14px';
+    const showLogo=()=>{prev.innerHTML=logo?('<img src="'+escH(logo)+'" style="max-height:80px;max-width:180px;object-fit:contain;border:1px solid #eee;border-radius:8px;padding:6px;background:#fff">'):'<span class="hint">아직 등록한 로고가 없어요.</span>';};
+    showLogo();lg.appendChild(prev);
+    const file=el('input');file.type='file';file.accept='image/png,image/jpeg,image/webp,image/svg+xml';
+    const lmsg=el('div','fx');
+    file.onchange=async()=>{const f=file.files&&file.files[0];if(!f)return;try{logo=await readReportLogoFile_(f);showLogo();lmsg.className='fx';lmsg.textContent='아래 저장하기를 눌러야 적용돼요.';}catch(e){lmsg.className='fx no';lmsg.textContent=e.message;}};
+    lg.appendChild(file);
+    const rm=el('button','btn ghost','로고 지우기');rm.type='button';rm.style.cssText='margin-left:8px;padding:6px 12px;font-size:12.5px';rm.onclick=()=>{logo='';showLogo();lmsg.className='fx';lmsg.textContent='아래 저장하기를 눌러야 적용돼요.';};
+    lg.appendChild(rm);lg.appendChild(lmsg);panel.appendChild(lg);
+    const cl=el('div');cl.style.cssText='border:1px solid rgba(0,0,0,.1);border-radius:14px;padding:14px 16px;margin-bottom:14px;background:#fff';
+    cl.appendChild(el('div',null,'<b>반별 리포트 양식</b>'));
+    const classes=[...new Set(students.filter(x=>String(x.academy||'').trim()===cur).map(x=>String(x.cls||'').trim()).filter(Boolean))].sort();
+    if(!classes.length)cl.appendChild(el('div','hint','이 학원에 등록된 반이 아직 없어요. (학생 명단에서 반을 먼저 적어주세요)'));
+    const sels={};
+    classes.forEach(k=>{
+      const row=el('div');row.style.cssText='display:flex;align-items:center;gap:10px;margin-top:8px';
+      const nm=el('div',null,escH(k));nm.style.cssText='min-width:90px;font-weight:700';
+      const sel=el('select','in');sel.style.cssText='padding:7px;font-size:13.5px;border-radius:10px';
+      [['','자동'],['초등','초등 양식'],['중등','중등 양식']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;sel.appendChild(o);});
+      sel.value=stages[k]||'';sels[k]=sel;row.appendChild(nm);row.appendChild(sel);cl.appendChild(row);
+    });
+    panel.appendChild(cl);
+    const row2=el('div');row2.style.cssText='display:flex;gap:10px;flex-wrap:wrap';
+    const save=el('button','btn green','저장하기');save.type='button';
+    const pv1=el('button','btn ghost','초등 양식 미리보기');pv1.type='button';
+    const pv2=el('button','btn ghost','중등 양식 미리보기');pv2.type='button';
+    const msg=el('div','fx');msg.style.marginTop='8px';
+    row2.appendChild(save);row2.appendChild(pv1);row2.appendChild(pv2);panel.appendChild(row2);panel.appendChild(msg);
+    save.onclick=async()=>{
+      const cs={};Object.keys(sels).forEach(k=>{if(sels[k].value)cs[k]=sels[k].value;});
+      Object.keys(stages).forEach(k=>{if(!(k in sels)&&stages[k])cs[k]=stages[k];});
+      save.disabled=true;msg.className='fx';msg.textContent='저장 중…';
+      try{cfg=await saveReportConfigRemote_(cur,{logo,classStages:cs});msg.className='fx ok';msg.textContent='✅ 저장했어요.';}
+      catch(e){msg.className='fx no';msg.textContent='저장하지 못했어요: '+e.message+' (서버 업데이트가 배포됐는지 확인해 주세요)';}
+      save.disabled=false;
+    };
+    const preview=(stage)=>{
+      const win=window.open('','_blank');if(!win){alert('팝업이 차단되어 있어요.');return;}
+      const mid=stage==='중등';
+      const ctx={stage,logo,academy:cur,name:'홍길동 Tom',cls:mid?'중1 A반':'RG2',level:'Level 4',date:mid?'2026.10.02':'2026. 10. 02',topic:'My Morning Routine',
+        rubric:mid?{taskGrade:'A',taskScore:10,formatGrade:'D',formatScore:4,totalScore:14,totalGrade:'B'}:null,
+        sentences:[{text:'I off my alarm clock and go to bathroom for brush my teeth.',errors:[{type:'wrong',wrong:'I off my alarm clock',correct:'I turn off my alarm clock',note:"'off'는 동사가 아니에요. '끄다'는 'turn off'라는 동사구를 써야 해요."},{type:'suggestion',wrong:'my alarm clock',correct:'the alarm clock',note:"영어에서는 보통 'the alarm clock'이라고 해요."}]},{text:'After wash my hands, I dry my hands with towel.',errors:[{type:'wrong',wrong:'After wash my hands',correct:'After washing my hands',note:"'After' 뒤에는 동사-ing가 와야 해요."},{type:'missing',wrong:'with towel',correct:'with a towel',note:"'towel'은 셀 수 있는 명사라서 앞에 'a'를 붙여야 해요."}]}],
+        finalText:'In the morning, I turn off the alarm clock and go to the bathroom to brush my teeth. After washing my hands, I dry my hands with a towel. Finally, I go to school.',
+        comment:'아침 루틴을 시간 순서대로 잘 정리했어요! 연결어를 사용해서 글의 흐름이 자연스러워요. 다만 동사구와 관사 사용을 조금 더 점검해 보세요.',pics:[]};
+      win.document.open();win.document.write(buildWritingReportHtml_(ctx));win.document.close();
+    };
+    pv1.onclick=()=>preview('초등');pv2.onclick=()=>preview('중등');
+  })();
+});}
+
+function printSubmissionReport(s,studentName,studentId,academyName,siblings){
+  const fb=parseFeedback(s.feedback);
+  const aifb=parseAiFeedback(s.aiFeedback);
+  const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
+  const overallHtml=[aifb.overall,aifbGpt.overall,fb.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');
+  // Re-Writing 제출물이면, 이 글 자체엔 대개 첨삭(틀린 부분)이 안 남아있으니 — 같은 제목(point/chapter)의
+  // 가장 최근 원본 제출물을 siblings에서 찾아서 "처음 쓴 글과 지적된 부분"을 위에 함께 보여줘요.
+  let original=null;
+  if(submissionTypeLabel(s)==='Re-Writing'&&siblings&&siblings.length){
+    const key=s.point||s.chapter||'';
+    const cands=siblings.filter(x=>x!==s&&submissionTypeLabel(x)!=='Re-Writing'&&(x.point||x.chapter||'')===key);
+    cands.sort((a,b)=>String(a.datetime||'')<String(b.datetime||'')?1:-1);
+    original=cands[0]||null;
+  }
+  let essaySectionHtml;
+  if(original){
+    const oOverallHtml=(function(){const of=parseFeedback(original.feedback),oai=parseAiFeedback(original.aiFeedback),oaiGpt=parseAiFeedback(original.aiFeedbackGpt);
+      return [oai.overall,oaiGpt.overall,of.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');})();
+    // 원본이 문법드릴이면 첨삭 대신 문항별 결과(wrongReport)에 "틀린 부분"이 담겨있어요.
+    const oWrongHtml=original.wrongReport?renderDrillWrongReport(parseWrongReport(original.wrongReport)):'';
+    const oNoFeedbackHtml=hasAnyOriginalFeedback(original)?'':'<div class="hint" style="margin-top:8px">⚠️ 이 원본 글에는 아직 저장된 첨삭이 없어요 — 원본 제출물 화면에서 먼저 첨삭(AI 첨삭 또는 선생님 첨삭)을 남기면 여기에도 나와요.</div>';
+    essaySectionHtml='<h2 class="sec">처음 쓴 글 → 고쳐 쓴 글 비교</h2>'+
+      '<div class="compare">'+
+        '<div class="win orig"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>처음 쓴 글 · 지적된 부분</div>'+
+          '<div class="win-body osent-wrap">'+annotatedSentencesHtml(original)+oOverallHtml+oWrongHtml+oNoFeedbackHtml+'</div></div>'+
+        '<div class="win fixed"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 최종 글</div>'+
+          '<div class="win-body rsent-wrap">'+
+          (s.text?splitSentences(s.text).map((sent)=>'<p>'+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+
+          processSectionHtml(original)+
+          '</div></div>'+
+      '</div>'+
+      (overallHtml?('<h2 class="sec">이 글에 대한 선생님 첨삭</h2>'+overallHtml):'');
+  } else {
+    essaySectionHtml='<h2 class="sec">작성한 글</h2>'+
+      '<div class="win"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>제출한 글'+(overallHtml?'':' · 지적된 부분 없음')+'</div>'+
+        '<div class="win-body osent-wrap">'+annotatedSentencesHtml(s)+overallHtml+processSectionHtml(s)+'</div></div>';
+  }
+  const wrongArr=parseWrongReport(s.wrongReport);
+  let wrongHtml='';
+  if(s.wrongReport&&wrongArr.length){
+    const correctCount=wrongArr.filter(w=>w.correct).length;
+    wrongHtml='<h2 class="sec">문항별 결과 (맞음 '+correctCount+' / 전체 '+wrongArr.length+')</h2><table class="wrong-table"><thead><tr><th>정답 여부</th><th>문제</th><th>학생 답</th><th>정답</th></tr></thead><tbody>'+
+      wrongArr.map(w=>'<tr><td>'+(w.correct?'✅':'❌')+'</td><td>'+escH(undl(String(w.ko||'')))+'</td><td>'+escH(String(w.user||''))+'</td><td>'+(w.correct?'-':escH(String(w.a||'')))+'</td></tr>').join('')+
+      '</tbody></table>';
+  }
+  const html='<!doctype html><html><head><meta charset="utf-8"><title>'+escH(studentName||'')+' - '+escH(s.point||s.chapter||'')+' 리포트</title>'+
+    REPORT_FONT_LINKS+
+    '<style>'+
+    REPORT_BASE_CSS+
+    '</style></head><body>'+
+    '<div class="page"><div class="sheet">'+
+    '<div class="hero">'+academyLogoHtml(academyName)+'<div><h1>English Writing Lab · 학습 리포트</h1><div class="sub">학생이 제출한 영작 결과와 선생님 첨삭을 정리했어요.</div></div></div>'+
+    '<div class="body-pad">'+
+    '<div class="meta-grid">'+
+      '<div class="meta-chip"><b>이름</b>'+escH(studentName||'')+'</div>'+
+      '<div class="meta-chip"><b>아이디</b>'+escH(studentId||'')+'</div>'+
+      (academyName?('<div class="meta-chip"><b>학원</b>'+escH(academyName)+'</div>'):'')+
+      '<div class="meta-chip"><b>유형</b>'+escH(submissionTypeLabel(s))+'</div>'+
+      '<div class="meta-chip"><b>주제/포인트</b>'+escH(s.point||s.chapter||'')+'</div>'+
+      '<div class="meta-chip"><b>제출일시</b>'+escH(s.datetime||'')+'</div>'+
+      '<div class="meta-chip score"><b>점수</b>'+escH(String(s.total||'-'))+(s.grade?(' · '+escH(s.grade)+'등급'):'')+'</div>'+
+    '</div>'+
+    rubricSectionHtml(parseRubricEval(s.rubric)||parseRubricEval((original||s).rubric)||autoComputeRubric(original||s),s.point||s.chapter||'',studentName)+
+    essaySectionHtml+
+    wrongHtml+
+    '</div>'+
+    '<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div>'+
+    '</div></div>'+
+    '</body></html>';
+  const win=window.open('','_blank');
+  if(!win){alert('팝업이 차단되어 있어요. 브라우저 팝업 차단을 해제한 뒤 다시 시도해주세요.');return;}
+  win.document.open();win.document.write(html);win.document.close();
+}
+/** 문장별 첨삭 항목(errors[]+corrected)을 리포트용 HTML(li 목록)로 그려요 — printSubmissionReport/
+ *  printStudentRewriteReport 둘 다에서 "틀린 부분 → 고친 부분" 목록을 똑같은 모양으로 보여줄 때 써요. */
+/** 고친 표현이 "A / B", "A 또는 B", "A (또는 B)"처럼 여러 개로 오면 낱개로 나눠요 — 이 중 하나만 써도 고친 걸로 쳐요. */
+function splitAltCorrects(str){
+  return String(str||'').replace(/\(\s*(?:또는|or)\s+([^)]+)\)/gi,' / $1').split(/\s*\/\s*|\s+또는\s+/).map(x=>x.trim()).filter(Boolean);
+}
+/** 틀린 표현(wrong) → 고친 표현(correct)을 "단어 단위로" 비교해서, 실제로 바뀐 단어에만 색을 입혀요.
+ *  (예: "The boy is ache → The boy is in pain" 에서 The boy is 는 그대로 두고 ache만 빨간 취소선, in pain만 빨강.)
+ *  빨강(wrong)=바뀐/지워진 단어 취소선 + 새 단어 빨강, 파랑(missing)=새로 더한 단어만 파랑, 보라(suggestion)=새 단어 보라.
+ *  고친 표현이 비어 있으면(지우기만) 빨간 취소선만 그어요. "A / B"처럼 대안이 여러 개면 각각 비교해요. */
+function diffPairHtml_(e,opts){
+  const collapse=!!(opts&&opts.collapse);
+  const type=e.type||'wrong';
+  const color=type==='missing'?'#1D4ED8':(type==='suggestion'?'#7C3AED':'#B3261E');
+  const nz=t=>String(t||'').toLowerCase().replace(/[^a-z0-9'가-힣]/g,'');
+  const toks=x=>String(x||'').trim().split(/\s+/).filter(Boolean);
+  const wt=toks(e.wrong);
+  const alts=splitAltCorrects(e.correct);
+  const strike='color:#B3261E;text-decoration:line-through';
+  const dots='<span style="color:#8A93A5">…</span>';
+  // collapse=true(리포트용)면 그대로인 단어가 길게 이어질 때 앞뒤 한 단어만 남기고 …로 줄여서 "바뀐 부분"만 눈에 띄게 해요.
+  const join=items=>{
+    if(!collapse)return items.map(x=>x.h).join(' ');
+    const out=[];let i=0;
+    while(i<items.length){
+      if(!items[i].k){out.push(items[i].h);i++;continue;}
+      let j=i;while(j<items.length&&items[j].k)j++;
+      const run=items.slice(i,j),len=run.length,atStart=i===0,atEnd=j===items.length;
+      if(len<=2||(len===3&&!atStart&&!atEnd))run.forEach(x=>out.push(x.h));
+      else if(atStart&&atEnd)run.forEach(x=>out.push(x.h));
+      else if(atStart){out.push(dots,run[len-1].h);}
+      else if(atEnd){out.push(run[0].h,dots);}
+      else{out.push(run[0].h,dots,run[len-1].h);}
+      i=j;
+    }
+    return out.join(' ');
+  };
+  if(!alts.length){
+    return {wrongHtml:wt.map(t=>'<span style="'+strike+'">'+escH(t)+'</span>').join(' '),correctHtml:'',hasCorrect:false};
+  }
+  const lcs=(a,b)=>{
+    const n=a.length,m=b.length,dp=Array.from({length:n+1},()=>new Array(m+1).fill(0));
+    for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)dp[i][j]=(nz(a[i])&&nz(a[i])===nz(b[j]))?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
+    const ka=new Set(),kb=new Set();let i=0,j=0;
+    while(i<n&&j<m){
+      if(nz(a[i])&&nz(a[i])===nz(b[j])){ka.add(i);kb.add(j);i++;j++;}
+      else if(dp[i+1][j]>=dp[i][j+1])i++;else j++;
+    }
+    return {ka,kb};
+  };
+  let keptWrong=null;
+  const cHtml=alts.map(alt=>{
+    const ct=toks(alt),r=lcs(wt,ct);
+    keptWrong=keptWrong?new Set([...keptWrong,...r.ka]):r.ka; // 대안 중 하나라도 그대로 쓴 단어는 안 긋고, 모든 대안에서 사라진 단어만 그어요.
+    return join(ct.map((t,j)=>r.kb.has(j)?{k:true,h:escH(t)}:{k:false,h:'<b style="color:'+color+'">'+(type==='suggestion'&&!r.kb.size&&j===0?'💡':'')+escH(t)+'</b>'}));
+  }).join(' <span style="color:#8A93A5">/</span> ');
+  const wHtml=join(wt.map((t,i)=>{const kept=keptWrong.has(i);return {k:kept,h:(type==='wrong'&&!kept)?'<span style="'+strike+'">'+escH(t)+'</span>':escH(t)};}));
+  return {wrongHtml:wHtml,correctHtml:cHtml,hasCorrect:true};
+}
+/** 오류 종류(type)에 따라 색을 다르게 보여줘요 — "wrong"(명백히 틀림)은 빨간 줄+초록 고침,
+ *  "missing"(빠진 표현 삽입)은 파란색, "suggestion"(더 나은 표현 제안)은 보라색이에요. */
+function errorPairHtml_(e){
+  const type=e.type||'wrong';
+  const d=diffPairHtml_(e);
+  const tag=type==='missing'?'<span class="type-tag" style="color:#1D4ED8">(빠진 표현)</span>':type==='suggestion'?'<span class="type-tag" style="color:#7C3AED">(제안)</span>':'';
+  return d.wrongHtml+(d.hasCorrect?(' → '+d.correctHtml):'')+tag;
+}
+function sentenceErrorListHtml(aiEntry){
+  if(!aiEntry||typeof aiEntry!=='object')return '';
+  const errors=Array.isArray(aiEntry.errors)?aiEntry.errors:[];
+  if(!errors.length)return '';
+  // "틀린 부분 → 고친 부분"과 그 이유(note)를 한 줄에 이어 쓰면 이유가 길 때 줄바꿈이 뒤섞여 지저분해
+  // 보여서, 이유는 항상 그 아래 별도 줄로 떨어지게 나눴어요.
+  return '<ul class="err-list">'+errors.map(e=>'<li><div class="err-pair">'+errorPairHtml_(e)+'</div>'+(e.note?('<div class="note">'+escH(e.note)+'</div>'):'')+'</li>').join('')+'</ul>'+
+    (aiEntry.corrected?('<div class="corrected-full">'+escH(aiEntry.corrected)+'</div>'):'');
+}
+/** 수행평가에 마인드맵·문법 연습 단계가 있었으면(원본 제출물에 mindmapNotes/grammarPractice로 저장돼요),
+ *  "고쳐 쓴 최종 글" 옆에 그 과정도 함께 보여줘요 — 최종 글만 덜렁 있는 게 아니라, 학생이 글을 쓰기까지
+ *  중간에 어떤 생각을 정리했고 어떤 문법 문제를 연습해봤는지도 리포트 한 장에서 알 수 있게요.
+ *  둘 다 없으면(예전 방식 수행평가이거나, 다 비워둔 채로 제출했으면) 아무것도 안 보여요. */
+function processSectionHtml(orig){
+  if(!orig)return '';
+  let mmHtml='';
+  try{
+    const mm=orig.mindmapNotes?JSON.parse(orig.mindmapNotes):null;
+    if(mm&&typeof mm==='object'){
+      const entries=Object.keys(mm).filter(k=>String(mm[k]||'').trim());
+      if(entries.length){
+        mmHtml='<div class="procblock"><div class="prochead">마인드맵에 적은 내용</div>'+
+          entries.map(k=>'<div class="proccard"><div class="pk">'+escH(k)+'</div><div class="pv">'+escH(mm[k]).replace(/\n/g,'<br>')+'</div></div>').join('')+
+          '</div>';
+      }
+    }
+  }catch(e){}
+  let tbHtml='';
+  try{
+    const tb=orig.tableNotes?JSON.parse(orig.tableNotes):null;
+    if(tb&&typeof tb==='object'){
+      Object.keys(tb).forEach(title=>{
+        const d=tb[title]||{};const cols=Array.isArray(d.cols)?d.cols:[];
+        const rows=(Array.isArray(d.rows)?d.rows:[]).filter(r=>Array.isArray(r)&&r.some(c=>String(c||'').trim()));
+        if(!cols.length||!rows.length)return;
+        tbHtml+='<div class="procblock"><div class="prochead">표에 적은 내용 · '+escH(title)+'</div>'+
+          '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr>'+cols.map(c=>'<th style="border:1px solid #ddd;background:#f4f5ff;padding:4px 6px;text-align:left">'+escH(c)+'</th>').join('')+'</tr>'+
+          rows.map(r=>'<tr>'+cols.map((c,ci)=>'<td style="border:1px solid #ddd;padding:4px 6px;vertical-align:top">'+escH(r[ci]||'').replace(/\n/g,'<br>')+'</td>').join('')+'</tr>').join('')+
+          '</table></div>';
+      });
+    }
+  }catch(e){}
+  return mmHtml+tbHtml+grammarPracticeHtml(orig);
+}
+/** "오늘의 문법 연습"에서 학생이 적은 "나의 문장"들과, 선생님이 "🤖 문법 연습 AI 검토"를 눌러 만든
+ *  검토 결과(orig.grammarFeedback — 문법명별 grammarOk/sentenceOk/corrected/note)가 있으면 문장 바로
+ *  아래에 함께 보여줘요. 아직 검토를 안 했으면(orig.grammarFeedback 없음) 문장만 보여줘요.
+ *  개별/종합 인쇄 리포트(processSectionHtml)와 선생님 상세 화면의 검토 버튼 둘 다에서 재사용해요. */
+function grammarPracticeHtml(orig){
+  if(!orig)return '';
+  try{
+    const gp=orig.grammarPractice?JSON.parse(orig.grammarPractice):null;
+    if(!gp||typeof gp!=='object')return '';
+    let gf=null;
+    try{ gf=orig.grammarFeedback?JSON.parse(orig.grammarFeedback):null; }catch(e){}
+    const entries=Object.keys(gp).filter(k=>String(gp[k]||'').trim());
+    if(!entries.length)return '';
+    return '<div class="procblock"><div class="prochead">문법 연습에서 써본 문장</div>'+
+      entries.map(k=>{
+        let fbHtml='';
+        const f=gf&&gf[k];
+        if(f&&typeof f==='object'){
+          const good=f.grammarOk!==false&&f.sentenceOk!==false;
+          fbHtml='<div style="margin-top:6px;padding:6px 8px;border-radius:6px;font-size:12.5px;'+
+            (good?'background:#e6f6ec;color:#059669':'background:#fdf1e7;color:#c2650a')+'">'+
+            (good?'✅ AI 검토: 문법을 잘 활용했어요.':'🤖 AI 검토: '+escH(f.note||'')+(f.corrected?'<br>→ '+escH(f.corrected):''))+
+            '</div>';
+          // 문법만 보는 게 아니라, 이 글 전체 내용·주제에 잘 어울리는 문장인지도 AI가 같이 봐준 결과예요.
+          // (문법 검토는 통과했어도 내용이 안 어울리면 이 박스는 따로 뜰 수 있어요.)
+          if(f.contentOk===false){
+            fbHtml+='<div style="margin-top:4px;padding:6px 8px;border-radius:6px;font-size:12.5px;background:#eef0ff;color:#4338ca">'+
+              '💡 이 글 내용과의 어울림: '+escH(f.contentNote||'이 글의 주제·흐름에는 살짝 안 어울려요.')+
+              (f.betterSentence?('<br>→ 이 글에 더 어울리는 표현 예시: '+escH(f.betterSentence)):'')+
+              '</div>';
+          }
+        }
+        return '<div class="proccard"><div class="pk">'+escH(k)+'</div><div class="pv">'+escH(gp[k]).replace(/\n/g,'<br>')+'</div>'+fbHtml+'</div>';
+      }).join('')+
+      '</div>';
+  }catch(e){ return ''; }
+}
+/** 선생님이 학생 한 명을 미리보기(TEACHER_PREVIEW) 하는 화면에서 누르는 종합 리포트예요. 그 학생이 지금까지
+ *  제출한 모든 글 중에서 "첨삭을 받고, 그걸 반영해 Re-Writing까지 끝낸" 것만 골라서, 과제마다
+ *  (1) 처음 쓴 글을 문장별로 보여주고 그 자리에 "틀린 부분 → 고친 부분"·문장별 코멘트·종합 첨삭을 함께,
+ *  (2) 그 아래에 고쳐 쓴 최종 글을 나란히 보여주는 방식으로 정리해요. 기존 printSubmissionReport(제출물
+ *  하나만 인쇄)보다 훨씬 자세한, "이 학생이 그동안 어디서 틀렸고 어떻게 고쳐왔는지" 한눈에 보는 리포트예요.
+ *  같은 제목(point)으로 여러 번 냈으면 원본은 가장 최근 것, Re-Writing도 가장 최근(최종) 것을 짝지어요. */
+/* 100점 만점 점수를 등급(A~D)으로 바꿔요 — 사이트 다른 곳(조건영작·기사·이야기 등 자동 채점)에서 쓰는
+ * 것과 똑같은 기준(90/80/70점 구간)이라, 개별 과제 등급과 평균 등급이 서로 다른 잣대로 안 보여요. */
+function scoreToGrade(score){
+  return score>=90?'A':score>=80?'B':score>=70?'C':'D';
+}
+/* 성적표 스타일 리포트(Title/Class Level/Writing Level + 평가영역 그래프)용 계산 함수들 — 서버(Code_full_v2.gs)의
+ * rubricGradeToScore/rubricPercentToGrade와 같은 기준을 그대로 써요(선생님이 등급을 고를 때 미리보기로,
+ * 그리고 리포트를 인쇄할 때 다시 한 번 이 값들로 화면을 그려요). */
+function rubricGradeToScore(g){
+  const map={A:10,B:8,C:6,D:4,E:2};
+  return map[String(g||'').trim().toUpperCase()]||0;
+}
+function rubricPercentToGrade(pct){
+  // (완화) 예전 기준(95/90/85/80/75/70/65/60)이 너무 짜다는 의견을 반영해서 구간을 전체적으로 낮췄어요.
+  // 서버(Code_full_v2.gs)의 같은 함수도 반드시 같은 기준으로 함께 고쳐야 해요(안 그러면 선생님이 직접
+  // 등급을 골라 저장하는 경우와 자동 계산이 서로 다른 총점 등급을 보여주게 돼요).
+  if(pct>=90)return'A+';if(pct>=80)return'A';
+  if(pct>=70)return'B+';if(pct>=60)return'B';
+  if(pct>=50)return'C+';if(pct>=40)return'C';
+  if(pct>=30)return'D+';if(pct>=20)return'D';
+  return'F';
+}
+/* 총점 등급(A+~F)에 신호등 색 계열을 매겨서, 종합 점수 박스와 도넛 그래프 숫자에 색이 들어가게 해요. */
+function rubricTotalGradeColor(g){
+  const up=String(g||'').trim().toUpperCase();
+  if(up.indexOf('A')===0)return '#3DC372';
+  if(up.indexOf('B')===0)return '#4E9EE8';
+  if(up.indexOf('C')===0)return '#F5B921';
+  if(up.indexOf('D')===0)return '#F28C42';
+  return '#F0555A';
+}
+/* s.rubric은 서버에 JSON 문자열로 저장돼요 — 없거나 깨진 값이면 null(=이 제출물엔 성적표 섹션 안 보임). */
+function parseRubricEval(raw){
+  if(!raw)return null;
+  try{const o=JSON.parse(raw);return (o&&(o.taskGrade||o.formatGrade))?o:null;}catch(e){return null;}
+}
+/* 0~100점으로 이미 환산된 score를 우선 쓰고, 없으면 총점(total)이 0~100 범위일 때만 그걸 써요
+ * (printStudentRewriteReport의 scoreOf와 같은 기준 — "3/5" 같은 비율 형식이 섞여 들어오는 걸 막아요). */
+function normalizedScore(o){
+  const s=parseFloat(o&&o.score);
+  if(!isNaN(s)&&s>=0&&s<=100)return s;
+  const t=parseFloat(o&&o.total);
+  if(!isNaN(t)&&t>=0&&t<=100)return t;
+  return null;
+}
+/* 그 제출물(sub)의 반(cls)이 "반레벨" 탭에 등록돼 있으면 그 레벨 이름(초5/초6/중1/중2 등)을 돌려줘요. */
+function levelDisplayName(cls){
+  const id=CLASS_LEVELS[String(cls||'').trim()];
+  const lv=id&&LEVELS.find(l=>l.id===id);
+  return lv?lv.name:'';
+}
+/* Class Level 이름("초6","중2" 등) 또는 학교 이름("안화초등학교","한빛중" 등)에서 학교급(초/중/고)만
+   뽑아내요. 자동 채점 기준(taskGrade/formatGrade)을 학년대에 맞게 다르게 적용하려고 써요 — 반레벨
+   탭에 등록된 Class Level을 먼저 보고, 그게 없으면 학생의 학교 이름으로 한 번 더 시도해요. */
+function schoolStageFromText(s){
+  const t=String(s||'').trim();
+  if(!t)return'';
+  if(t.indexOf('초')===0||t.indexOf('초등학교')>-1)return'초';
+  if(t.indexOf('중')===0||t.indexOf('중학교')>-1)return'중';
+  if(t.indexOf('고')===0||t.indexOf('고등학교')>-1)return'고';
+  return'';
+}
+/* 그 제출물의 문장별 AI 첨삭(claude+gpt)에 달린 "틀린 부분" 개수를 세요 — 형식(문법·철자) 등급을
+ * 자동으로 매길 때 "문장 수 대비 오류가 얼마나 적은지"를 재는 잣대로 써요. */
+function countAiErrors(sub){
+  const aifb=parseAiFeedback(sub&&sub.aiFeedback),aifbGpt=parseAiFeedback(sub&&sub.aiFeedbackGpt);
+  let n=0;
+  [aifb,aifbGpt].forEach(fb=>{
+    Object.keys(fb.sentences||{}).forEach(k=>{const e=fb.sentences[k];if(e&&typeof e==='object'&&Array.isArray(e.errors))n+=e.errors.length;});
+  });
+  return n;
+}
+/** 선생님이 "📊 성적표 그래프"를 따로 입력·저장하지 않은 제출물도, 이미 갖고 있는 점수·AI 첨삭 데이터만으로
+ *  성적표 섹션을 자동으로 채워서 보여줘요(수동 입력은 이제 "필수"가 아니라 "직접 조정하고 싶을 때"만 쓰는
+ *  선택 기능이 됐어요). 점수 정보가 아예 없는 제출물(자동 채점 전이거나 점수가 없는 컨텐츠)은 자동으로
+ *  매길 근거가 없으니 null을 돌려주고, 그 경우 예전처럼 이 섹션 자체가 안 보여요.
+ *  - Class Level: "반레벨" 탭에 등록해둔, 그 학생 반의 레벨 이름을 그대로 써요.
+ *  - Writing Level: 이 글의 점수를 기준으로 Level 1~5 중 하나로 매겨요(점수가 높을수록 높은 레벨).
+ *  - 과제완성: 점수를 90/80/70/60 구간으로 나눠 A~E 등급을 매겨요.
+ *  - 형식: 문장 수 대비 AI가 지적한 오류 개수 비율로 A~E 등급을 매겨요(오류가 적을수록 높은 등급). */
+function autoComputeRubric(sub){
+  if(!sub)return null;
+  const scoreVal=normalizedScore(sub);
+  if(scoreVal==null)return null;
+  // (개선) "초등학생 점수가 너무 짜게 나온다"는 의견을 반영해서 한 번은 기준을 전체적으로 낮췄었는데,
+  // 그러면 중·고등학생한테까지 너무 후해질 수 있어서 이번엔 "학년대별로 다르게" 적용해요.
+  // 반레벨 탭에 등록된 Class Level(예: 초6/중2)을 우선 보고, 그게 없으면 학생의 학교 이름으로 학교급을
+  // 가늠해요(둘 다 없으면 중·고등 기준을 기본값으로 써요 — 예전 기준과 크게 다르지 않게).
+  const classLevelName=levelDisplayName(sub.cls)||String(sub.cls||'');
+  const stage=schoolStageFromText(classLevelName)||schoolStageFromText(sub.school)||'';
+  const isElementary=stage==='초';
+  // 초등학생: 과제완성 80/65/50/35, 형식 오류비율 0.2/0.4/0.6/0.85 (관대한 기준)
+  // 중·고등학생(기본값 포함): 과제완성 90/80/70/60, 형식 오류비율 0.1/0.25/0.45/0.7 (예전 기준대로 엄격하게)
+  const taskGrade=isElementary
+    ? (scoreVal>=80?'A':scoreVal>=65?'B':scoreVal>=50?'C':scoreVal>=35?'D':'E')
+    : (scoreVal>=90?'A':scoreVal>=80?'B':scoreVal>=70?'C':scoreVal>=60?'D':'E');
+  const sents=sub.text?splitSentences(sub.text):[];
+  const errCount=countAiErrors(sub);
+  const errRatio=sents.length?(errCount/sents.length):(errCount?1:0);
+  const formatGrade=isElementary
+    ? (errRatio<=0.2?'A':errRatio<=0.4?'B':errRatio<=0.6?'C':errRatio<=0.85?'D':'E')
+    : (errRatio<=0.1?'A':errRatio<=0.25?'B':errRatio<=0.45?'C':errRatio<=0.7?'D':'E');
+  const taskScore=rubricGradeToScore(taskGrade),formatScore=rubricGradeToScore(formatGrade);
+  const totalScore=taskScore+formatScore;
+  const totalPercent=Math.round(totalScore/20*100);
+  const writingLevelNum=scoreVal>=90?5:scoreVal>=80?4:scoreVal>=70?3:scoreVal>=60?2:1;
+  return {
+    classLevel:classLevelName,
+    writingLevel:'Level '+writingLevelNum,
+    taskGrade:taskGrade,taskScore:taskScore,formatGrade:formatGrade,formatScore:formatScore,
+    totalScore:totalScore,totalPercent:totalPercent,totalGrade:rubricPercentToGrade(totalPercent),
+    auto:true
+  };
+}
+/* 첨삭받은 원본과, 그걸 반영해 다시 쓴 Re-Writing을 같은 제목(point)끼리 짝지어요 — 종합 리포트
+ * (printStudentRewriteReport)와, 그 전에 뜨는 "어떤 과제를 리포트에 넣을지" 선택 화면(openRewriteReportPicker)
+ * 둘 다 이 짝을 그대로 써요. */
+function computeRewritePairs(subs){
+  const latestByPoint=(list)=>{
+    const m={};
+    list.forEach(s=>{
+      const key=s.point||s.chapter||'';
+      if(!key)return;
+      if(!m[key]||String(s.datetime||'')>String(m[key].datetime||''))m[key]=s;
+    });
+    return m;
+  };
+  const originals=latestByPoint((subs||[]).filter(s=>submissionTypeLabel(s)!=='Re-Writing'));
+  const rewrites=latestByPoint((subs||[]).filter(s=>submissionTypeLabel(s)==='Re-Writing'));
+  const pairs=Object.keys(originals).filter(k=>rewrites[k]).map(k=>({point:k,original:originals[k],rewrite:rewrites[k]}));
+  pairs.sort((a,b)=>String(a.original.datetime||'')<String(b.original.datetime||'')?-1:1);
+  return pairs;
+}
+/* 종합 리포트 버튼을 누르면 바로 전부 뽑는 대신, 먼저 어떤 과제를 리포트에 넣을지 체크박스로
+ * 고를 수 있게 하는 선택 화면이에요. 기본은 전부 선택된 상태라, 예전처럼 그냥 "리포트 만들기"만
+ * 눌러도 전체 리포트가 그대로 나와요. */
+function openRewriteReportPicker(preview){
+  const subs=(preview&&preview.subs)||[];
+  const pairs=computeRewritePairs(subs);
+  if(!pairs.length){alert('아직 리라이팅까지 완료된 글이 없어요. 학생이 첨삭받은 글을 최소 하나는 "Re-Writing"으로 다시 써야 이 리포트에 나와요.');return;}
+  openGenericModal('리포트에 넣을 과제 고르기',(body)=>{
+    body.appendChild(el('div','hint','체크한 과제만 종합 리포트에 들어가요. 기본은 전부 선택돼 있어요.'));
+    const toggleRow=el('div');toggleRow.style.cssText='display:flex;gap:10px;margin:10px 0';
+    const allBtn=el('button','btn ghost','전체 선택');allBtn.type='button';allBtn.style.cssText='padding:4px 10px;font-size:12px';
+    const noneBtn=el('button','btn ghost','전체 해제');noneBtn.type='button';noneBtn.style.cssText='padding:4px 10px;font-size:12px';
+    toggleRow.appendChild(allBtn);toggleRow.appendChild(noneBtn);body.appendChild(toggleRow);
+    const listWrap=el('div');listWrap.style.cssText='display:flex;flex-direction:column;gap:8px;max-height:340px;overflow:auto';
+    const checks=pairs.map(p=>{
+      const row=el('label');row.style.cssText='display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid rgba(0,0,0,.08);border-radius:8px;cursor:pointer;font-size:13.5px';
+      const cb=el('input');cb.type='checkbox';cb.checked=true;cb.style.marginTop='3px';
+      const label=el('div');
+      label.innerHTML='<div style="font-weight:700">'+escH(p.point)+'</div>'+
+        '<div style="color:#6b7684;font-size:12px;margin-top:2px">원본 '+escH(p.original.datetime||'')+' → Re-Writing '+escH(p.rewrite.datetime||'')+'</div>';
+      row.appendChild(cb);row.appendChild(label);listWrap.appendChild(row);
+      return {cb,point:p.point};
+    });
+    body.appendChild(listWrap);
+    allBtn.onclick=()=>checks.forEach(c=>c.cb.checked=true);
+    noneBtn.onclick=()=>checks.forEach(c=>c.cb.checked=false);
+    const btnRow=el('div');btnRow.style.cssText='display:flex;gap:8px;margin-top:14px;align-items:center';
+    const goBtn=el('button','btn blue','리포트 만들기');goBtn.type='button';goBtn.style.cssText='padding:8px 16px;font-size:13.5px';
+    const msg=el('span','fx');
+    btnRow.appendChild(goBtn);btnRow.appendChild(msg);body.appendChild(btnRow);
+    goBtn.onclick=()=>{
+      const selected=checks.filter(c=>c.cb.checked).map(c=>c.point);
+      if(!selected.length){msg.className='fx no';msg.textContent='최소 한 과제는 선택해주세요.';return;}
+      closeGenericModal();
+      printStudentRewriteReport(preview,selected);
+    };
+  });
+}
+function printStudentRewriteReport(preview,selectedPoints){
+  const subs=(preview&&preview.subs)||[];
+  const academyName=(subs.find(x=>x&&x.academy)||{}).academy||'';
+  let pairs=computeRewritePairs(subs);
+  if(!pairs.length){alert('아직 리라이팅까지 완료된 글이 없어요. 학생이 첨삭받은 글을 최소 하나는 "Re-Writing"으로 다시 써야 이 리포트에 나와요.');return;}
+  if(selectedPoints&&selectedPoints.length){
+    const selSet=new Set(selectedPoints);
+    pairs=pairs.filter(p=>selSet.has(p.point));
+    if(!pairs.length){alert('선택한 과제가 없어요.');return;}
+  }
+  const sectionHtml=pairs.map((p,pi)=>{
+    const o=p.original,r=p.rewrite;
+    const fb=parseFeedback(o.feedback),aifb=parseAiFeedback(o.aiFeedback),aifbGpt=parseAiFeedback(o.aiFeedbackGpt);
+    const sents=o.text?splitSentences(o.text):[];
+    let errCount=0;
+    const sentsHtml=sents.length?sents.map((sent,i)=>{
+      const c=fb.sentences[i]||fb.sentences[String(i)];
+      const ai=aifb.sentences[i]||aifb.sentences[String(i)];
+      const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
+      if(ai&&Array.isArray(ai.errors))errCount+=ai.errors.length;
+      if(aiGpt&&Array.isArray(aiGpt.errors))errCount+=aiGpt.errors.length;
+      let html='<p class="osent">'+escH(sent)+'</p>';
+      html+=sentenceErrorListHtml(ai);
+      html+=sentenceErrorListHtml(aiGpt);
+      if(c)html+='<div class="cmt">'+escH(c)+'</div>';
+      return html;
+    }).join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
+    const overallHtml=[aifb.overall,aifbGpt.overall,fb.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');
+    // 원본이 문법드릴이면 첨삭 대신 문항별 결과(wrongReport)에 "틀린 부분"이 담겨있어요.
+    const oWrongHtml=o.wrongReport?renderDrillWrongReport(parseWrongReport(o.wrongReport)):'';
+    const oNoFeedbackHtml=hasAnyOriginalFeedback(o)?'':'<div class="hint" style="margin-top:8px">⚠️ 이 원본 글에는 아직 저장된 첨삭이 없어요 — 원본 제출물 화면에서 먼저 첨삭(AI 첨삭 또는 선생님 첨삭)을 남기면 여기에도 나와요.</div>';
+    const rewriteSents=r.text?splitSentences(r.text):[];
+    const rewriteHtml=rewriteSents.length?rewriteSents.map((s)=>'<p>'+escH(s)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>';
+    const scoreLabel=(o.total!=null&&String(o.total).trim()!==''&&String(o.total)!=='-')?(' &nbsp;·&nbsp; 점수 '+escH(String(o.total))+(o.grade?(' ('+escH(o.grade)+'등급)'):'')):'';
+    return '<section class="piece'+(pi>0?' pagebreak':'')+'">'+
+      '<h2>'+(pi+1)+'. '+escH(p.point)+' <span class="tag">'+escH(submissionTypeLabel(o))+'</span></h2>'+
+      '<div class="dates">원본 제출 '+escH(o.datetime||'')+' &nbsp;→&nbsp; Re-Writing 제출 '+escH(r.datetime||'')+(errCount?(' &nbsp;·&nbsp; 지적된 부분 '+errCount+'곳'):'')+scoreLabel+'</div>'+
+      rubricSectionHtml(parseRubricEval(o.rubric)||autoComputeRubric(o),p.point,(preview&&preview.studentName)||'')+
+      '<div class="compare">'+
+        '<div class="win orig"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>처음 쓴 글 · 지적된 부분</div>'+
+          '<div class="win-body osent-wrap">'+sentsHtml+overallHtml+oWrongHtml+oNoFeedbackHtml+'</div></div>'+
+        '<div class="win fixed"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 최종 글</div>'+
+          '<div class="win-body rsent-wrap">'+rewriteHtml+processSectionHtml(o)+'</div></div>'+
+      '</div>'+
+      '</section>';
+  }).join('');
+  // 원본 제출물에 점수가 남아있는 것들만 골라서 평균을 내요 — 채점이 안 된(점수 없는) 과제는
+  // 평균 계산에서 자연히 빠져요. 하나도 없으면 평균 칩 자체를 안 보여줘요.
+  // ("총점" 칸은 컨텐츠 종류에 따라 "82/100"처럼 100점 만점이 아니라 "3/5"(조건 개수) 같은 형식일 때도
+  // 있어서, parseFloat만 하면 서로 다른 잣대가 섞이거나(예: "3/5" → 3점) 이상한 값이 껴들 수 있어요.
+  // 그래서 100점 만점으로 이미 환산돼 있는 "score" 값을 우선 쓰고, 그마저 없을 때만 총점을 보되
+  // 0~100 범위를 벗어나는 값(예: 날짜가 잘못 들어간 경우)은 점수로 보지 않고 걸러내요.)
+  const scoreOf=(o)=>{
+    const s=parseFloat(o.score);
+    if(!isNaN(s)&&s>=0&&s<=100)return s;
+    const t=parseFloat(o.total);
+    if(!isNaN(t)&&t>=0&&t<=100)return t;
+    return null;
+  };
+  const scoredPairs=pairs.map(p=>scoreOf(p.original)).filter(n=>n!=null);
+  const avgScore=scoredPairs.length?Math.round((scoredPairs.reduce((a,b)=>a+b,0)/scoredPairs.length)*10)/10:null;
+  const avgGrade=avgScore!=null?scoreToGrade(avgScore):null;
+  // 예전엔 여기에 "총 N개 과제에서 첨삭을 받고 Re-Writing까지 완료했어요..." 같은 설명 문단(.summary)이
+  // 있었는데, 위 meta-chip(평균 등급 등)과 내용이 겹쳐서 불필요하다는 의견을 반영해 뺐어요.
+  const summaryHtml='';
+  const extraCss=
+    '.summary{background:#FAFAFC;border:1px solid #E2E2E8;border-left:4px solid #2B2733;border-radius:0;padding:12px 16px;font-size:13.5px;margin-bottom:24px}'+
+    'section.piece{margin-bottom:28px;padding-bottom:24px;border-bottom:1px dashed #DEDCE4}'+
+    'section.piece:last-of-type{border-bottom:none}'+
+    'section.piece.pagebreak{page-break-before:always}'+
+    'section.piece h2{font-size:15px;margin:0 0 4px;color:#2B2733;font-weight:800}'+
+    'section.piece h2 .tag{font-size:11px;font-weight:800;color:#2B2733;background:#FAFAFC;border:1px solid #E2E2E8;border-radius:0;padding:3px 10px;margin-left:8px;vertical-align:middle}'+
+    '.dates{color:#8D8298;font-size:12px;margin:6px 0 14px}'+
+    '.win h3{font-size:12.5px;margin:0 0 8px;color:inherit;font-weight:800}';
+  // (문장별 틀린 부분/고친 부분/총평 스타일은 REPORT_BASE_CSS로 옮겨서 printSubmissionReport와 공용으로 써요.)
+  const html='<!doctype html><html><head><meta charset="utf-8"><title>'+escH((preview&&preview.studentName)||'')+' - 첨삭·Re-Writing 종합 리포트</title>'+
+    REPORT_FONT_LINKS+
+    '<style>'+
+    REPORT_BASE_CSS+extraCss+
+    '</style></head><body>'+
+    '<div class="page"><div class="sheet">'+
+    '<div class="hero">'+academyLogoHtml(academyName)+'<div><h1>첨삭 → Re-Writing 종합 리포트</h1><div class="sub">첨삭받은 뒤 다시 써서(Re-Writing) 완료된 글들을 모아, 어디를 왜 틀렸고 어떻게 고쳤는지 정리했어요.</div></div></div>'+
+    '<div class="body-pad">'+
+    '<div class="meta-grid">'+
+      '<div class="meta-chip"><b>이름</b>'+escH((preview&&preview.studentName)||'')+'</div>'+
+      '<div class="meta-chip"><b>아이디</b>'+escH((preview&&preview.studentId)||'')+'</div>'+
+      (preview&&preview.ctx?('<div class="meta-chip"><b>학교/학년/반</b>'+escH(preview.ctx)+'</div>'):'')+
+      (avgGrade!=null?('<div class="meta-chip score"><b>평균 등급</b>'+avgGrade+'</div>'):'')+
+    '</div>'+
+    summaryHtml+
+    sectionHtml+
+    '</div>'+
+    '<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div>'+
+    '</div></div>'+
+    '</body></html>';
+  const win=window.open('','_blank');
+  if(!win){alert('팝업이 차단되어 있어요. 브라우저 팝업 차단을 해제한 뒤 다시 시도해주세요.');return;}
+  win.document.open();win.document.write(html);win.document.close();
+}
+/** 선생님 화면에서 문장별 첨삭(errors[]+corrected — "틀린 부분 → 고친 부분" 형식)을 보여주고 고칠 수 있게 해요.
+ *  AI가 이미 그 문장에 대해 첨삭을 만들어뒀으면 "✏️ 첨삭 수정"으로 고칠 수 있고, AI가 그 문장은 그냥 넘어갔거나
+ *  (오류가 없다고 판단했거나) AI 첨삭 자체가 아직 없는 제출물이어도 "✏️ 첨삭 추가"를 눌러 선생님이 직접 처음부터
+ *  틀린 부분·고친 부분을 만들 수 있어요 — 그동안은 AI가 만들어둔 것만 고칠 수 있고, 선생님이 새로 첨삭을 남기고
+ *  싶을 땐 단순 텍스트 코멘트(문장별 코멘트 칸)밖에 방법이 없었던 걸 보완한 거예요.
+ *  저장하면 같은 문장 번호(idx)의 내용만 덮어쓰고 나머지 문장·총평은 그대로 유지돼요(editAiFeedback은 항상
+ *  전체 JSON을 통째로 덮어쓰기 때문에 fbObj.sentences를 통째로 들고 있다가 그 자리에서만 바꿔서 다시 보내요). */
+function mountEditableAiSentenceBlock(row,aiEntry,provider,idx,fbObj,accent,s){
+  if(aiEntry&&typeof aiEntry!=='object')return; // 옛날 문자열 형태 코멘트는 이 UI 대상이 아니에요(호출부에서 그대로 보여줘요).
+  let entry=(aiEntry&&typeof aiEntry==='object')?aiEntry:null;
+  const hasContent=()=>!!(entry&&((Array.isArray(entry.errors)&&entry.errors.length)||entry.corrected));
+  const wrap=el('div');
+  const showView=()=>{
+    wrap.innerHTML='';
+    if(hasContent()){
+      const html=renderAiSentenceBlock(entry,'',accent);
+      if(html){const box=el('div');box.innerHTML=html;wrap.appendChild(box);}
+      const editBtn=el('button','btn ghost','✏️ 첨삭 수정');editBtn.type='button';editBtn.style.cssText='margin-top:2px;padding:2px 8px;font-size:11px';
+      const delBtn=el('button','btn ghost','🗑 첨삭 지우기 (맞는 문장으로)');delBtn.type='button';delBtn.style.cssText='margin-top:2px;margin-left:4px;padding:2px 8px;font-size:11px;color:#b3261e';
+      wrap.appendChild(editBtn);wrap.appendChild(delBtn);
+      editBtn.onclick=showEdit;
+      delBtn.onclick=async()=>{
+        if(!s.subId){alert('이 제출물은 지원하지 않는 예전 형식이에요.');return;}
+        if(!confirm('이 문장에 달린 AI 첨삭을 지우고 "틀린 곳 없음"으로 처리할까요?'))return;
+        delBtn.disabled=true;editBtn.disabled=true;
+        fbObj.sentences=fbObj.sentences||{};
+        delete fbObj.sentences[idx];delete fbObj.sentences[String(idx)];
+        const aiFeedbackStr=JSON.stringify({overall:fbObj.overall||'',sentences:fbObj.sentences});
+        try{
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'editAiFeedback',subId:s.subId,provider:provider,aiFeedback:aiFeedbackStr,academy:s.academy||''})});
+          let data=null;try{data=await res.json();}catch(e){}
+          if(!data||!data.ok)throw new Error((data&&data.error)||'저장하지 못했어요.');
+          entry=null;showView();
+        }catch(e){
+          alert(String(e.message||e));delBtn.disabled=false;editBtn.disabled=false;
+        }
+      };
+    } else {
+      const addBtn=el('button','btn ghost','✏️ 첨삭 추가 (틀린 부분 → 고친 부분)');addBtn.type='button';addBtn.style.cssText='margin-top:2px;padding:2px 8px;font-size:11px';
+      wrap.appendChild(addBtn);
+      addBtn.onclick=showEdit;
+    }
+  };
+  const showEdit=()=>{
+    wrap.innerHTML='';
+    const errors=(entry&&Array.isArray(entry.errors))?entry.errors:[];
+    const errTa=el('textarea','in');errTa.value=errors.map(e=>[e.wrong||'',e.correct||'',e.note||''].join(' | ')).join('\n');
+    errTa.placeholder='틀린 부분 | 고친 부분 | 설명(선택) — 한 줄에 하나씩';errTa.style.cssText='min-height:60px;font-size:12.5px';
+    const corrInput=el('input','in');corrInput.type='text';corrInput.placeholder='고친 문장 전체 (✔, 선택)';corrInput.value=(entry&&entry.corrected)||'';corrInput.style.cssText='font-size:12.5px;margin-top:4px';
+    const btnRow=el('div');btnRow.style.cssText='display:flex;gap:6px;margin-top:6px;align-items:center';
+    const saveBtn=el('button','btn blue','저장');saveBtn.type='button';saveBtn.style.cssText='padding:3px 10px;font-size:11px';
+    const cancelBtn=el('button','btn ghost','취소');cancelBtn.type='button';cancelBtn.style.cssText='padding:3px 10px;font-size:11px';
+    const msg=el('span','fx');
+    btnRow.appendChild(saveBtn);btnRow.appendChild(cancelBtn);btnRow.appendChild(msg);
+    wrap.appendChild(errTa);wrap.appendChild(corrInput);wrap.appendChild(btnRow);
+    cancelBtn.onclick=showView;
+    saveBtn.onclick=async()=>{
+      if(!s.subId){msg.className='fx no';msg.textContent='이 제출물은 지원하지 않는 예전 형식이에요.';return;}
+      saveBtn.disabled=true;const prev=saveBtn.textContent;saveBtn.textContent='저장 중…';
+      const newErrors=errTa.value.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+        const p=l.split('|').map(x=>x.trim());
+        return {wrong:p[0]||'',correct:p[1]||'',note:p[2]||''};
+      }).filter(e=>e.wrong);
+      const newEntry={errors:newErrors,corrected:corrInput.value};
+      fbObj.sentences=fbObj.sentences||{};
+      fbObj.sentences[idx]=newEntry;
+      const aiFeedbackStr=JSON.stringify({overall:fbObj.overall||'',sentences:fbObj.sentences});
+      try{
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'editAiFeedback',subId:s.subId,provider:provider,aiFeedback:aiFeedbackStr,academy:s.academy||''})});
+        let data=null;try{data=await res.json();}catch(e){}
+        if(!data||!data.ok)throw new Error((data&&data.error)||'저장하지 못했어요.');
+        entry=newEntry;showView();
+      }catch(e){
+        msg.className='fx no';msg.textContent=String(e.message||e);saveBtn.disabled=false;saveBtn.textContent=prev;
+      }
+    };
+  };
+  showView();
+  row.appendChild(wrap);
+}
+/* '오류 문장 바르게 고쳐 쓰기' 답안지 스타일(• 틀린 부분 → 고친 부분   설명 / ✔ 고친 문장)로 AI 첨삭 한 문장분을 그려요.
+   label/accent로 어느 AI인지(Claude·GPT) 구분해서 보여줘요. */
+function renderAiSentenceBlock(aiEntry,label,accent){
+  label=label||'선생님 첨삭';accent=accent||'#4338ca';
+  if(!aiEntry)return '';
+  if(typeof aiEntry==='string'){
+    return aiEntry?('<div style="margin-top:4px;color:'+accent+';font-size:13px">👩‍🏫 '+escH(aiEntry)+'</div>'):'';
+  }
+  const errors=Array.isArray(aiEntry.errors)?aiEntry.errors:[];
+  if(!errors.length)return '';
+  // 문장마다 "👩‍🏫 선생님 첨삭"이라는 같은 글자가 반복돼서 지저분해 보였던 부분 — 라벨은 빼고
+  // 왼쪽 색깔 띠(accent)로만 어느 AI인지 구분해요. 전체 요약 박스 쪽엔 라벨이 그대로 남아있어요.
+  let html='<div style="margin-top:4px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.7;border-left:3px solid '+accent+'">';
+  errors.forEach(e=>{
+    const type=e.type||'wrong';
+    const correctColor=type==='missing'?'#1D4ED8':(type==='suggestion'?'#7C3AED':'#B3261E');
+    const prefix=type==='suggestion'?'💡':'';
+    const dp_=diffPairHtml_(e);
+    html+='<div style="color:#374151">• '+dp_.wrongHtml+(dp_.hasCorrect?(' → '+dp_.correctHtml):'')+(e.note?('&nbsp;&nbsp;'+escH(e.note)):'')+'</div>';
+  });
+  if(aiEntry.corrected){
+    html+='<div style="margin-top:4px;color:#15803d">✔ '+escH(aiEntry.corrected)+'</div>';
+  }
+  html+='</div>';
+  return html;
+}
+
+/* ================= 내 제출 & 피드백 (학생용) ================= */
+function viewMyFeedback(){setWide(true);mountView(w=>{
+  const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','내 제출 내역 · 선생님 피드백'));
+  w.appendChild(el('div','hint','제출한 글에 선생님이 남긴 첨삭을 확인할 수 있어요.'));
+  const box=el('div');box.style.marginTop='14px';
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  (async()=>{
+    let subs=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok)subs=data.submissions||[];
+    }catch(e){}
+    loading.remove();
+    /* 실시간 구독 — 선생님이 첨삭을 남기거나 내가 다른 기기에서 새로 제출하면, 새로고침 없이
+       바로 반영돼요. 이 화면은 제출물마다 "수정하기" 같은 인라인 폼이 있어서 부분만 다시 그리기
+       어려워요 — 그래서 editSubmission 저장 뒤 지금까지 해온 것과 같은 방식으로, 최초 한 번을
+       제외하고 데이터가 바뀔 때마다 이 화면 자체를 다시 불러요(viewMyFeedback). firebase 로그인이
+       안 돼 있으면(fbSignedIn=false) 구독을 시작하지 않고 지금처럼 화면을 열 때 한 번만 받아와요. */
+    // 학생이 "제출한 글 수정하기" 칸을 열어둔 채로 있을 때 실시간 업데이트가 와서 화면이
+    // 통째로 다시 그려지면, 학생이 쓰던 수정 내용이 사라져버려요. 그래서 편집 중일 때는
+    // 화면을 즉시 다시 그리지 않고 "새 소식 있어요" 대기만 해뒀다가, 편집을 닫을 때(저장 or
+    // 취소) 그제서야 반영해요.
+    let editingOpen=false, pendingRefresh=false;
+    if(fbSignedIn){
+      let firstSnap=true;
+      const unsub=fbDb.collection('ewl_submissions').where('id','==',USER.id).onSnapshot(()=>{
+        if(firstSnap){firstSnap=false;return;}
+        if(editingOpen){pendingRefresh=true;return;}
+        viewMyFeedback();
+      },err=>console.warn('내 제출 내역 실시간 구독 오류:',err));
+      trackViewUnsub(unsub);
+    }
+    if(!subs.length){box.appendChild(el('div','hint','아직 제출한 내역이 없어요.'));return;}
+    subs.forEach(s=>{
+      const card=el('div');
+      card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-bottom:14px;background:#fff';
+      card.innerHTML='<div style="font-weight:800">'+(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+submissionTypeLabel(s)+' · '+(s.datetime||'')+')</span></div>'+
+        '<div style="margin-top:6px;color:#6b7684;font-size:13px">점수: '+(s.total||'-')+(s.grade?(' · '+s.grade+'등급'):'')+'</div>';
+      const printBtn=el('button','btn ghost','🖨 인쇄하기 · PDF 만들기');printBtn.type='button';printBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
+      printBtn.onclick=()=>printSubmissionReport(s,USER.name,USER.id,USER.academy,subs);
+      card.appendChild(printBtn);
+      const wrBtn=el('button','btn ghost','📄 Writing Report');wrBtn.type='button';wrBtn.style.cssText='margin:8px 0 0 6px;padding:5px 12px;font-size:12px';
+      wrBtn.onclick=()=>printWritingReport(s,USER.name,USER.id,USER.academy,subs);
+      card.appendChild(wrBtn);
+      const audioBox=renderAudioPlayback(s);if(audioBox)card.appendChild(audioBox);
+      const fb=parseFeedback(s.feedback);
+      const aifb=parseAiFeedback(s.aiFeedback);
+      const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
+      const wrongArr=parseWrongReport(s.wrongReport);
+      if(s.wrongReport){
+        const wrongWrap=el('div');wrongWrap.innerHTML=renderDrillWrongReport(wrongArr);
+        card.appendChild(wrongWrap);
+      }
+      // 아직 선생님 첨삭도, (학생에게 보여지는) AI 첨삭도 하나도 없는 글쓰기·기사요약·수행평가 글은,
+      // 새 줄로 다시 내지 않고 이 자리에서 바로 고쳐 쓸 수 있게 해줘요(문법드릴·Re-Writing은 대상이
+      // 아니에요 — Re-Writing은 이미 첨삭받은 뒤에 고쳐 쓰는 전용 기능이라 여기서 또 다룰 필요가 없어요).
+      const EDITABLE_TYPES=['글쓰기','기사요약','수행평가'];
+      const noFeedbackYet=!(fb.overall)&&!(aifb.overall||Object.keys(aifb.sentences||{}).length)&&!(aifbGpt.overall||Object.keys(aifbGpt.sentences||{}).length);
+      const canEdit=!!(s.subId&&s.text&&EDITABLE_TYPES.indexOf(submissionTypeLabel(s))>-1&&noFeedbackYet);
+      const viewBox=el('div');
+      const renderReadOnly=()=>{
+        editingOpen=false;
+        if(pendingRefresh){pendingRefresh=false;viewMyFeedback();return;}
+        viewBox.innerHTML='';
+        if(canEdit){
+          const editBtn=el('button','btn ghost','✏️ 제출한 글 수정하기');editBtn.type='button';editBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12px';
+          editBtn.onclick=renderEditForm;
+          viewBox.appendChild(editBtn);
+        }
+        if(s.text||fb.overall||aifb.overall||aifbGpt.overall){
+          const wrap=el('div');wrap.style.marginTop='10px';
+          if(s.text){
+            const sents=splitSentences(s.text);
+            const list=el('div');list.style.cssText='margin-bottom:8px';
+            sents.forEach((sent,i)=>{
+              const c=fb.sentences[i]||fb.sentences[String(i)];
+              const ai=aifb.sentences[i]||aifb.sentences[String(i)];
+              const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
+              const aiHtml=renderAiSentenceBlock(ai,'선생님 첨삭','#4338ca');
+              const aiGptHtml=renderAiSentenceBlock(aiGpt,'선생님 첨삭','#0f766e');
+              const row=el('div');row.style.cssText='margin-bottom:6px;font-size:14px;line-height:1.6';
+              if(c||aiHtml||aiGptHtml){
+                let html='<span style="background:#fff3b0;border-radius:4px;padding:1px 3px">'+escH(sent)+'</span>';
+                if(aiHtml)html+=aiHtml;
+                if(aiGptHtml)html+=aiGptHtml;
+                if(c)html+='<div style="margin-top:2px;color:#b45309;font-size:13px">💬 '+escH(c)+'</div>';
+                row.innerHTML=html;
+              } else {
+                row.textContent=sent;
+              }
+              list.appendChild(row);
+            });
+            wrap.appendChild(list);
+          }
+          if(aifb.overall){
+            const aov=el('div');aov.style.cssText='background:#eef0ff;border-radius:10px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:8px';
+            aov.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifb.overall);
+            wrap.appendChild(aov);
+          }
+          if(aifbGpt.overall){
+            const aovG=el('div');aovG.style.cssText='background:#e6f6f3;border-radius:10px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:8px';
+            aovG.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifbGpt.overall);
+            wrap.appendChild(aovG);
+          }
+          if(fb.overall){
+            const ov=el('div');ov.style.cssText='background:var(--green-soft);border-radius:10px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-line';
+            ov.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(fb.overall);
+            wrap.appendChild(ov);
+          } else {
+            wrap.appendChild(el('div','hint','아직 선생님 첨삭이 없어요.'));
+          }
+          viewBox.appendChild(wrap);
+        } else {
+          const fbEl=el('div','hint','아직 선생님 첨삭이 없어요.');fbEl.style.marginTop='10px';viewBox.appendChild(fbEl);
+        }
+      };
+      const renderEditForm=()=>{
+        editingOpen=true;
+        viewBox.innerHTML='';
+        const editWrap=el('div');editWrap.style.marginTop='10px';
+        editWrap.appendChild(el('div','hint','아직 첨삭받기 전이라 내용을 고쳐 쓸 수 있어요. 저장하면 이 제출물이 새 내용으로 바뀌고, AI 첨삭도 새 글 기준으로 다시 만들어져요.'));
+        const ta=el('textarea','in');ta.value=s.text;ta.style.cssText='min-height:120px;margin-top:8px';
+        editWrap.appendChild(ta);
+        const btnRow=el('div');btnRow.style.cssText='display:flex;gap:8px;margin-top:8px;align-items:center';
+        const saveBtn=el('button','btn green','💾 수정 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 14px;font-size:13px';
+        const cancelBtn=el('button','btn ghost','취소');cancelBtn.type='button';cancelBtn.style.cssText='padding:6px 14px;font-size:13px';
+        const editMsg=el('span','fx');
+        cancelBtn.onclick=renderReadOnly;
+        saveBtn.onclick=async()=>{
+          if(!ta.value.trim()){editMsg.className='fx no';editMsg.textContent='내용을 입력해주세요.';return;}
+          saveBtn.disabled=true;cancelBtn.disabled=true;editMsg.className='fx';editMsg.textContent='저장 중…';
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'editSubmission',subId:s.subId,text:ta.value,academy:s.academy||''})});
+            let data=null;try{data=await res.json();}catch(e){}
+            if(!data||data.ok===false)throw new Error((data&&data.error)||'수정 실패');
+            s.text=ta.value;s.aiFeedback='';s.aiFeedbackGpt='';
+            viewMyFeedback();
+          }catch(e){
+            editMsg.className='fx no';editMsg.textContent=String((e&&e.message)||e);
+            saveBtn.disabled=false;cancelBtn.disabled=false;
+          }
+        };
+        btnRow.appendChild(saveBtn);btnRow.appendChild(cancelBtn);btnRow.appendChild(editMsg);
+        editWrap.appendChild(btnRow);
+        viewBox.appendChild(editWrap);
+      };
+      renderReadOnly();
+      card.appendChild(viewBox);
+      box.appendChild(card);
+    });
+  })();
+});}
+
+/* ================= Re-Writing (첨삭받은 글 전체 다시 쓰기, 학생용) ================= */
+/* 목록: 첨삭(AI 첨삭 중 하나라도)이 이미 완료돼 화면에 보이는 제출물만 골라 보여줘요.
+   다시 쓴 글 자체(type==='Re-Writing')는 다시쓰기 대상에서 제외해요. */
+function viewRewriteList(){setWide(true);mountView(w=>{
+  const bk=el('button','backbtn','◀ 홈으로');bk.onclick=viewHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','Re-Writing · 다시 써보기'));
+  w.appendChild(el('div','hint','첨삭을 받은 글 중에서 골라, 고쳐진 내용대로 처음부터 전체를 다시 써 보는 연습이에요.'));
+  const filterWrap=el('div');filterWrap.style.cssText='display:flex;flex-direction:column;gap:4px;margin-top:12px;max-width:220px';
+  filterWrap.appendChild(el('div','hint','컨텐츠 종류'));
+  const typeSel=el('select','in');typeSel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';
+  filterWrap.appendChild(typeSel);
+  // 한 것/안 한 것을 나눠서 볼 수 있는 "진행 상태" 드롭다운 (종류 드롭다운 옆에 나란히 보여줘요).
+  const statusWrap=el('div');statusWrap.style.cssText='display:flex;flex-direction:column;gap:4px;max-width:220px';
+  statusWrap.appendChild(el('div','hint','진행 상태'));
+  const statusSel=el('select','in');statusSel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';
+  [['','전체'],['todo','아직 안 한 것'],['done','완료한 것']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;statusSel.appendChild(o);});
+  statusWrap.appendChild(statusSel);
+  const filterRow=el('div');filterRow.style.cssText='display:flex;gap:12px;flex-wrap:wrap;margin-top:12px';
+  filterWrap.style.marginTop='0';
+  filterRow.appendChild(filterWrap);filterRow.appendChild(statusWrap);
+  w.appendChild(filterRow);
+  const summary=el('div','hint');summary.style.marginTop='10px';w.appendChild(summary);
+  const box=el('div');box.style.marginTop='14px';
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  (async()=>{
+    let subs=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok)subs=data.submissions||[];
+    }catch(e){}
+    loading.remove();
+    // 이미 제출한 Re-Writing(chapter==='Rewriting')을 원본 제목(point)별로 모아서, 목록에서 "완료" 표시를 해요.
+    const doneMap=new Map();
+    subs.forEach(s=>{
+      if(String(s.chapter||'')!=='Rewriting')return;
+      const k=String(s.point||'');
+      const prev=doneMap.get(k);
+      if(!prev||String(s.datetime||'')>String(prev.datetime||''))doneMap.set(k,s);
+    });
+    const doneOf=s=>doneMap.get(String(s.point||s.chapter||''));
+    const eligibleAll=subs.filter(s=>submissionTypeLabel(s)!=='Re-Writing'&&s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
+    // 같은 컨텐츠(같은 종류+챕터+제목)를 여러 번 제출한 경우(더블클릭 등으로 거의 동시에 두 번
+    // 저장된 옛날 기록 포함) 다시쓰기 목록엔 그때마다 한 줄씩 다 나와서 똑같은 카드가 여러 개
+    // 보였어요. 어차피 학생 입장에선 "이 컨텐츠, 다시 써보기"가 목적이라 가장 최근 제출물 하나만
+    // 보여주면 충분해서, 종류+챕터+제목이 같으면 최신 것만 남겨요.
+    const eligibleByKey=new Map();
+    eligibleAll.forEach(s=>{
+      const key=submissionTypeLabel(s)+'|'+(s.chapter||'')+'|'+(s.point||'');
+      const prev=eligibleByKey.get(key);
+      if(!prev||String(s.datetime||'')>String(prev.datetime||''))eligibleByKey.set(key,s);
+    });
+    const eligible=Array.from(eligibleByKey.values());
+    if(!eligible.length){filterRow.style.display='none';box.appendChild(el('div','hint','아직 다시 써볼 수 있는 글이 없어요. AI 첨삭이 완료된 제출물이 있어야 다시쓰기를 할 수 있어요.'));return;}
+    // 실제로 그 학생 글에 있는 컨텐츠 종류만 드롭다운에 보여줘요 (전체 종류를 다 보여주면 선택해도 텅 비는 경우가 생겨서).
+    const presentTypes=new Set(eligible.map(s=>submissionTypeLabel(s)));
+    EXAM_TYPE_OPTS.filter(([v])=>v===''||presentTypes.has(v)).forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;typeSel.appendChild(o);});
+    const renderList=()=>{
+      box.innerHTML='';
+      const wanted=typeSel.value,wantStatus=statusSel.value;
+      const ofType=wanted?eligible.filter(s=>submissionTypeLabel(s)===wanted):eligible;
+      const doneCnt=ofType.filter(s=>doneOf(s)).length;
+      summary.textContent='✅ 완료 '+doneCnt+'개 · 아직 안 한 것 '+(ofType.length-doneCnt)+'개'+(ofType.length&&doneCnt===ofType.length?' — 전부 다 했어요! 🎉':'');
+      const filtered=ofType.filter(s=>!wantStatus||(wantStatus==='done'?!!doneOf(s):!doneOf(s)));
+      if(!filtered.length){box.appendChild(el('div','hint',wantStatus==='todo'?'아직 안 한 Re-Writing이 없어요. 모두 완료했어요! 🎉':(wantStatus==='done'?'아직 완료한 Re-Writing이 없어요.':'해당 종류로 다시 써볼 수 있는 글이 없어요.')));return;}
+      filtered.forEach(s=>{
+        const dn=doneOf(s);
+        const card=el('button','btn ghost');
+        card.type='button';card.style.cssText='display:block;width:100%;text-align:left;padding:14px 16px;margin-bottom:10px;border-radius:12px'+(dn?';background:#f1faf4;border-color:#bfe3cb':'');
+        card.innerHTML='<div style="font-weight:800">'+escH(submissionTypeLabel(s))+' - '+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:13px">('+escH(s.datetime||'')+')</span>'+
+          (dn?' <span style="background:#d1fadf;color:#166534;border-radius:8px;padding:1px 8px;font-size:12px;font-weight:800">✅ 완료</span>':'')+'</div>'+
+          '<div style="margin-top:4px;color:#6b7684;font-size:13px">'+(dn?'완료했어요 ('+escH(dn.datetime||'')+') · 눌러서 이어서 고쳐 쓰기 →':'이 글을 다시 써보기 →')+'</div>';
+        card.onclick=()=>viewRewriteWrite(s,dn);
+        box.appendChild(card);
+      });
+    };
+    typeSel.onchange=renderList;statusSel.onchange=renderList;
+    renderList();
+  })();
+});}
+
+/** 문장 안에서 바로 보여주는 비교 표시 — 바뀐 단어에만 색을 입혀서, 그대로인 단어는 평범하게 두고
+ *  지워진/바뀐 단어는 빨간 취소선, 새로 들어간 단어는 종류 색(빨강=고침, 파랑=더함, 보라=제안)으로 그 자리에 끼워 넣어요. */
+function inlineDiffHtml_(e){
+  const type=e.type||'wrong';
+  const color=type==='missing'?'#1D4ED8':(type==='suggestion'?'#7C3AED':'#B3261E');
+  const nz=t=>String(t||'').toLowerCase().replace(/[^a-z0-9'가-힣]/g,'');
+  const toks=x=>String(x||'').trim().split(/\s+/).filter(Boolean);
+  const wt=toks(e.wrong),alts=splitAltCorrects(e.correct);
+  const strikeRed='<s style="color:#B3261E">',strikeGray='<s style="color:#9AA1AD">';
+  const del=t=>(type==='suggestion'?strikeGray:strikeRed)+escH(t)+'</s>';
+  if(!alts.length)return wt.map(t=>'<s style="color:#B3261E">'+escH(t)+'</s>').join(' ');
+  const bt=toks(alts[0]),n=wt.length,m=bt.length;
+  const dp=Array.from({length:n+1},()=>new Array(m+1).fill(0));
+  for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)dp[i][j]=(nz(wt[i])&&nz(wt[i])===nz(bt[j]))?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
+  const out=[];let i=0,j=0;
+  while(i<n||j<m){
+    if(i<n&&j<m&&nz(wt[i])&&nz(wt[i])===nz(bt[j])){out.push(escH(bt[j]));i++;j++;}
+    else if(i<n&&(j>=m||dp[i+1][j]>=dp[i][j+1])){out.push(del(wt[i]));i++;}
+    else{out.push('<b style="color:'+color+'">'+escH(bt[j])+'</b>');j++;}
+  }
+  let html=out.join(' ');
+  if(alts.length>1)html+=' <span style="color:#8A93A5">/</span> '+alts.slice(1).map(x=>'<b style="color:'+color+'">'+escH(x)+'</b>').join(' <span style="color:#8A93A5">/</span> ');
+  return html;
+}
+/** 문장 안에서 틀린 부분(errors[].wrong)만 찾아 그 자리에만 표시를 하고 바로 옆에 고친/제안 표현을
+ *  붙여요(문장 전체를 긋지 않고, 나머지 부분은 그대로 둬요). type에 따라 색만 다르게 표시해요 —
+ *  "wrong"(명백히 틀림)은 검정 취소선+빨간색으로 고침, "missing"(빠진 표현 삽입)은 원래 부분은
+ *  그대로 두고 파란색으로 빠진 표현만 끼워 넣어요, "suggestion"(더 나은 표현 제안)은 보라색 💡로
+ *  참고용으로 보여줘요. 왜 그런지에 대한 설명(note)은 문장 중간에 끼워 넣지 않고(읽기 흐름이 끊겨서),
+ *  호출하는 쪽에서 문장 "아래에 별도 줄"로 모아서 보여줘요(이 함수는 문장 자체만 그려요).
+ *  여러 개의 오류가 있으면 문장에서 나온 순서대로 처리해요. */
+function renderInlineDiff(sentence,errors){
+  if(!errors||!errors.length)return escH(sentence);
+  const found=errors.map(e=>({e,idx:(e&&e.wrong)?sentence.indexOf(e.wrong):-1})).filter(x=>x.idx>-1).sort((a,b)=>a.idx-b.idx);
+  if(!found.length)return escH(sentence);
+  let out='',pos=0;
+  found.forEach(({e,idx})=>{
+    if(idx<pos)return; // 겹치는 위치는 건너뛰어요 (이미 앞 오류가 그 자리를 덮었어요)
+    out+=escH(sentence.slice(pos,idx));
+    out+=inlineDiffHtml_(e);
+    pos=idx+e.wrong.length;
+  });
+  out+=escH(sentence.slice(pos));
+  return out;
+}
+/** renderInlineDiff로 문장 자체는 다 그린 뒤, 그 문장에 달린 오류들의 "왜 그런지" 설명(note)만
+ *  따로 모아서 문장 아래에 줄바꿈된 목록으로 보여줘요(문장 읽기 흐름을 안 끊으려고 분리했어요). */
+function inlineDiffNotesHtml(errorsList,sentence){
+  const notes=[];
+  (errorsList||[]).forEach(errors=>{
+    (errors||[]).forEach(e=>{
+      if(!e||!e.note)return;
+      // 문장에 실제로 표시되지 않은(원래 표현이 문장에 없거나, 고칠 게 없는) 항목의 설명은 보여주지 않아요.
+      if(sentence!==undefined&&e.wrong&&sentence.indexOf(e.wrong)<0)return;
+      if(e.wrong&&e.correct&&norm(e.wrong)===norm(e.correct))return;
+      notes.push(e);
+    });
+  });
+  if(!notes.length)return '';
+  // 예전엔 회색/보라색 작은 글씨 한 줄로만 나와서 "왜 틀렸는지" 설명이 눈에 잘 안 띈다는 피드백이
+  // 있었어요. type별 색(빨강/파랑/보라)에 맞춘 왼쪽 띠 + 배경이 있는 카드로 바꿔서, 위 문장의 틀린
+  // 부분과 아래 설명이 색으로 바로 연결되어 보이고 시각적으로도 눈에 띄게 했어요.
+  const colorOf=t=>t==='missing'?'#1D4ED8':(t==='suggestion'?'#7C3AED':'#B3261E');
+  const bgOf=t=>t==='missing'?'#eef4ff':(t==='suggestion'?'#f5f0ff':'#fdeeee');
+  return '<div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">'+
+    notes.map(e=>{
+      const c=colorOf(e.type||'wrong');
+      return '<div style="background:'+bgOf(e.type||'wrong')+';border-left:3px solid '+c+';border-radius:6px;padding:5px 9px;font-size:13px;line-height:1.55;color:#3a3a45;font-weight:600">'+escH(e.note)+'</div>';
+    }).join('')+
+    '</div>';
+}
+function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
+  const bk=el('button','backbtn','◀ 목록으로');bk.onclick=viewRewriteList;w.appendChild(bk);
+  w.appendChild(el('h1','title','Re-Writing · '+(sub.point||sub.chapter||'')));
+  w.appendChild(el('div','hint','아래 원문과 고쳐진 내용을 참고해서, 처음부터 전체를 다시 써 보세요.'));
+  const aifb=parseAiFeedback(sub.aiFeedback);
+  const aifbGpt=parseAiFeedback(sub.aiFeedbackGpt);
+  const fb=parseFeedback(sub.feedback);
+  // 왼쪽(고쳐진 원문 참고자료) · 가운데(다시쓰기, 더 넓게) · 오른쪽(조건 확인) 3분할 레이아웃이에요.
+  const writer=el('div','rewriter');writer.style.marginTop='14px';w.appendChild(writer);
+  const wleft=el('div','rw-left');const wmid=el('div','rw-mid');const wright=el('div','rw-right');
+  writer.appendChild(wleft);writer.appendChild(wmid);writer.appendChild(wright);
+  const leftScroll=el('div','rw-left-scroll');wleft.appendChild(leftScroll);
+  if(aifb.overall){
+    const b1=el('div');b1.style.cssText='background:#eef0ff;border-radius:12px;padding:14px 16px;font-size:14px;line-height:1.7;white-space:pre-line';
+    b1.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifb.overall);
+    leftScroll.appendChild(b1);
+  }
+  if(aifbGpt.overall){
+    const b2=el('div');b2.style.cssText='background:#e6f6f3;border-radius:12px;padding:14px 16px;margin-top:10px;font-size:14px;line-height:1.7;white-space:pre-line';
+    b2.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(aifbGpt.overall);
+    leftScroll.appendChild(b2);
+  }
+  if(fb.overall){
+    const b3=el('div');b3.style.cssText='background:var(--green-soft);border-radius:12px;padding:14px 16px;margin-top:10px;font-size:14px;line-height:1.7;white-space:pre-line';
+    b3.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(fb.overall);
+    leftScroll.appendChild(b3);
+  }
+  // 문장별로 별도 목록을 아래에 다시 나열하지 않고, 원문 안 틀린 부분(빨간 줄)에만 줄을 긋고 바로 옆에 고친 표현을 붙여서 보여줘요.
+  // (수정된 적 없는 문장·부분은 그대로 보여요.) 이 참고자료 영역은 자체 스크롤이 있어서, 길어져도 오른쪽 다시쓰기 칸을 안 가려요.
+  const rewriteConds=[];
+  // wrongKey(원래 틀렸던 표현) 기준으로 모아둬요 — Claude/GPT 두 첨삭이 같은 틀린 부분에 서로 다른
+  // 표현을 추천하면("A로 고쳐도 되고 B로 고쳐도 돼요") 예전엔 이걸 각각 별개 조건으로 만들어서
+  // 학생이 "꼭 둘 다" 써야 체크가 다 켜지는 것처럼 보였어요. 이제 같은 wrongKey는 하나로 묶어서,
+  // 추천된 표현 중 아무거나 하나만 반영해도(또는 원래 틀린 표현이 사라지기만 해도) 통과로 봐요.
+  const wrongGroups=new Map();
+  // ⚠️ AI가 "고친 표현(correct)"에 실제 영어 문구 대신 "삭제"/"이 문장 지움"처럼 한국어 지시문을
+  // 넣을 때가 있어요(완전히 없애는 게 맞는 수정이라서). 이런 지시문을 그대로 "이 글자 그대로 써야
+  // 통과"인 조건으로 만들어버리면, 학생이 시킨 대로 그 표현을 "지워서" 완벽하게 잘 고쳤는데도 그
+  // 지시문 텍스트 자체는 당연히 안 써져 있으니 계속 "사용 안 함(✕)"으로 잘못 떠요. 그래서 이런
+  // 지시문은 "문구 그대로 쓰기"가 아니라 "원래 틀렸던 표현이 더 이상 안 보이면 통과"로 다루게 해요.
+  const looksLikeDeleteNote=s=>{
+    const t=String(s||'').trim();
+    if(!t)return true;
+    return /[가-힣]/.test(t)&&/(삭제|지우|지움|빼기|빼세요|생략|제거|없애|불필요|중복|delete|remove)/i.test(t);
+  };
+  if(sub.text){
+    const sents=splitSentences(sub.text);
+    const listWrap=el('div');listWrap.style.marginTop='14px';
+    listWrap.appendChild(el('div','fl','✍️ 원래 쓴 글 (틀린 부분은 빨간 줄, 고친 표현·해설을 옆에 표시했어요)'));
+    // 틀린 부분이 하나도 없는 문장들이 여러 개 연달아 있으면, 예전엔 문장 하나마다 각자 박스가
+    // 생겨서 화면이 쓸데없이 길고 답답해 보였어요. 이제 "고칠 것 없는 문장들"은 연달아 나오는
+    // 동안 하나의 박스에 이어붙여서(줄바꿈 없이 문단처럼) 보여주고, 고칠 부분이 있는 문장만
+    // 그 옆/아래에 자기만의 강조 박스로 따로 보여줘요.
+    let plainBuf=[];
+    const flushPlain=()=>{
+      if(!plainBuf.length)return;
+      const row=el('div');row.style.cssText='border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb;font-size:14px;line-height:1.7';
+      row.innerHTML=plainBuf.map(s=>escH(s)).join(' ');
+      listWrap.appendChild(row);
+      plainBuf=[];
+    };
+    sents.forEach((sent,i)=>{
+      const ai=aifb.sentences[i]||aifb.sentences[String(i)];
+      const aiGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
+      const c=fb.sentences[i]||fb.sentences[String(i)];
+      const aiObj=(ai&&typeof ai==='object')?ai:null;
+      const aiGptObj=(aiGpt&&typeof aiGpt==='object')?aiGpt:null;
+      const hasErrors=(aiObj&&Array.isArray(aiObj.errors)&&aiObj.errors.length)||(aiGptObj&&Array.isArray(aiGptObj.errors)&&aiGptObj.errors.length);
+      [aiObj,aiGptObj].forEach(entry=>{
+        if(!entry||!Array.isArray(entry.errors))return;
+        entry.errors.forEach(e=>{
+          const wrongKey=norm(e.wrong);
+          if(!e.correct)return;
+          // ⚠️ AI가 고친 표현을 하나가 아니라 "A / B"처럼 두 개 이상을 한 correct 문자열에 같이
+          // 담아서 줄 때가 있어요(둘 다 맞는 표현이라는 뜻). 예전엔 이 "A / B" 전체를 통째로 하나의
+          // 정답 문구로 취급해서, 학생이 그 중 하나(A만, 또는 B만)를 써도 "A / B"라는 문자열 그대로는
+          // 안 써졌으니 계속 미통과(✕)로 떴어요. 그래서 "/" 로 나눠서 각각을 별도 후보로 다뤄요 —
+          // 이러면 아래 test()가 "그중 아무거나 하나"만 확인하면 되니까 하나만 써도 통과돼요.
+          const altCorrects=splitAltCorrects(e.correct);
+          if(!altCorrects.length)return;
+          altCorrects.forEach(altCorrect=>{
+            if(wrongKey&&looksLikeDeleteNote(altCorrect)){
+              // "삭제"류 지시문은 일반 corrects 목록에 넣지 않고, 원래 틀린 표현(wrongKey)이 다시
+              // 안 보이면 통과하는 별도의 "삭제됨" 그룹으로 모아요.
+              const delGroupKey='__delete__'+wrongKey;
+              if(!wrongGroups.has(delGroupKey))wrongGroups.set(delGroupKey,{wrongKey,wrongText:e.wrong,corrects:[],isDelete:true});
+              return;
+            }
+            const key=norm(altCorrect);
+            if(!key)return;
+            // 고칠 게 없는데 "~로 고쳐 쓰기"가 뜨던 경우를 걸러요: ① 고친 표현이 원래 표현과 (대소문자·구두점 빼고) 똑같으면
+            // 실제로 바꿀 게 없고, ② AI가 지적한 원래 표현(wrong)이 학생 글에 아예 없으면 고칠 자리 자체가 없어요.
+            if(wrongKey&&key===wrongKey)return;
+            if(wrongKey&&!norm(sub.text||'').includes(wrongKey))return;
+            // ⚠️ Claude/GPT 중 하나는 "틀린 표현(wrong)"까지 알려주고 다른 하나는 안 알려주는 경우
+            // (또는 같은 문장에 두 첨삭이 조금씩 다른 wrong 텍스트를 줄 때)가 있는데, 예전엔 이럴 때
+            // "고친 표현(correct)"이 완전히 같은데도 서로 다른 groupKey로 갈라져서 체크 목록에
+            // 사실상 같은 조건이 두 번(중복으로) 뜨는 문제가 있었어요("틀린 분야가 여러 개다 보니
+            // 체크가 중복되거나 꼬여있다"). 그래서 새 그룹을 만들기 전에, 이미 같은 고친 표현을
+            // 갖고 있는 기존 그룹이 있는지 먼저 찾아서 있으면 그 그룹에 합쳐요.
+            let g=null;
+            for(const cand of wrongGroups.values()){ if(cand.corrects.some(c=>norm(c)===key)){ g=cand; break; } }
+            if(!g){
+              const groupKey=wrongKey||('__nowrong__'+key);
+              if(!wrongGroups.has(groupKey))wrongGroups.set(groupKey,{wrongKey,corrects:[]});
+              g=wrongGroups.get(groupKey);
+            }
+            if(wrongKey&&!g.wrongKey)g.wrongKey=wrongKey;
+            if(!g.corrects.some(c=>norm(c)===key))g.corrects.push(altCorrect);
+          });
+        });
+      });
+      if(!hasErrors&&!c){ plainBuf.push(sent); return; }
+      flushPlain();
+      const row=el('div');row.style.cssText='border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb;font-size:14px;line-height:1.7';
+      let mainLine='';
+      if(aiObj&&Array.isArray(aiObj.errors)&&aiObj.errors.length)mainLine+='<div>'+renderInlineDiff(sent,aiObj.errors)+'</div>';
+      if(aiGptObj&&Array.isArray(aiGptObj.errors)&&aiGptObj.errors.length)mainLine+='<div'+(mainLine?' style="margin-top:4px"':'')+'>'+renderInlineDiff(sent,aiGptObj.errors)+'</div>';
+      if(!mainLine)mainLine=escH(sent);
+      mainLine+=inlineDiffNotesHtml([aiObj&&aiObj.errors,aiGptObj&&aiGptObj.errors],sent);
+      let detail='';
+      if(c)detail+='<div style="margin-top:2px;color:#b45309;font-size:13px">💬 '+escH(c)+'</div>';
+      row.innerHTML=mainLine+(detail?('<div style="margin-top:4px">'+detail+'</div>'):'');
+      listWrap.appendChild(row);
+    });
+    flushPlain();
+    leftScroll.appendChild(listWrap);
+  }
+  // ⚠️ 예전엔 "고친 표현 그대로"를 문자 그대로 다시 써야만 통과였는데, 거기다 "원래 틀렸던 표현이
+  // 더 이상 안 보이면(=다르게라도 고쳤으면) 통과"라는 예외까지 있었어요. 문제는 다시쓰기는 전체
+  // 글을 처음부터 새로 쓰는 거라서, 한두 마디만 써도 원래 틀렸던 정확한 표현이 그 글에 다시 나올
+  // 일은 거의 없어요 — 그래서 뭘 쓰든 거의 다 "고쳐짐(✓)"으로 잘못 뜨는 문제가 있었어요(무엇을 써도
+  // 다 체크됨). 그래서 이제는 "추천된 표현 중 하나를 실제로 썼는지"만 확인해요. 문자 그대로 똑같이
+  // 안 써도(띄어쓰기·대소문자 차이, normIncludesPhrase가 허용하는 정도의 표현 차이는) 통과돼요.
+  wrongGroups.forEach(g=>{
+    if(g.isDelete){
+      // 일반 조건과 반대예요 — "원래 틀렸던 표현"을 다시 쓴 글에서 줄여야 통과예요(그대로 써야 할
+      // 정답 문구 같은 건 없으니까요). 다만 원래 글에 같은 표현이 중복으로(여러 번) 쓰였을 수 있는데,
+      // 그중 AI가 지적한 한 자리만 고치고 다른 자리는 그대로 정당하게 남겨둘 수도 있어요. 그래서
+      // "아예 하나도 없어야" 통과가 아니라 "원래 글보다 그 표현이 덜 나오면(=지적된 자리를 고쳤으면)"
+      // 통과로 봐요 — 이러면 다른 자리의 정당한 중복 사용까지 오답(✕) 처리되는 걸 막을 수 있어요.
+      const delKey=norm(g.wrongText||g.wrongKey||'');
+      if(!delKey)return;
+      const origCount=countPhraseOccurrences(norm(sub.text||''),delKey);
+      rewriteConds.push({
+        label:'"'+(g.wrongText||g.wrongKey)+'" 부분 지우거나 다르게 고쳐 쓰기',
+        test:t=>{
+          const nt=norm(t);
+          if(!nt)return false;
+          const newCount=countPhraseOccurrences(nt,delKey);
+          return origCount>0?(newCount<origCount):(newCount===0);
+        }
+      });
+      return;
+    }
+    if(!g.corrects.length)return;
+    const keys=g.corrects.map(norm);
+    rewriteConds.push({
+      label:g.corrects.map(c=>'"'+c+'"').join(' 또는 ')+'로 고쳐 쓰기',
+      test:t=>{
+        const nt=norm(t);
+        if(!nt)return false;
+        return keys.some(k=>normIncludesPhrase(nt,k));
+      }
+    });
+  });
+  wmid.appendChild(el('div','fl','✍️ 다시 쓰기'));
+  const ta=addWordCount(el('textarea','in'));ta.placeholder='고쳐진 내용을 참고해서 전체를 처음부터 다시 써보세요.';ta.style.cssText='flex:1;min-height:420px;resize:vertical';
+  wmid.appendChild(ta);
+  /* 이어쓰기 — 쓰다 만 글(임시저장)이 있으면 그걸, 없고 이미 제출한 적이 있으면 그 제출한 글을 불러와서
+     처음부터 다시 치지 않고 이어서 고치게 해요. 입력하는 동안 자동으로 임시저장되고, 뒤로 가거나 창을 닫을 때도 저장해요. */
+  const rwPoint=sub.point||sub.chapter||'';
+  const resumeNote=el('div');resumeNote.style.cssText='background:#eef0ff;color:#4338ca;border-radius:10px;padding:8px 12px;font-size:13px;margin-top:8px;display:none';
+  wmid.insertBefore(resumeNote,ta);
+  let rwSubmitted=false,rwBase='',rwLoaded=false;
+  const rwSaveNow=()=>{if(rwSubmitted||!rwLoaded)return;const v=ta.value;if(!v.trim()||v===rwBase)return;rwBase=v;saveDraftNow('Rewriting',rwPoint,{draft:v});};
+  const rwSaveSoon=debounce(rwSaveNow,2000);
+  ta.addEventListener('input',()=>{if(!rwLoaded)return;rwSubmitted=false;rwSaveSoon();}); // 제출한 뒤 더 고치기 시작하면 다시 임시저장돼요.
+  window.addEventListener('pagehide',()=>{if(ta.isConnected)rwSaveNow();});
+  bk.onclick=()=>{rwSaveNow();viewRewriteList();};
+  (async()=>{
+    const d=await fetchDraft('Rewriting',rwPoint);
+    if(ta.value.trim()){rwLoaded=true;return;} // 불러오는 사이 학생이 먼저 치기 시작했으면 덮어쓰지 않아요.
+    if(d&&d.obj&&typeof d.obj.draft==='string'&&d.obj.draft.trim()){
+      ta.value=d.obj.draft;rwBase=ta.value;
+      resumeNote.textContent='🕓 쓰던 글을 불러왔어요'+(d.savedAt?' ('+String(d.savedAt).slice(0,16)+' 저장)':'')+'. 이어서 쓰면 돼요.';resumeNote.style.display='block';
+    }else if(prevDone&&String(prevDone.final||prevDone.text||'').trim()){
+      ta.value=String(prevDone.final||prevDone.text);rwBase=ta.value;
+      resumeNote.textContent='✅ 이미 제출한 글이에요 ('+(prevDone.datetime||'')+'). 더 고치고 싶으면 이어서 쓰고 다시 제출할 수 있어요.';resumeNote.style.display='block';
+    }
+    rwLoaded=true;
+    ta.dispatchEvent(new Event('input'));
+  })();
+  let rewriteUl=null;
+  if(rewriteConds.length){
+    wright.appendChild(el('div','fl','고쳐진 대로 반영했는지 확인 (입력하는 동안 실시간으로 확인돼요)'));
+    rewriteUl=el('ul','conds');
+    rewriteConds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+escH(cn.label));li._c=cn;rewriteUl.appendChild(li);});
+    wright.appendChild(rewriteUl);
+    const checkRewriteConds=()=>{rewriteUl.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';});};
+    ta.addEventListener('input',checkRewriteConds);
+    checkRewriteConds();
+    addAiCondCheckButton(wright,rewriteUl,()=>ta.value,()=>sub.text);
+  }
+  const fx=el('div','fx');wmid.appendChild(fx);
+  // ⚠️ 다시 쓰기를 다 마친 뒤 소리 내어 읽고 녹음할 수 있게, 다시 쓴 글을 그대로 보여주는 읽기 전용
+  // 박스를 녹음 위젯 바로 위에 둬요 — 위쪽의 입력창(ta)은 계속 수정할 수 있는 칸이라 "이게 최종본이다"
+  // 라는 느낌이 약해서, 완성한 글만 따로 깔끔하게 보여줘야 아이들이 그걸 보면서 편하게 읽고 녹음할 수
+  // 있어요. 입력하는 동안 실시간으로 같이 업데이트돼요.
+  wmid.appendChild(el('div','fl','🔊 녹음할 때 아래 완성한 글을 보면서 읽어보세요'));
+  const readBox=el('div');readBox.style.cssText='margin-top:6px;padding:12px 14px;background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:10px;white-space:pre-wrap;line-height:1.7;font-size:14.5px;max-height:260px;overflow:auto';
+  wmid.appendChild(readBox);
+  const updateReadBox=()=>{readBox.textContent=ta.value.trim()||'(아직 작성한 내용이 없어요 — 위에서 먼저 다시 써보세요.)';};
+  ta.addEventListener('input',updateReadBox);
+  updateReadBox();
+  const rec=createRecorderWidget();
+  wmid.appendChild(rec.el);
+  const subBtn=el('button','btn green','다시 쓴 글 제출하기');subBtn.type='button';subBtn.style.marginTop='10px';
+  wmid.appendChild(subBtn);
+  subBtn.onclick=async()=>{
+    if(!ta.value.trim()){fx.className='fx no';fx.textContent='다시 쓴 글을 입력해주세요.';return;}
+    subBtn.disabled=true;const prev=subBtn.textContent;subBtn.textContent='제출 중…';
+    const now=new Date(),z=x=>String(x).padStart(2,'0');
+    const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());
+    const payload={book:'',chapter:'Rewriting',point:sub.point||sub.chapter||'',name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Rewriting',sub.point||sub.chapter||''),datetime:dt,
+      final:ta.value,progress:'원본 제출: '+(sub.datetime||'')};
+    const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
+    let sent=false;
+    // Re-Writing(다시 쓰기)은 이미 한 번 첨삭받은 글을 고쳐 쓰는 것뿐이라 AI 첨삭이 필요 없어요 —
+    // 그래서 다른 제출 화면들과 달리 triggerAiFeedbackNow를 부르지 않아요.
+    if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;}catch(e){}}
+    subBtn.disabled=false;subBtn.textContent=sent?'제출 완료!':prev;
+    if(sent){
+      rwSubmitted=true; // 이제 임시저장은 필요 없어요(서버도 제출하면 같은 항목 임시저장을 지워요).
+      fx.className='fx ok';fx.textContent='제출했어요! 선생님이 다시 확인할 수 있어요.';
+      const hb=el('button','btn ghost','← 목록으로');hb.style.marginTop='10px';hb.onclick=viewRewriteList;wmid.appendChild(hb);
+    } else {
+      fx.className='fx no';fx.textContent='제출하지 못했어요. 인터넷 연결을 확인하세요.';
+    }
+  };
+});}
+
+/* ================= 교사 대시보드 ================= */
+/* 학년을 "초1~초6 / 중1~중3 / 고1~고3"으로 보여줘요. 학생 정보엔 학년이 숫자(1~6)만 저장돼 있어서, 학교 이름의
+   끝글자(…초/초등학교, …중/중학교, …고/고등학교)로 학교급을 알아내요. 학교가 비어 있거나 판단이 안 되면 "N학년"
+   처럼 숫자만 보여줘요(이미 "초3"처럼 적혀 있으면 그대로 써요). */
+function stageGrade(school,grade){
+  const g=String(grade==null?'':grade).trim();if(!g)return '';
+  if(/^(초|중|고)\s*\d+/.test(g))return g.replace(/\s+/g,'').replace(/학년$/,'');
+  const n=(g.match(/\d+/)||[''])[0];if(!n)return g;
+  const sc=String(school||'').replace(/\s+/g,'');
+  let st='';
+  if(/(초등학교|초)$/.test(sc)||/초등/.test(sc))st='초';
+  else if(/(중학교|중)$/.test(sc)||/중학/.test(sc))st='중';
+  else if(/(고등학교|고)$/.test(sc)||/고등/.test(sc))st='고';
+  return st?st+n:n+'학년';
+}
+const GRADE_OPTIONS=['초1','초2','초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
+/* 학생 상태: ''(재원) / '휴원' / '퇴원'. 휴원·퇴원 학생은 로그인이 막히고 목록에서는 기본으로 숨겨요. */
+function studentStatus(s){const v=String((s&&s.status)||'').trim();return (v==='휴원'||v==='퇴원')?v:'';}
+function isInactiveStudent(s){return !!studentStatus(s);}
+function stageGradeRank(label){const m=String(label).match(/^(초|중|고)(\d+)$/);if(!m)return 99;return {초:0,중:10,고:20}[m[1]]+Number(m[2]);}
+function sortStageGrades(list){return list.slice().sort((a,b)=>{const ra=stageGradeRank(a),rb=stageGradeRank(b);return ra!==rb?ra-rb:a.localeCompare(b,'ko',{numeric:true});});}
+function uniqSorted(arr){return Array.from(new Set(arr.filter(v=>v!=null&&v!=='').map(v=>String(v)))).sort((a,b)=>a.localeCompare(b,'ko'));}
+const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기','글쓰기'],['기사요약','기사요약'],['수행평가','수행평가'],['Story Writing','Story Writing'],['Re-Writing','Re-Writing']];
+/** ⚠️ 예전 Apps Script 시절 제출물엔 "유형(종류)"이 s.type 필드에 저장돼 있었는데, 지금
+ *  시스템(Firebase)의 새 제출물은 이 필드를 아예 안 채워요(대신 chapter로 구분해요) — 그래서
+ *  "영역" 칸이 첨삭관리·리포트·내 제출 내역 등 여러 화면에서 전부 '-'(빈 칸)으로 나오고, "제출한
+ *  글 수정하기"(첨삭 전 수정) 같은 type 값에 의존하던 기능도 전부 조용히 막혀 있었어요. s.type이
+ *  있으면(옛날 마이그레이션 데이터) 그대로 쓰고, 없으면 chapter로 판단해서 채워줘요. */
+function submissionTypeLabel(s){
+  if(s&&s.type)return s.type;
+  const chapter=String((s&&s.chapter)||'');
+  if(!chapter)return '';
+  if(chapter==='Rewriting')return 'Re-Writing';
+  if(chapter==='Paragraph Writing')return '글쓰기';
+  if(chapter==='Article Reading')return '기사요약';
+  if(chapter==='Performance Assessment')return '수행평가';
+  if(chapter==='Story Writing')return 'Story Writing';
+  return '문법드릴';
+}
+/** ⚠️ "AI 첨삭이 있다"를 확인하는 코드가 화면마다 따로따로 있었는데(첨삭관리 표 상태·"내 첨삭
+ *  목록" 배지 개수·첨삭 통계), 서버(handleBatchGenerateMissingFeedback)는 aiFeedback·aiFeedbackGpt·
+ *  aiFeedback_claude·aiFeedback_gpt 네 필드를 다 확인하는데 화면 쪽 코드 일부는 aiFeedback_claude·
+ *  aiFeedback_gpt를 빼먹고 두 필드만 봤어요. 그래서 옛날 형식(aiFeedback_claude 등)으로 저장된
+ *  글은 첨삭관리 표에는 "첨삭대상"(빨간색, 안 된 것처럼)으로 보이는데, "AI 첨삭 안 된 것들
+ *  한번에 생성"을 누르면 서버는 이미 있다고 판단해서 대상에서 빼버려 "밀린 게 없다"고 나오는
+ *  모순이 있었어요. 이제 한 곳(이 함수들)에서만 정의해서 다 같이 써요.
+ *  submissionHasAiFeedback: 오직 AI가 만든 첨삭(4개 필드)만 확인해요 — 첨삭 통계·일괄 생성 대상
+ *  판단처럼 "AI가 실제로 첨삭을 만들었는지"만 봐야 하는 곳에 써요.
+ *  submissionHasAnyFeedback: 위 4개 필드 + 선생님이 직접 남긴 수기 첨삭(feedback)까지 봐요 —
+ *  첨삭관리 표의 "첨삭완료/첨삭대상" 상태처럼 "이 글이 (AI든 사람이든) 첨삭을 받았는지"를
+ *  봐야 하는 곳에 써요. */
+function submissionHasAiFeedback(s){
+  return !!(s&&['aiFeedback','aiFeedbackGpt','aiFeedback_claude','aiFeedback_gpt'].some(k=>s[k]!=null&&String(s[k]).trim()!==''));
+}
+function submissionHasAnyFeedback(s){
+  return submissionHasAiFeedback(s)||!!(s&&s.feedback&&String(s.feedback).trim()!=='');
+}
+/** 선생님 화면 어디를 눌러 들어가도(첨삭관리·컨텐츠 추가·학생 명단 관리 등) 왼쪽 메뉴가 항상 그
+ *  자리에 있으면 좋겠다는 요청으로 만든 공용 레이아웃이에요. 예전엔 이 메뉴가 "선생님 홈" 화면
+ *  안에만 있어서, 메뉴에서 다른 화면으로 들어가면 메뉴 자체가 사라지고(그 화면은 보통 "◀ 뒤로"
+ *  버튼만 있는 화면 전체 레이아웃) 다시 홈으로 돌아와야만 메뉴가 보였어요. 이제 "선생님 홈"을 포함해
+ *  선생님이 쓰는 관리 화면들은 전부 이 teacherMount로 열어서, 왼쪽엔 항상 같은 메뉴가 붙어있고
+ *  오른쪽 본문만 화면마다 바뀌게 했어요(단, 학생 계정 화면을 그대로 재현해서 보여주는 "학생 미리보기"
+ *  화면들은 학생 화면 그 자체를 보여줘야 하니 이 레이아웃을 안 써요).
+ *  buildMain(mainCol)이 각 화면의 실제 내용을 오른쪽 칸에 채워 넣어요(예전에 mountView(w=>{...})의
+ *  w 자리에 mainCol이 들어간다고 생각하면 돼요 — 화면 내부 코드는 그대로 두고 바깥 호출만 바꿔요). */
+function teacherMount(buildMain){
+  setWide(true);
+  mountView(w=>{
+    // 메뉴 카드가 화면 위쪽에 붙어서 아래로 쭉 스크롤해야 본문이 보이던 걸, 메뉴는 왼쪽에
+    // 사이드바로 고정해두고 오른쪽에 본문이 더 넓게 나오도록 좌우 2단 레이아웃으로 바꿨어요
+    // (다른 학원관리 프로그램처럼 메뉴가 옆에 붙어있는 모양). setWide(true)로 페이지 폭도
+    // 넓혀서 오른쪽 영역이 좁아 보이지 않게 했어요.
+    const layout=el('div');layout.style.cssText='display:flex;gap:24px;align-items:flex-start;margin-top:14px;flex-wrap:wrap';
+    // ⚠️ sticky만 걸어두면 메뉴가 화면에 붙어있긴 하지만 스크롤 자체는 그냥 페이지 전체 스크롤을
+    // 같이 타요(메뉴 안에서만 따로 스크롤되는 게 아니라). "메뉴에서만 내리고 싶다"는 요청대로,
+    // 메뉴 칸에 자기 높이(뷰포트 높이만큼)와 자기만의 스크롤(overflow-y:auto)을 줘서, 메뉴 위에서
+    // 스크롤하면 메뉴 목록만 따로 스크롤되고 오른쪽 본문은 그대로 있게 했어요.
+    // ⚠️ max-height를 100vh 기준으로 계산했더니, 실제로 화면에 보이는 영역(.view)은 위쪽 헤더/여백
+    // 때문에 100vh보다 늘 더 작아서, 메뉴가 늘어나면(버튼이 추가되면) 그 차이만큼 아래가 화면 밖으로
+    // 밀려나 스크롤을 끝까지 내려도 안 보이는 문제가 있었어요("메뉴 늘어나면 스크롤바도 반영돼야
+    // 하는거 아냐?"). 그래서 100vh 대신, 이 화면이 실제로 차지하는 .view 요소의 실제 높이(clientHeight)를
+    // 기준으로 메뉴 칸 높이를 다시 계산해요 — 화면 크기가 바뀌거나 메뉴 내용이 늘어나도 항상 정확하게
+    // 맞도록 ResizeObserver로 계속 지켜봐요.
+    const sidebarCol=el('div');sidebarCol.style.cssText='flex:0 0 300px;min-width:260px;position:sticky;top:10px;overflow-y:auto';
+    const mainCol=el('div');mainCol.style.cssText='flex:1;min-width:320px';
+    layout.appendChild(sidebarCol);layout.appendChild(mainCol);
+    w.appendChild(layout);
+    buildTeacherMenuSidebar(sidebarCol);
+    buildMain(mainCol);
+    function fitSidebarHeight(){
+      const viewEl=w.closest('.view')||w.parentElement;
+      const h=(viewEl&&viewEl.clientHeight)?viewEl.clientHeight:window.innerHeight;
+      sidebarCol.style.maxHeight=Math.max(200,h-20)+'px';
+    }
+    fitSidebarHeight();
+    if(typeof ResizeObserver!=='undefined'){
+      const viewEl=w.closest('.view')||w.parentElement;
+      const ro=new ResizeObserver(fitSidebarHeight);
+      if(viewEl)ro.observe(viewEl);
+      trackViewUnsub(()=>ro.disconnect());
+    }else{
+      window.addEventListener('resize',fitSidebarHeight);
+      trackViewUnsub(()=>window.removeEventListener('resize',fitSidebarHeight));
+    }
+  });
+}
+function buildTeacherMenuSidebar(sidebarCol){
+  // 메뉴 버튼이 하나씩 늘어나면서 뒤죽박죽 보이던 걸, 하는 일이 비슷한 것끼리 묶어서
+  // "콘텐츠" / "제출·리포트" / "운영 관리(관리자 전용)" 세 그룹으로 나눠 보여줘요.
+  // (다른 학원관리 프로그램의 사이드바 메뉴처럼) 그룹마다 카드로 감싸고, 그 안은 가로로 늘어놓던 걸
+  // 세로 목록으로 정리해서, 메뉴가 늘어나도 한 줄씩 깔끔하게 보이게 했어요.
+  const mkMenuGroup=(label)=>{
+    const group=el('div','tmenu-group');
+    const lb=el('div','tmenu-group-label',label);
+    group.appendChild(lb);
+    const row=el('div');row.style.cssText='display:flex;flex-direction:column';
+    group.appendChild(row);
+    return{group,row};
+  };
+  const mkMenuBtn=(label,onclick)=>{const b=el('button','tmenu-item',label);b.type='button';b.onclick=onclick;return b;};
+  const menuGroups=el('div','tmenu');
+  // 학생 글을 보는 중(TEACHER_PREVIEW)에도 사이드바가 계속 붙어있게 됐으니, 매번 "◀ 학생 목록"으로
+  // 완전히 뒤로 나가지 않고도 바로 다른 화면으로 갈 수 있게 맨 위에 "학생 목록(홈)" 메뉴를 추가했어요.
+  const homeGroup=mkMenuGroup('홈');
+  homeGroup.row.appendChild(mkMenuBtn('🏠 학생 목록',()=>{TEACHER_PREVIEW=null;viewTeacherHome();}));
+  menuGroups.appendChild(homeGroup.group);
+  const contentGroup=mkMenuGroup('콘텐츠');
+  contentGroup.row.appendChild(mkMenuBtn('🧩 컨텐츠 추가',()=>viewContentAdd()));
+  contentGroup.row.appendChild(mkMenuBtn('🤖 AI 챗봇으로 만들기',()=>viewAiContentChatBot()));
+  // 컨텐츠 수정은 이제 관리자뿐 아니라 모든 선생님이 쓸 수 있어요 — 이미 올라간(스프레드시트에 저장된) 문제·본문·주제도
+  // 선생님이 직접 사이트에서 고칠 수 있어야 해서예요. 학생 명단 관리는 계정 관리라 관리자 전용으로 남겨둬요.
+  contentGroup.row.appendChild(mkMenuBtn('✏️ 컨텐츠 수정',()=>viewContentEditPicker()));
+  menuGroups.appendChild(contentGroup.group);
+  const reportGroup=mkMenuGroup('제출·리포트');
+  // 학생 홈 화면(커리큘럼)을 거치지 않고, 곧바로 "학생 목록 → 그 학생이 쓴 글 목록 → 리포트 버튼"
+  // 순서로 바로 인쇄까지 갈 수 있는 지름길이에요. 매번 학생 화면을 눌러 들어가서 컨텐츠를 찾을
+  // 필요 없이, 리포트만 뽑고 싶을 때 여기서 바로 시작하면 돼요.
+  reportGroup.row.appendChild(mkMenuBtn('🖨 REPORT 인쇄',()=>viewReportStudentList()));
+  // 학생별로 묶어서 보는 "학생 목록"과 달리, 제출물 하나하나를 표로 쭉 보면서 상태(첨삭대상/완료)와
+  // 담당 선생님을 한눈에 확인·지정하고 싶다는 요청으로 추가했어요(예전 학원 관리 시스템의
+  // "첨삭관리" 화면 스타일).
+  reportGroup.row.appendChild(mkMenuBtn('📋 첨삭관리',()=>viewGradingManage()));
+  // "AI 첨삭을 몇 번 했는지 컨텐츠별 통계도 보고 싶다"는 요청으로 추가했어요 — 학생이 글 쓰는
+  // 중간에 누르는 조건 확인용 AI 호출은 빼고, 실제로 AI 첨삭이 만들어진 글만 세요.
+  reportGroup.row.appendChild(mkMenuBtn('📊 첨삭 통계',()=>viewAiStats()));
+  // "담당으로 지정되면 그 선생님이 첨삭해야 할 목록을 볼 수 있으면 좋겠다"는 요청으로 추가했어요.
+  // 첨삭관리 표를 "나에게 배정된 것 + 아직 첨삭 안 된 것"으로 미리 좁혀서 열어줘요. 몇 개가
+  // 밀려있는지 바로 보이게, 화면을 열 때 조용히 개수를 세서 버튼에 표시해요(0개면 숫자는 안 붙여요).
+  const myListBtn=mkMenuBtn('📥 내 첨삭 목록',()=>viewGradingManage({teacherId:USER.id,status:'pending'}));
+  reportGroup.row.appendChild(myListBtn);
+  (async()=>{
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      let all=(data&&data.ok)?(data.submissions||[]):[];
+      if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+      const hasFeedback=submissionHasAnyFeedback;
+      // 퀴즈만 풀고 조건 영작(text)은 안 쓴 Pattern Drill 제출물은 첨삭할 글이 없으니 이 배지
+      // 개수에서도 빼요(첨삭관리 표와 같은 기준).
+      const cnt=all.filter(s=>String(s.assignedTeacherId||'')===String(USER.id)&&!hasFeedback(s)&&String(s.text||'').trim()&&String(s.chapter||'')!=='Rewriting').length;
+      if(cnt>0)myListBtn.textContent='📥 내 첨삭 목록 ('+cnt+')';
+    }catch(e){}
+  })();
+  // "글은 냈는데 AI 첨삭이 아직 없는" 제출물(예전에 API 오류가 났었거나, 이번에 새로 추가된
+  // 문법 연계·학년별 톤 조정 기능 이전에 저장된 것들)을 학생마다 일일이 "지금 생성하기"를
+  // 누르지 않고 한 번에 처리할 수 있게 해달라는 요청으로 추가했어요. 한 번 요청에 여러 개를
+  // 다 돌리면 서버 요청 시간 제한을 넘길 수 있어서, 몇 개씩 나눠 반복 호출하며 진행 상황을
+  // 보여줘요(batchGenerateMissingFeedback, limit개씩). 전체 관리자가 학원이 여러 개 생기면서,
+  // "전체"를 한 번에 다 돌리기보다 학원별·반별로 나눠서 처리하고 싶다는 요청으로 학원·반 선택
+  // 필터를 추가했어요(학원은 전체 관리자만 골라요 — 일반 선생님·학원 관리자는 자기 학원 고정).
+  const batchStatus=el('div');batchStatus.style.cssText='display:none;margin-top:10px;background:#fafaf9;border:1px solid #ecebe8;border-radius:12px;padding:12px 14px';
+  const mkBatchSel=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:110px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const sel=el('select','in');sel.style.cssText='padding:6px 8px;font-size:13px;border-radius:8px';wrap.appendChild(sel);
+    return{wrap,sel};};
+  const batchFilterRow=el('div');batchFilterRow.style.cssText='display:none;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:8px';
+  const bfAcademy=USER.isAdmin?mkBatchSel('학원'):null;
+  const bfCls=mkBatchSel('반');
+  const opt0b=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
+  const fillBatchCls=()=>{
+    const wantAcademy=bfAcademy?bfAcademy.sel.value:(USER.academy||'');
+    const pool=(ROSTER||[]).filter(s=>!wantAcademy||String(s.academy||'').trim()===wantAcademy);
+    const prev=bfCls.sel.value;
+    bfCls.sel.innerHTML='';opt0b(bfCls.sel,'반 전체');
+    Array.from(new Set(pool.map(s=>String(s.cls||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko',{numeric:true})).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;bfCls.sel.appendChild(o);});
+    bfCls.sel.value=prev;
+  };
+  if(bfAcademy){
+    opt0b(bfAcademy.sel,'학원 전체');
+    Array.from(new Set((ROSTER||[]).map(s=>String(s.academy||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko')).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;bfAcademy.sel.appendChild(o);});
+    bfAcademy.sel.onchange=fillBatchCls;
+    batchFilterRow.appendChild(bfAcademy.wrap);
+  }
+  fillBatchCls();
+  batchFilterRow.appendChild(bfCls.wrap);
+  const scanBtn=el('button','btn','확인하기');scanBtn.type='button';scanBtn.style.cssText='padding:8px 16px;font-size:13px';
+  batchFilterRow.appendChild(scanBtn);
+  const batchBtn=mkMenuBtn('⚡ AI 첨삭 안 된 것들 한번에 생성',()=>{
+    batchFilterRow.style.display=batchFilterRow.style.display==='none'?'flex':'none';
+  });
+  scanBtn.onclick=()=>{
+    scanBtn.disabled=true;
+    batchStatus.style.display='block';
+    batchStatus.innerHTML='';
+    const scopeAcademy=bfAcademy?bfAcademy.sel.value:(USER.academy||'');
+    const scopeCls=bfCls.sel.value;
+    const checkMsg=el('div','hint','확인 중…');batchStatus.appendChild(checkMsg);
+    (async()=>{
+      const call=async(limit)=>{
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'batchGenerateMissingFeedback',role:'teacher',academy:scopeAcademy,cls:scopeCls,limit})});
+        const data=await res.json();
+        if(!data||!data.ok)throw new Error((data&&data.error)||'확인에 실패했어요.');
+        return data;
+      };
+      try{
+        const first=await call(0);
+        if(!first.totalMissing){
+          checkMsg.textContent='AI 첨삭이 안 된 글이 없어요('+(scopeAcademy||'전체 학원')+(scopeCls?' · '+scopeCls+'반':'')+'). 모두 완료됐어요!';
+          scanBtn.disabled=false;return;
+        }
+        checkMsg.innerHTML='';
+        const info=el('div','hint',(scopeAcademy||'전체 학원')+(scopeCls?' · '+scopeCls+'반':'')+' 범위에 AI 첨삭이 없는 글이 총 '+first.totalMissing+'개 있어요. 시작하면 몇 개씩 나눠서 만들어요(시간이 좀 걸려요).');
+        batchStatus.appendChild(info);
+        const startBtn=el('button','btn','시작하기');startBtn.type='button';startBtn.style.cssText='margin-top:8px;padding:6px 14px;font-size:13px';
+        batchStatus.appendChild(startBtn);
+        startBtn.onclick=async()=>{
+          startBtn.disabled=true;
+          const prog=el('div','fx');prog.style.marginTop='8px';batchStatus.appendChild(prog);
+          let remaining=first.totalMissing,done=0,failedTotal=0;
+          prog.textContent='0 / '+first.totalMissing+' 처리 중…';
+          try{
+            while(remaining>0){
+              const r=await call(5);
+              done+=r.succeeded;failedTotal+=r.failed;remaining=r.remaining;
+              prog.textContent=done+' / '+first.totalMissing+' 처리 중…'+(failedTotal?(' (실패 '+failedTotal+'개)'):'');
+              if(r.processed===0)break; // 안전장치: 더 못 줄어들면 무한루프 방지
+            }
+            prog.className='fx ok';
+            prog.textContent='완료! '+done+'개 생성'+(failedTotal?(', '+failedTotal+'개는 실패(다시 시도해주세요)'):'')+'.';
+          }catch(e){
+            prog.className='fx no';prog.textContent='중간에 오류가 났어요: '+String((e&&e.message)||e)+' — 버튼을 다시 눌러 이어서 하실 수 있어요.';
+          }
+          scanBtn.disabled=false;
+        };
+      }catch(e){
+        checkMsg.className='fx no';checkMsg.textContent='확인 중 오류: '+String((e&&e.message)||e);
+        scanBtn.disabled=false;
+      }
+    })();
+  };
+  reportGroup.row.appendChild(batchBtn);
+  reportGroup.group.appendChild(batchFilterRow);
+  reportGroup.group.appendChild(batchStatus);
+  menuGroups.appendChild(reportGroup.group);
+  // "전체 관리자"(isAdmin, 모든 학원)뿐 아니라 "학원별 관리자"(isAcademyAdmin, 자기 학원만)도
+  // 여기 보여요 — 학원별 관리자는 자기 학원의 학생·선생님 계정만 관리할 수 있어요(화면 안에서
+  // 다시 한 번 자기 학원으로 좁혀져요). 레벨 관리(콘텐츠 구조)는 학원 구분 없이 전체에 영향을
+  // 주는 설정이라 전체 관리자만 볼 수 있게 남겨뒀어요.
+  if(USER.isAdmin||USER.isAcademyAdmin){
+    const adminGroup=mkMenuGroup(USER.isAdmin?'운영 관리 (전체 관리자)':'운영 관리 (학원 관리자 · '+(USER.academy||'우리 학원')+')');
+    if(USER.isAdmin)adminGroup.row.appendChild(mkMenuBtn('🏷️ 레벨 관리',()=>viewLevelManage()));
+    adminGroup.row.appendChild(mkMenuBtn('👥 학생 명단 관리',()=>viewStudentManage()));
+    adminGroup.row.appendChild(mkMenuBtn('🧾 리포트 설정 (로고·양식)',()=>viewReportSettings()));
+    adminGroup.row.appendChild(mkMenuBtn('🧑‍🏫 선생님 계정 관리',()=>viewTeacherManage()));
+    // ⚠️ Pattern Drill(조건 영작)이 taskText가 아니라 text 필드로도 같이 저장되게 막 고쳤는데,
+    // 그 고침 전에 이미 저장된 예전 Pattern Drill 글들은 여전히 text가 비어있어요(그래서 첨삭관리
+    // 표에는 "쓴 글이 없는" 것처럼 보이거나, 반대로 실제로 쓴 글인데도 계속 "첨삭대상"으로만
+    // 보이고 AI 첨삭 생성 대상에는 안 잡히는 등 화면마다 다르게 보였어요). 한 번만 눌러서 예전
+    // 글들의 text를 taskText(또는 final)로 채워 넣는 복구 버튼이에요 — 전체 관리자만 보여요.
+    if(USER.isAdmin){
+      const fixMsg=el('div','fx');
+      const fixBtn=mkMenuBtn('🩹 옛 Pattern Drill 글 복구',async()=>{
+        fixBtn.disabled=true;fixMsg.className='fx';fixMsg.textContent='확인 중…';
+        try{
+          const dry=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'backfillSubmissionText',role:'teacher',dryRun:true})}).then(r=>r.json());
+          if(!dry||!dry.ok)throw new Error((dry&&dry.error)||'확인 실패');
+          if(!dry.count){fixMsg.className='fx';fixMsg.textContent='복구할 글이 없어요(이미 다 정상이에요).';fixBtn.disabled=false;return;}
+          if(!confirm(dry.count+'개의 예전 글에 text 필드를 채워 넣을게요. 계속할까요?')){fixMsg.textContent='';fixBtn.disabled=false;return;}
+          const real=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'backfillSubmissionText',role:'teacher',dryRun:false})}).then(r=>r.json());
+          if(!real||!real.ok)throw new Error((real&&real.error)||'복구 실패');
+          fixMsg.className='fx ok';fixMsg.textContent=real.count+'개 복구 완료! 첨삭관리·리포트 화면에서 확인해보세요.';
+        }catch(e){
+          fixMsg.className='fx no';fixMsg.textContent=String((e&&e.message)||e);
+        }finally{
+          fixBtn.disabled=false;
+        }
+      });
+      adminGroup.row.appendChild(fixBtn);
+      adminGroup.group.appendChild(fixMsg);
+    }
+    menuGroups.appendChild(adminGroup.group);
+  }
+  sidebarCol.appendChild(menuGroups);
+}
+/* 초·중·고 학년 일괄 변환 — 전체 관리자가 로그인해서 홈에 들어오면 서버에 "자동 1회 실행"을 한 번 요청해요.
+   서버가 이미 끝났는지(플래그) 확인해서, 끝난 뒤에는 아무것도 안 해요(그래서 버튼 없이 한 번만 적용돼요). */
+let GRADE_MIGRATION_TRIED=false;
+function tryAutoGradeMigration(){
+  if(GRADE_MIGRATION_TRIED||!USER.isAdmin||!SUBMIT_URL)return;
+  GRADE_MIGRATION_TRIED=true;
+  try{fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'migrateStudentGrades',auto:true,role:'teacher',requesterIsAdmin:true,requesterIsAcademyAdmin:false,requesterAcademy:USER.academy||''})}).catch(()=>{});}catch(e){}
+}
+function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMount(w=>{
+  const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+  titleRow.appendChild(el('h1','title',USER.name+' 선생님'+(USER.isAdmin?' · 전체 학원 관리자':(USER.academy?' · '+USER.academy:''))));
+  w.appendChild(titleRow);
+  w.appendChild(el('div','hint',USER.isAdmin?'모든 학원의 학생을 볼 수 있어요. 학원·학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.':'학교·학년·반·컨텐츠로 좁혀보고, 학생을 선택하면 제출한 글과 점수를 보고 첨삭을 남길 수 있어요.'));
+  const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin:14px 0';
+  w.appendChild(filterBox);
+  const box=el('div','chapter');box.appendChild(el('div','ch-h','학생 목록'));
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  const mkSelect=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:110px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
+    return{wrap,sel};};
+  const fAcademy=USER.isAdmin?mkSelect('학원'):null;
+  const fSchool=mkSelect('학교'),fGrade=mkSelect('학년'),fCls=mkSelect('반'),fType=mkSelect('컨텐츠');
+  if(fAcademy)filterBox.appendChild(fAcademy.wrap);
+  [fSchool,fGrade,fCls,fType].forEach(f=>filterBox.appendChild(f.wrap));
+  EXAM_TYPE_OPTS.forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;fType.sel.appendChild(o);});
+  filterBox.style.display='none';
+  (async()=>{
+    let all=[],roster=[];
+    /* 제출 목록과 학생 명단을 '동시에' 받아와요(예전엔 하나 끝나고 다음 걸 받아서 시간이 두 배로 걸렸어요).
+       또 20초 안에 이 화면으로 다시 돌아오면 방금 받은 값을 바로 써서 기다리지 않게 해요. */
+    const ck=(USER.isAdmin?'':(USER.academy||''))+'|'+(USER.isAdmin?1:0);
+    const hit=window._thCache&&window._thCache.k===ck&&Date.now()-window._thCache.t<20000?window._thCache:null;
+    if(hit){all=hit.all.slice();roster=hit.roster.slice();}
+    else{
+      const getJ=async(u)=>{try{const r=await fetch(SUBMIT_URL+u+'&_t='+Date.now(),{cache:'no-store'});return await r.json();}catch(e){return null;}};
+      const [data,rd]=await Promise.all([
+        getJ('?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')),
+        getJ('?view=studentList')
+      ]);
+      if(data&&data.ok)all=data.submissions||[];
+      if(rd&&rd.ok)roster=rd.students||[];
+      if(data&&data.ok&&rd&&rd.ok)window._thCache={k:ck,t:Date.now(),all:all.slice(),roster:roster.slice()};
+    }
+    if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+    if(!USER.isAdmin)roster=roster.filter(s=>String(s.academy||'').trim()===String(USER.academy||'').trim());
+    loading.remove();
+    // 휴원·퇴원 학생은 기본으로 숨기고, 체크박스를 켜면 같이 보여요.
+    const inactiveIds=new Set(roster.filter(isInactiveStudent).map(r=>String(r.id)));
+    let showInactive=false;
+    /* 실시간 구독 — 학생이 새로 제출하거나 다른 선생님이 첨삭을 남기면, 새로고침 없이 이 목록에
+       바로 반영돼요. render()가 이미 준비돼 있으면 목록만 다시 그리고(renderReady), 처음부터
+       제출물이 하나도 없어서 아래 필터·render()가 아예 안 만들어졌던 경우엔 화면 자체를 새로
+       불러요(viewTeacherHome). 로그인 직후 firebase 인증이 안 됐으면(fbSignedIn=false) 구독을
+       시작하지 않고 지금까지처럼 이 화면을 열 때 한 번만 받아온 값으로 계속 동작해요. */
+    let renderReady=false,firstSnap=true;
+    if(fbSignedIn){
+      const unsub=fbDb.collection('ewl_submissions').onSnapshot(snap=>{
+        if(firstSnap){firstSnap=false;return;}
+        const fresh=snap.docs.map(d=>d.data());
+        all=USER.isAdmin?fresh:fresh.filter(s=>String(s.academy||'')===String(USER.academy||''));
+        if(renderReady)render(); else viewTeacherHome();
+      },err=>console.warn('교사 제출물 실시간 구독 오류:',err));
+      trackViewUnsub(unsub);
+    }
+    if(!all.length&&!roster.length){box.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
+    const opt0=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
+    if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.concat(roster).map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
+    opt0(fSchool.sel,'학교 전체');uniqSorted(all.concat(roster).map(s=>s.school)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fSchool.sel.appendChild(o);});
+    opt0(fGrade.sel,'학년 전체');sortStageGrades(uniqSorted(all.concat(roster).map(s=>stageGrade(s.school,s.schoolGrade)))).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fGrade.sel.appendChild(o);});
+    opt0(fCls.sel,'반 전체');uniqSorted(all.concat(roster).map(s=>s.cls)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fCls.sel.appendChild(o);});
+    filterBox.style.display='flex';
+    if(inactiveIds.size){
+      const lab=el('label');lab.style.cssText='display:flex;align-items:center;gap:6px;font-size:13px;color:#6b7684;align-self:flex-end;padding-bottom:8px;cursor:pointer';
+      const cb=el('input');cb.type='checkbox';cb.onchange=()=>{showInactive=cb.checked;render();};
+      lab.appendChild(cb);lab.appendChild(document.createTextNode('휴원·퇴원 학생도 보기 ('+inactiveIds.size+'명)'));
+      filterBox.appendChild(lab);
+    }
+    const render=()=>{
+      Array.from(box.children).slice(1).forEach(c=>c.remove());
+      const fa=fAcademy?fAcademy.sel.value:'',fs=fSchool.sel.value,fg=fGrade.sel.value,fc=fCls.sel.value,ft=fType.sel.value;
+      const filtered=all.filter(s=>(showInactive||!inactiveIds.has(String(s.id)))&&(!fa||s.academy===fa)&&(!fs||s.school===fs)&&(!fg||stageGrade(s.school,s.schoolGrade)===fg)&&(!fc||s.cls===fc)&&(!ft||submissionTypeLabel(s)===ft));
+      const counts={};
+      filtered.forEach(s=>{
+        if(!s.id)return;
+        if(!counts[s.id])counts[s.id]={id:s.id,name:s.name,academy:s.academy,school:s.school,schoolGrade:s.schoolGrade,cls:s.cls,count:0,lastAt:''};
+        counts[s.id].count++;
+        if(String(s.datetime||'')>counts[s.id].lastAt)counts[s.id].lastAt=String(s.datetime||'');
+      });
+      if(!ft)roster.forEach(r=>{
+        if(!r.id||counts[r.id])return;
+        if(!showInactive&&isInactiveStudent(r))return;
+        if((fa&&r.academy!==fa)||(fs&&r.school!==fs)||(fg&&stageGrade(r.school,r.schoolGrade)!==fg)||(fc&&r.cls!==fc))return;
+        counts[r.id]={id:r.id,name:r.name,academy:r.academy,school:r.school,schoolGrade:r.schoolGrade,cls:r.cls,count:0,lastAt:''};
+      });
+      const studentsOut=Object.values(counts).sort((a,b)=>b.lastAt<a.lastAt?-1:1);
+      if(!studentsOut.length){box.appendChild(el('div','hint','조건에 맞는 제출 내역이 없어요.'));return;}
+      studentsOut.forEach(s=>{
+        const row=el('div','point');
+        row.appendChild(el('div','dot','●'));
+        const ctx=[USER.isAdmin?s.academy:'',s.school,stageGrade(s.school,s.schoolGrade),s.cls].filter(Boolean).join(' · ');
+        const _rs=roster.find(r=>String(r.id)===String(s.id));const _st=_rs?studentStatus(_rs):'';
+        row.appendChild(el('div','pt',(s.name||s.id)+(_st?' <b style="color:#92400e;font-size:12px">['+_st+']</b>':'')+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+s.id+(ctx?' · '+ctx:'')+')</span>'));
+        row.appendChild(el('div','meta',s.count?s.count+'건 제출 · 최근 '+String(s.lastAt||'').slice(0,16):'아직 제출 없음'));
+        row.onclick=()=>viewTeacherStudent(s.id,s.name||s.id);
+        box.appendChild(row);
+      });
+    };
+    (fAcademy?[fAcademy.sel,fSchool.sel,fGrade.sel,fCls.sel,fType.sel]:[fSchool.sel,fGrade.sel,fCls.sel,fType.sel]).forEach(sel=>sel.addEventListener('change',render));
+    render();
+    renderReady=true;
+  })();
+});}
+
+/* "📋 첨삭관리" — 학생별로 묶는 "학생 목록"과 달리, 제출물 하나하나를 표(줄 하나 = 제출물 하나)로
+ * 쭉 보여줘요. 상태(첨삭대상/첨삭완료)를 색으로 구분하고, 영역·상태·첨삭담당·제출일로 좁혀볼 수
+ * 있고, 표 안에서 바로 담당 선생님을 지정할 수 있어요(누가 실제로 첨삭했는지 자동 기록이 아니라,
+ * 선생님들끼리 업무를 나누기 위해 사람이 직접 지정하는 값이에요). 줄을 누르면 그 제출물의 첨삭
+ * 화면(viewTeacherSubmissionDetail)으로 바로 들어가요.
+ */
+function viewGradingManage(opts){teacherMount(w=>{
+  const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','📋 첨삭관리'));
+  w.appendChild(el('div','hint','제출된 글을 한 줄씩 표로 보여줘요. 영역·상태·첨삭담당·학년·반·제출일로 좁혀보고, 표 안에서 바로 담당 선생님을 지정할 수 있어요. 줄을 누르면 첨삭 화면으로 들어가요.'));
+  const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin:14px 0;align-items:flex-end';
+  w.appendChild(filterBox);
+  const mkSelect=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:110px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
+    return{wrap,sel};};
+  const mkDateField=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const inp=el('input','in');inp.type='date';inp.style.cssText='padding:7px 10px;font-size:14px;border-radius:10px';wrap.appendChild(inp);
+    return{wrap,inp};};
+  const fAcademy=USER.isAdmin?mkSelect('학원'):null;
+  const fType=mkSelect('영역'),fStatus=mkSelect('상태'),fTeacher=mkSelect('첨삭담당');
+  const fGrade=mkSelect('학년'),fCls=mkSelect('반');
+  const fFrom=mkDateField('제출일(부터)'),fTo=mkDateField('제출일(까지)');
+  if(fAcademy)filterBox.appendChild(fAcademy.wrap);
+  [fType,fStatus,fTeacher,fGrade,fCls].forEach(f=>filterBox.appendChild(f.wrap));
+  filterBox.appendChild(fFrom.wrap);filterBox.appendChild(fTo.wrap);
+  const opt0=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
+  EXAM_TYPE_OPTS.forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;fType.sel.appendChild(o);});
+  opt0(fStatus.sel,'전체');
+  [['pending','첨삭대상'],['done','첨삭완료']].forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;fStatus.sel.appendChild(o);});
+  opt0(fTeacher.sel,'전체');
+  const oUn=el('option');oUn.value='__unassigned__';oUn.textContent='미지정';fTeacher.sel.appendChild(oUn);
+  (TEACHERS||[]).forEach(t=>{const o=el('option');o.value=t.id;o.textContent=t.name||t.id;fTeacher.sel.appendChild(o);});
+  // "내 첨삭 목록" 버튼 등에서 미리 상태·담당 선생님을 정해서 들어올 수 있게(예: 이 선생님에게
+  // 배정된, 아직 안 끝난 것만 바로 보여주기) — opts로 초기 필터값을 받아서 미리 선택해둬요.
+  if(opts&&opts.status!=null)fStatus.sel.value=opts.status;
+  if(opts&&opts.teacherId!=null)fTeacher.sel.value=opts.teacherId;
+  const tableWrap=el('div');tableWrap.style.cssText='overflow-x:auto;margin-top:10px';
+  const loading=el('div','hint','불러오는 중…');tableWrap.appendChild(loading);
+  w.appendChild(tableWrap);
+  (async()=>{
+    let all=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok)all=data.submissions||[];
+    }catch(e){}
+    if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+    // 휴원·퇴원 학생의 제출물은 첨삭 목록에서 기본으로 빼요(선생님 홈의 "휴원·퇴원 학생도 보기"에서 확인할 수 있어요).
+    try{
+      const rr=await fetch(SUBMIT_URL+'?view=studentList&_t='+Date.now(),{cache:'no-store'});
+      const rd=await rr.json();
+      if(rd&&rd.ok){const off=new Set((rd.students||[]).filter(isInactiveStudent).map(r=>String(r.id)));all=all.filter(x=>!off.has(String(x.id)));}
+    }catch(e){}
+    loading.remove();
+    if(fAcademy){opt0(fAcademy.sel,'학원 전체');uniqSorted(all.map(s=>s.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});}
+    if(!all.length){tableWrap.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
+    // 학년·반 필터 — 선택지는 실제 제출물에 있는 값으로 채우고, 앞쪽 필터(학원→학년)를 고르면
+    // 그 범위 안에 있는 학년·반만 보여줘요(반 이름은 학년·학원마다 겹칠 수 있어서요).
+    const fillGradeCls=()=>{
+      const curG=fGrade.sel.value,curC=fCls.sel.value;
+      const fa0=fAcademy?fAcademy.sel.value:'';
+      const inAcad=all.filter(s=>!fa0||s.academy===fa0);
+      fGrade.sel.innerHTML='';opt0(fGrade.sel,'전체');
+      const gs=Array.from(new Set(inAcad.map(s=>stageGrade(s.school,s.schoolGrade)))).sort((a,b)=>{if(!a)return 1;if(!b)return -1;const ra=stageGradeRank(a),rb=stageGradeRank(b);return ra!==rb?ra-rb:a.localeCompare(b,'ko',{numeric:true});});
+      gs.forEach(v=>{const o=el('option');o.value=v||'__none__';o.textContent=v||'(학년 미입력)';fGrade.sel.appendChild(o);});
+      fGrade.sel.value=gs.some(v=>(v||'__none__')===curG)?curG:'';
+      const g1=fGrade.sel.value;
+      const inGrade=inAcad.filter(s=>!g1||(g1==='__none__'?!stageGrade(s.school,s.schoolGrade):stageGrade(s.school,s.schoolGrade)===g1));
+      fCls.sel.innerHTML='';opt0(fCls.sel,'전체');
+      const cs=Array.from(new Set(inGrade.map(s=>String(s.cls||'')))).sort((a,b)=>{if(!a)return 1;if(!b)return -1;return a.localeCompare(b,'ko',{numeric:true});});
+      cs.forEach(v=>{const o=el('option');o.value=v||'__none__';o.textContent=v||'(반 미입력)';fCls.sel.appendChild(o);});
+      fCls.sel.value=cs.some(v=>(v||'__none__')===curC)?curC:'';
+    };
+    fillGradeCls();
+    const hasFeedback=submissionHasAnyFeedback;
+    const parseDt=s=>{const raw=String(s.datetime||'').trim();if(!raw)return null;const d=new Date(raw.replace(' ','T'));return isNaN(d.getTime())?null:d;};
+    const fmtElapsed=ms=>{if(ms==null)return '-';if(ms<0)ms=0;const t=Math.floor(ms/1000),dd=Math.floor(t/86400),h=Math.floor((t%86400)/3600),m=Math.floor((t%3600)/60),s2=t%60,z=x=>String(x).padStart(2,'0');return (dd>0?dd+'일 ':'')+z(h)+':'+z(m)+':'+z(s2);};
+    const render=()=>{
+      Array.from(tableWrap.children).forEach(c=>c.remove());
+      const fa=fAcademy?fAcademy.sel.value:'',ft=fType.sel.value,fst=fStatus.sel.value,fte=fTeacher.sel.value,ff=fFrom.inp.value,ftt=fTo.inp.value;
+      const fg=fGrade.sel.value,fc=fCls.sel.value;
+      let filtered=all.filter(s=>{
+        if(fa&&s.academy!==fa)return false;
+        if(fg&&(fg==='__none__'?!!stageGrade(s.school,s.schoolGrade):stageGrade(s.school,s.schoolGrade)!==fg))return false;
+        if(fc&&(fc==='__none__'?!!s.cls:String(s.cls||'')!==fc))return false;
+        if(ft&&submissionTypeLabel(s)!==ft)return false;
+        const done=hasFeedback(s);
+        // 문법 드릴(Pattern Drill)은 퀴즈·단어배열·영작 연습만 하고 "조건 영작"은 안 쓴 채로도
+        // 제출될 수 있어요(개념 확인용 퀴즈일 뿐이라 첨삭할 글 자체가 없어요). 실제로 쓴 글(text)이
+        // 없고 첨삭도 아직 없는 건 "첨삭할 게 아예 없는" 상태라 첨삭관리 표에서 아예 빼요 — 퀴즈만
+        // 풀고 끝난 게 "첨삭대상"인 것처럼 잘못 보이던 문제를 막아줘요.
+        if(!done&&!String(s.text||'').trim())return false;
+        // Re-Writing(다시 쓰기)은 이미 한 번 첨삭받은 글을 그대로 고쳐 쓰는 것뿐이라 AI 첨삭
+        // 대상이 아니에요(서버의 일괄 생성 로직도 이미 이걸 빼고 세요) — 그런데 여기 표에는 이
+        // 제외가 안 걸려있어서, Re-Writing 글이 실제로 쓴 글(text)이 있으니 "첨삭대상"으로 잘못
+        // 보였어요. "일괄 생성"은 없다고 나오는데 표에는 첨삭대상이 남아있던 불일치가 이거였어요.
+        if(String(s.chapter||'')==='Rewriting')return false;
+        if(fst==='pending'&&done)return false;
+        if(fst==='done'&&!done)return false;
+        if(fte==='__unassigned__'&&s.assignedTeacherId)return false;
+        if(fte&&fte!=='__unassigned__'&&String(s.assignedTeacherId||'')!==fte)return false;
+        const dateOnly=String(s.datetime||'').slice(0,10);
+        if(ff&&dateOnly<ff)return false;
+        if(ftt&&dateOnly>ftt)return false;
+        return true;
+      });
+      filtered.sort((a,b)=>String(b.datetime||'').localeCompare(String(a.datetime||'')));
+      if(!filtered.length){tableWrap.appendChild(el('div','hint','조건에 맞는 제출 내역이 없어요.'));return;}
+      const table=el('table');table.style.cssText='width:100%;border-collapse:collapse;font-size:13px;min-width:860px';
+      const thead=el('thead');const headRow=el('tr');
+      const cols=['No','제출시간(경과)','상태'].concat(USER.isAdmin?['학원']:[]).concat(['이름(아이디)','영역','내용','학교·학년·반','첨삭담당']);
+      cols.forEach(c=>{const th=el('th',null,c);th.style.cssText='text-align:left;padding:8px 10px;border-bottom:2px solid #ecebe8;white-space:nowrap;color:#6b7684;font-size:12px';headRow.appendChild(th);});
+      thead.appendChild(headRow);table.appendChild(thead);
+      const tbody=el('tbody');
+      const now=Date.now();
+      filtered.forEach((s,i)=>{
+        const done=hasFeedback(s);
+        const tr=el('tr');
+        tr.style.cssText='background:'+(done?'#f0faf3':'#fdeeee')+';cursor:pointer';
+        const dtObj=parseDt(s);
+        const elapsed=dtObj?fmtElapsed(now-dtObj.getTime()):'-';
+        const td=(html)=>{const t=el('td');t.innerHTML=html;t.style.cssText='padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);vertical-align:top';return t;};
+        tr.appendChild(td(String(filtered.length-i)));
+        tr.appendChild(td(escH(s.datetime||'-')+'<div style="color:#6b7684;font-size:11.5px">('+elapsed+')</div>'));
+        tr.appendChild(td('<span style="font-weight:800;color:'+(done?'#059669':'#c2412f')+'">'+(done?'첨삭완료':'첨삭대상')+'</span>'));
+        if(USER.isAdmin)tr.appendChild(td(escH(s.academy||'-')));
+        tr.appendChild(td('<b>'+escH(s.name||s.id||'')+'</b><div style="color:#6b7684;font-size:11.5px">('+escH(s.id||'')+')</div>'));
+        tr.appendChild(td(escH(submissionTypeLabel(s)||'-')));
+        tr.appendChild(td(escH(s.point||s.chapter||'-')));
+        tr.appendChild(td(escH([s.school,stageGrade(s.school,s.schoolGrade),s.cls].filter(Boolean).join(' · ')||'-')));
+        const teacherTd=el('td');teacherTd.style.cssText='padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);vertical-align:top';
+        const tsel=el('select','in');tsel.style.cssText='padding:4px 6px;font-size:12.5px;border-radius:8px';
+        const o0=el('option');o0.value='';o0.textContent='미지정';tsel.appendChild(o0);
+        (TEACHERS||[]).forEach(t=>{const o=el('option');o.value=t.id;o.textContent=t.name||t.id;if(String(s.assignedTeacherId||'')===String(t.id))o.selected=true;tsel.appendChild(o);});
+        tsel.onclick=e=>e.stopPropagation();
+        tsel.onmousedown=e=>e.stopPropagation();
+        tsel.onchange=async e=>{
+          e.stopPropagation();
+          const chosen=(TEACHERS||[]).find(t=>String(t.id)===tsel.value);
+          tsel.disabled=true;
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'assignSubmissionTeacher',role:'teacher',academy:USER.academy||'',subId:s.subId,teacherId:tsel.value,teacherName:chosen?(chosen.name||chosen.id):''})});
+            const data=await res.json();
+            if(!data||!data.ok)throw new Error((data&&data.error)||'저장하지 못했어요.');
+            s.assignedTeacherId=tsel.value;s.assignedTeacherName=chosen?(chosen.name||chosen.id):'';
+          }catch(err){alert('담당 지정에 실패했어요: '+String((err&&err.message)||err));}
+          tsel.disabled=false;
+        };
+        teacherTd.appendChild(tsel);
+        tr.appendChild(teacherTd);
+        tr.onclick=()=>viewTeacherSubmissionDetail(s,s.id,s.name||s.id,[s],()=>viewGradingManage());
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      tableWrap.appendChild(table);
+    };
+    // 학원을 바꾸면 학년·반 선택지를, 학년을 바꾸면 반 선택지를 그 범위에 맞게 다시 채워요(render 전에 먼저).
+    if(fAcademy)fAcademy.sel.addEventListener('change',fillGradeCls);
+    fGrade.sel.addEventListener('change',fillGradeCls);
+    (fAcademy?[fAcademy.sel,fType.sel,fStatus.sel,fTeacher.sel,fGrade.sel,fCls.sel]:[fType.sel,fStatus.sel,fTeacher.sel,fGrade.sel,fCls.sel]).forEach(sel=>sel.addEventListener('change',render));
+    [fFrom.inp,fTo.inp].forEach(inp=>inp.addEventListener('change',render));
+    render();
+  })();
+});}
+
+/* "📊 첨삭 통계" — 학생이 글 쓰는 중간에 누르는 "AI로 조건 확인하기"(addAiCondCheckButton)는
+ * 여기 안 들어가요. 그건 조건 충족 여부만 즉석에서 확인하는 별개 기능이라 aiFeedback 필드에
+ * 아무것도 남기지 않아요. 여기서 세는 건 오직 "실제로 AI 첨삭이 만들어진 제출물 수"예요
+ * (학생이 제출하면 서버가 자동으로 만들거나, 선생님이 "지금 생성하기"·"한번에 생성"으로
+ * 직접 만든 것 전부 포함 — 결과적으로 aiFeedback/aiFeedbackGpt가 채워진 글이면 다 세요).
+ * 컨텐츠 종류는 s.type 필드가 아니라(새 제출물엔 이 필드가 안 채워져 있어요) chapter 값으로
+ * 구분해요 — Paragraph Writing/Article Reading/Performance Assessment/Story Writing은
+ * 고정된 챕터 이름이고, 그 외(문법드릴은 유닛마다 챕터 값이 달라요)는 전부 문법드릴로 묶어요.
+ * Re-Writing(다시 쓰기)은 AI 첨삭 자체가 없는 영역이라(이미 한 번 첨삭받은 글을 고쳐 쓰는
+ * 것뿐이라) 통계에서 아예 빼요 — render()의 scoped 필터에서 chapter==='Rewriting'을 걸러내요. */
+const AI_STATS_TYPE_DEFS=[
+  {key:'drill',label:'문법드릴',test:s=>!['Rewriting','Paragraph Writing','Article Reading','Performance Assessment','Story Writing'].includes(String(s.chapter||''))},
+  {key:'paragraph',label:'Paragraph Writing',test:s=>s.chapter==='Paragraph Writing'},
+  {key:'article',label:'Article Reading',test:s=>s.chapter==='Article Reading'},
+  {key:'performance',label:'Performance Assessment',test:s=>s.chapter==='Performance Assessment'},
+  {key:'story',label:'Story Writing',test:s=>s.chapter==='Story Writing'}
+];
+function viewAiStats(){teacherMount(w=>{
+  const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','📊 첨삭 통계'));
+  w.appendChild(el('div','hint','실제로 AI 첨삭이 만들어진 글 수를 학원별·컨텐츠 종류별로 합쳐서 월 단위로 보여줘요(학생별로는 안 나눠요). 학생이 글 쓰는 중간에 누르는 "AI로 조건 확인하기"는 포함되지 않아요. Re-Writing(다시 쓰기)은 AI 첨삭 대상이 아니라서 이 통계에도 포함되지 않아요.'));
+  // Re-Writing은 AI 첨삭 대상이 아닌데, 예전엔 실수로 첨삭이 만들어져 붙어있던 글들이 있을 수
+  // 있어요(그래서 예전엔 통계·첨삭관리 화면에 "첨삭완료"로 잘못 보였어요). 한 번 눌러서 그런
+  // 것들을 정리할 수 있게 버튼을 둬요 — 이미 깨끗하면 그냥 "지울 게 없다"고만 나와요.
+  const cleanupRow=el('div');cleanupRow.style.cssText='margin:8px 0 0';
+  const cleanupBtn=el('button','btn ghost','🧹 Re-Writing 잘못 붙은 첨삭 정리하기');cleanupBtn.type='button';cleanupBtn.style.cssText='padding:6px 12px;font-size:12.5px';
+  const cleanupMsg=el('span','fx');cleanupMsg.style.marginLeft='8px';
+  cleanupRow.appendChild(cleanupBtn);cleanupRow.appendChild(cleanupMsg);
+  w.appendChild(cleanupRow);
+  cleanupBtn.onclick=async()=>{
+    cleanupBtn.disabled=true;const prevLabel=cleanupBtn.textContent;cleanupBtn.textContent='정리하는 중…';cleanupMsg.className='fx';cleanupMsg.textContent='';
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'clearRewritingFeedback',academy:USER.isAdmin?'':(USER.academy||''),role:'teacher',requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||''})});
+      const data=await res.json();
+      if(data&&data.ok){cleanupMsg.className='fx ok';cleanupMsg.textContent=data.cleared>0?(data.cleared+'건 정리했어요.'):'지울 게 없어요(이미 깨끗해요).';}
+      else{cleanupMsg.className='fx no';cleanupMsg.textContent=(data&&data.error)||'정리하지 못했어요.';}
+    }catch(e){cleanupMsg.className='fx no';cleanupMsg.textContent='정리하지 못했어요. 인터넷 연결을 확인하세요.';}
+    cleanupBtn.disabled=false;cleanupBtn.textContent=prevLabel;
+  };
+  const now=new Date();
+  const navRow=el('div');navRow.style.cssText='display:flex;align-items:flex-end;gap:10px;margin:14px 0;flex-wrap:wrap';
+  const prevBtn=el('button','btn ghost','◀');prevBtn.type='button';prevBtn.style.cssText='padding:6px 12px;height:36px';
+  const nextBtn=el('button','btn ghost','▶');nextBtn.type='button';nextBtn.style.cssText='padding:6px 12px;height:36px';
+  const ySel=el('select','in');ySel.style.cssText='padding:6px 10px;font-size:14px;border-radius:8px';
+  const yNow=now.getFullYear();
+  for(let y=yNow-5;y<=yNow+2;y++){const o=el('option');o.value=y;o.textContent=y+'년';ySel.appendChild(o);}
+  const mSel=el('select','in');mSel.style.cssText='padding:6px 10px;font-size:14px;border-radius:8px';
+  for(let m=1;m<=12;m++){const o=el('option');o.value=m;o.textContent=String(m).padStart(2,'0')+'월';mSel.appendChild(o);}
+  ySel.value=yNow;mSel.value=now.getMonth()+1;
+  navRow.appendChild(prevBtn);navRow.appendChild(ySel);navRow.appendChild(mSel);navRow.appendChild(nextBtn);
+  let fAcademySel=null;
+  if(USER.isAdmin){
+    const fAcademyWrap=el('div');fAcademyWrap.style.cssText='display:flex;flex-direction:column;gap:4px;margin-left:6px';
+    fAcademyWrap.appendChild(el('div','hint','학원'));
+    fAcademySel=el('select','in');fAcademySel.style.cssText='padding:6px 10px;font-size:14px;border-radius:8px';
+    fAcademyWrap.appendChild(fAcademySel);
+    navRow.appendChild(fAcademyWrap);
+  }
+  w.appendChild(navRow);
+  const tableWrap=el('div');tableWrap.style.cssText='overflow-x:auto;margin-top:10px';
+  const loading=el('div','hint','불러오는 중…');tableWrap.appendChild(loading);
+  w.appendChild(tableWrap);
+  (async()=>{
+    let all=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok)all=data.submissions||[];
+    }catch(e){}
+    if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+    loading.remove();
+    const hasFeedback=submissionHasAiFeedback;
+    if(fAcademySel){
+      const opt0=(label)=>{const o=el('option');o.value='';o.textContent=label;fAcademySel.appendChild(o);};
+      opt0('학원 전체');
+      Array.from(new Set(all.map(s=>String(s.academy||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko')).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fAcademySel.appendChild(o);});
+    }
+    if(!all.length){tableWrap.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
+    const render=()=>{
+      Array.from(tableWrap.children).forEach(c=>c.remove());
+      const y=Number(ySel.value),m=Number(mSel.value);
+      const ym=y+'-'+String(m).padStart(2,'0');
+      const wantAcademy=fAcademySel?fAcademySel.value:'';
+      const scoped=all.filter(s=>hasFeedback(s)&&s.chapter!=='Rewriting'&&String(s.datetime||'').slice(0,7)===ym&&(!wantAcademy||String(s.academy||'')===wantAcademy));
+      if(!scoped.length){tableWrap.appendChild(el('div','hint',y+'년 '+m+'월에는 AI 첨삭이 완료된 글이 없어요.'));return;}
+      // 학생별로 한 줄씩 보여주는 게 아니라, 학원별로 컨텐츠 종류마다 몇 번 AI 첨삭을 썼는지만
+      // 합쳐서 보여줘요(요청: "학원별로 콘텐츠별로 몇 회 사용했나만 보이는 거 — 애들별은 안 보여").
+      const byAcademy={};
+      scoped.forEach(s=>{
+        const key=String(s.academy||'').trim();
+        if(!byAcademy[key])byAcademy[key]={academy:key,counts:{}};
+        const t=AI_STATS_TYPE_DEFS.find(t=>t.test(s));
+        const tk=t?t.key:'drill';
+        byAcademy[key].counts[tk]=(byAcademy[key].counts[tk]||0)+1;
+      });
+      const rows=Object.values(byAcademy).sort((a,b)=>String(a.academy||'').localeCompare(String(b.academy||''),'ko'));
+      const table=el('table');table.style.cssText='width:100%;border-collapse:collapse;font-size:13px;min-width:640px';
+      const thead=el('thead');const headRow=el('tr');
+      const cols=['학원'].concat(AI_STATS_TYPE_DEFS.map(t=>t.label)).concat(['TOTAL']);
+      cols.forEach(c=>{const th=el('th',null,c);th.style.cssText='text-align:left;padding:8px 10px;border-bottom:2px solid #ecebe8;white-space:nowrap;color:#6b7684;font-size:12px';headRow.appendChild(th);});
+      thead.appendChild(headRow);table.appendChild(thead);
+      const tbody=el('tbody');
+      rows.forEach(r=>{
+        const tr=el('tr');
+        const td=(txt,bold)=>{const t=el('td',null,txt);t.style.cssText='padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06)'+(bold?';font-weight:800':'');return t;};
+        tr.appendChild(td(escH(r.academy||'(학원 미지정)')));
+        let total=0;
+        AI_STATS_TYPE_DEFS.forEach(t=>{const c=r.counts[t.key]||0;total+=c;tr.appendChild(td(String(c)));});
+        tr.appendChild(td(String(total),true));
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      tableWrap.appendChild(table);
+    };
+    [ySel,mSel].forEach(sel=>sel.addEventListener('change',render));
+    if(fAcademySel)fAcademySel.addEventListener('change',render);
+    prevBtn.onclick=()=>{let y=Number(ySel.value),m=Number(mSel.value)-1;if(m<1){m=12;y--;}ySel.value=y;mSel.value=m;render();};
+    nextBtn.onclick=()=>{let y=Number(ySel.value),m=Number(mSel.value)+1;if(m>12){m=1;y++;}ySel.value=y;mSel.value=m;render();};
+    render();
+  })();
+});}
+
+/* "🖨 REPORT 인쇄"로 들어오면, 학생의 커리큘럼 홈 화면을 거치지 않고 곧바로 학생 목록만 보여줘요.
+ * 학생을 고르면 그 학생이 그동안 제출한 글이 최신순으로 쭉 나열되고, 각 줄 오른쪽의 "리포트" 버튼을
+ * 누르면 바로 그 제출물의 인쇄 화면(printSubmissionReport)이 새 탭으로 떠요. */
+function viewReportStudentList(){teacherMount(w=>{
+  const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','🖨 REPORT 인쇄 — 학생 목록'));
+  w.appendChild(el('div','hint','학생을 선택하면 그 학생이 작성한 글이 최신순으로 나오고, 옆의 "리포트" 버튼으로 바로 인쇄 화면을 열 수 있어요.'));
+  const box=el('div','chapter');box.appendChild(el('div','ch-h','학생 목록'));
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  (async()=>{
+    let all=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok)all=data.submissions||[];
+    }catch(e){}
+    if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
+    loading.remove();
+    if(!all.length){box.appendChild(el('div','hint','아직 제출된 내역이 없어요.'));return;}
+    const byStudent={};
+    all.forEach(s=>{
+      if(!s.id)return;
+      if(!byStudent[s.id])byStudent[s.id]={id:s.id,name:s.name,academy:s.academy,school:s.school,schoolGrade:s.schoolGrade,cls:s.cls,subs:[],lastAt:''};
+      byStudent[s.id].subs.push(s);
+      if(String(s.datetime||'')>byStudent[s.id].lastAt)byStudent[s.id].lastAt=String(s.datetime||'');
+    });
+    const studentsOut=Object.values(byStudent).sort((a,b)=>b.lastAt<a.lastAt?-1:1);
+    studentsOut.forEach(st=>{
+      const row=el('div','point');
+      row.appendChild(el('div','dot','●'));
+      const ctx=[USER.isAdmin?st.academy:'',st.school,stageGrade(st.school,st.schoolGrade),st.cls].filter(Boolean).join(' · ');
+      row.appendChild(el('div','pt',(st.name||st.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+st.id+(ctx?' · '+ctx:'')+')</span>'));
+      row.appendChild(el('div','meta',st.subs.length+'건 제출 · 최근 '+String(st.lastAt||'').slice(0,16)));
+      row.onclick=()=>viewReportStudentSubmissions(st.id,st.name||st.id,st.subs);
+      box.appendChild(row);
+    });
+  })();
+});}
+/* 학생 한 명이 제출한 글을 최신순으로 쭉 나열해요. 커리큘럼 화면(viewTeacherStudent/viewHome)과
+ * 다르게, 컨텐츠 목록을 훑을 필요 없이 실제로 "쓴 글" 하나하나가 바로 행으로 보이고, 행마다 오른쪽에
+ * 그 글의 인쇄 리포트를 바로 여는 버튼이 있어요. */
+function viewReportStudentSubmissions(studentId,studentName,subs,backFn){teacherMount(w=>{
+  const back=backFn||viewReportStudentList;
+  const bk=el('button','backbtn','◀ 학생 목록');bk.onclick=back;w.appendChild(bk);
+  w.appendChild(el('h1','title',studentName+' · 제출한 글'));
+  const sorted=(subs||[]).slice().sort((a,b)=>String(a.datetime||'')<String(b.datetime||'')?1:-1);
+  const summaryRow=el('div');summaryRow.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 14px';
+  summaryRow.appendChild(el('div','hint',sorted.length+'건 제출됨'));
+  const rewriteReportBtn=el('button','btn ghost','📊 첨삭·Re-Writing 종합 리포트');rewriteReportBtn.type='button';rewriteReportBtn.style.cssText='padding:6px 14px;font-size:12.5px';
+  const ctx=[sorted[0]&&sorted[0].school,sorted[0]&&stageGrade(sorted[0].school,sorted[0].schoolGrade),sorted[0]&&sorted[0].cls].filter(Boolean).join(' · ');
+  rewriteReportBtn.onclick=()=>openRewriteReportPicker({studentId,studentName,subs:sorted,ctx});
+  summaryRow.appendChild(rewriteReportBtn);
+  w.appendChild(summaryRow);
+  const box=el('div','chapter');box.appendChild(el('div','ch-h','제출한 글'));
+  if(!sorted.length)box.appendChild(el('div','hint','아직 제출한 글이 없어요.'));
+  sorted.forEach(s=>{
+    const row=el('div');
+    row.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(0,0,0,.06)';
+    const info=el('div');
+    info.innerHTML='<div style="font-weight:700">'+escH(s.point||s.chapter||'')+' <span style="font-weight:600;color:#6b7684;font-size:12.5px">('+escH(submissionTypeLabel(s))+')</span></div>'+
+      '<div style="color:#6b7684;font-size:12.5px;margin-top:2px">'+escH(s.datetime||'')+(s.total!=null&&String(s.total).trim()!==''&&String(s.total)!=='-'?(' · 점수 '+escH(String(s.total))+(s.grade?(' ('+escH(s.grade)+'등급)'):'')):'')+'</div>';
+    row.appendChild(info);
+    const rptBtn=el('button','btn blue','🖨 리포트');rptBtn.type='button';rptBtn.style.cssText='padding:6px 14px;font-size:12.5px;white-space:nowrap;flex:0 0 auto';
+    rptBtn.onclick=()=>printSubmissionReport(s,studentName,studentId,s.academy,sorted);
+    row.appendChild(rptBtn);
+    const wrBtn2=el('button','btn blue','📄 Writing Report');wrBtn2.type='button';wrBtn2.style.cssText='padding:6px 14px;font-size:12.5px;white-space:nowrap;flex:0 0 auto;margin-left:6px';
+    wrBtn2.onclick=()=>printWritingReport(s,studentName,studentId,s.academy,sorted);
+    row.appendChild(wrBtn2);
+    box.appendChild(row);
+  });
+  w.appendChild(box);
+});}
+
+/* ================= 선생님용 컨텐츠 추가 ================= */
+const CONTENT_FORMS={
+  pattern:{label:'문법 포인트 (Pattern Drill)',emoji:'🧩',fields:[
+    {key:'unitId',label:'유닛 아이디 (새로 만들 때만)',type:'text',ph:'예) L4C100U100 — "🏷️ 레벨 관리 > Pattern Drill 챕터/유닛"에서 만든 유닛 아이디를 붙여넣으세요. 기존 "준비 중" 유닛에 내용을 채우는 경우에도 그 아이디를 적으면 돼요.'},
+    {key:'title',label:'제목',type:'text',ph:'예) 현재완료 시제'},
+    {key:'explainNote',label:'설명 노트',type:'text',ph:'개념 설명 화면에 함께 보일 짧은 안내'},
+    {key:'explainPartsText',label:'개념 설명 (한 줄에 하나씩)',type:'textarea',ph:'텍스트: 이 문법은 이렇게 사용해요.\n키워드: have p.p. | 「~해 본 적 있다」는 경험을 나타내요'},
+    {key:'quizText',label:'개념 퀴즈 (한 줄에 문제 하나)',type:'textarea',ph:'질문 | 보기1;보기2;보기3;보기4;보기5 | 정답번호(1~5) | 해설'},
+    {key:'arrangeText',label:'단어 배열 (한 줄에 하나씩)',type:'textarea',ph:'한국어 문장 | 정답 영어 문장'},
+    {key:'composeText',label:'영작 연습 (한 줄에 하나씩)',type:'textarea',ph:'한국어 | 정답 | 힌트 | 대체정답1;대체정답2;대체정답3'},
+    {key:'taskPrompt',label:'과제 프롬프트',type:'text',ph:'학생에게 보여줄 영작 과제 설명'},
+    {key:'taskSample',label:'예시 답안',type:'textarea',ph:'모범 답안 예시'},
+    {key:'taskCondText',label:'과제 조건 (한 줄에 하나씩)',type:'textarea',ph:'최소 3문장 이상 | 문장수:3\n현재완료 사용 | regex:have\\s+\\w+ed'}
+  ]},
+  paragraph:{label:'문단 쓰기 (Paragraph)',emoji:'📝',fields:[
+    {key:'title',label:'제목',type:'text',ph:'예) 나의 장래희망'},
+    {key:'level',label:'레벨',type:'text',ph:'예) 중1'},
+    {key:'grammar',label:'문법 태그',type:'text',ph:'예) to부정사'},
+    {key:'chap',label:'챕터 번호',type:'text',ph:'예) 3'},
+    {key:'grammarLabel',label:'문법 라벨',type:'text',ph:'화면에 보일 문법 이름'},
+    {key:'grammarTest',label:'문법 체크용 정규식',type:'text',ph:'예) to\\s+\\w+'},
+    {key:'genre',label:'장르',type:'text',ph:'예) 설명문'},
+    {key:'note',label:'참고 노트',type:'text'},
+    {key:'sampleText',label:'예시 문단 문장들 (한 줄에 하나씩)',type:'textarea',ph:'영어 문장 | 한국어 뜻 | 역할(주제문 등) | 난이도'},
+    {key:'exprText',label:'표현 은행 (한 줄에 하나씩)',type:'textarea',ph:'영어 표현 | 한국어 뜻'},
+    {key:'orgTopic',label:'개요짜기 - 주제문',type:'text'},
+    {key:'orgS1',label:'개요짜기 - 뒷받침 문장1',type:'text'},
+    {key:'orgS2',label:'개요짜기 - 뒷받침 문장2',type:'text'},
+    {key:'orgS3',label:'개요짜기 - 뒷받침 문장3',type:'text'},
+    {key:'orgConcl',label:'개요짜기 - 맺음말',type:'text'},
+    {key:'flowTopic',label:'글의 흐름 - 주제문',type:'text'},
+    {key:'flowS1',label:'글의 흐름 - 문장1',type:'text'},
+    {key:'flowS2',label:'글의 흐름 - 문장2',type:'text'},
+    {key:'flowS3',label:'글의 흐름 - 문장3',type:'text'},
+    {key:'flowConcl',label:'글의 흐름 - 맺음말',type:'text'}
+  ]},
+  article:{label:'기사 요약 (Article)',emoji:'📰',fields:[
+    {key:'title',label:'제목',type:'text'},
+    {key:'level',label:'레벨',type:'text'},
+    {key:'source',label:'출처',type:'text'},
+    {key:'body',label:'기사 본문',type:'textarea',ph:'기사 전체 본문을 붙여넣으세요'},
+    {key:'prompt',label:'과제 프롬프트',type:'textarea',ph:'학생에게 보여줄 요약/영작 과제 설명'},
+    {key:'targetSchool',label:'대상 학교',type:'text'},
+    {key:'targetGrade',label:'대상 학년',type:'text'},
+    {key:'targetClass',label:'대상 반',type:'text'},
+    {key:'vocabText',label:'단어 목록 (한 줄에 하나씩)',type:'textarea',ph:'영어 단어 | 한국어 뜻'},
+    {key:'condText',label:'조건 (한 줄에 하나씩)',type:'textarea',ph:'최소 5문장 이상 | 문장수:5\n미래시제 사용 | regex:will\\s+\\w+'}
+  ]},
+  exam:{label:'수행평가 대비 (Exam)',emoji:'🎯',fields:[
+    {key:'title',label:'제목',type:'text'},
+    {key:'level',label:'레벨',type:'text'},
+    {key:'prompt',label:'과제 프롬프트',type:'textarea',ph:'학생에게 보여줄 과제 설명'},
+    {key:'mindmapText',label:'🧠 브레인스토밍 마인드맵 (선택 · 글쓰기 전에 생각을 정리하게 하고 싶을 때만) — 한 줄에 하나씩: 가지 이름 | 안내 문구(선택)',type:'textarea',ph:'High Point (가장 자랑스럽거나 기뻤던 일) | 몇 살 때 있었던 일인가요? 사건과 그때 느낀 감정을 적어보세요.\nLow Point (좌절·실패했거나 극복해야 했던 일) | 어떤 어려움이었고, 어떻게 극복했나요?\nTurning Point (배운 점과 가치관의 변화) | 이 경험으로 무엇을 배웠나요?'},
+    {key:'tableText',label:'📋 표 작성 칸 (선택 · 과제지에 "여러 칸짜리 표"가 있을 때 — 사진으로 올리면 AI가 표 모양을 제안해줘요) — 표마다 빈 줄로 구분. 1번째 줄 "표 제목 | 안내 문구(선택)", 2번째 줄 "열: 열1 | 열2 | 열3", 선택 줄 "예: 예시값1 | 예시값2 | ..." 과 "행: 2"(학생이 처음 보는 빈 행 수, 기본 2)',type:'textarea',ph:'생각 정리 표 | 작품에서 보이는 것과 그 의미를 정리해보세요\n열: 작품에서 보이는 것 | 나의 어떤 면을 나타내나요? | 왜 이렇게 표현했나요? | 필요한 영어 단어\n예: 파란색 | 차분한 성격 | 혼자 조용히 있는 시간을 좋아해서 | blue, calm\n행: 2'},
+    {key:'frameText',label:'✏️ 글의 뼈대 잡기 (선택 · 자서전 쓰기처럼 단계별로 뼈대를 잡게 하고 싶을 때만) — 한 줄에 하나씩: 구성 이름 | 문장 시작 단서(세미콜론 ; 으로 구분) | 선생님 예시 문장',type:'textarea',ph:'Introduction (과거) | When I was...; I was born in...; As a child, I used to... | When I was seven years old, I was a shy boy who was afraid of speaking in front of people.\nBody (현재) | However, ... made me realize that...; Since then, I have... | However, joining the debate club made me realize that I could enjoy speaking in public.\nConclusion (미래) | Based on this experience, I want to become someone who...; In the future, I hope to... | Based on this experience, I want to become someone who helps other shy students.'},
+    {key:'grammarSwapText',label:'🔧 오늘의 문법 연습 (선택 · 그날 발표되는 필수 문법을 연습시키고 싶을 때만) — 문법 항목마다 빈 줄로 구분해서: 1번째 줄 "문법명 | 설명", 그 아래 "- 영어 예문 | 한글 해석" 줄(여러 개 가능). 학생은 각 문법마다 "나의 문장" 칸에 그 문법을 활용한 문장을 자유롭게 적어요.',type:'textarea',ph:'현재완료 (have/has p.p.)|과거에 시작된 일이 현재까지 영향을 주거나 계속될 때 사용해요\n- I have overcome my fear.|나는 두려움을 극복해왔다.\n- I have learned many things from my family.|나는 가족으로부터 많은 것을 배워왔다.\n\n관계대명사 (who/which/that)|사람·사물 뒤에서 추가 설명을 붙일 때 사용해요\n- The fear that I overcame made me stronger.|내가 극복한 두려움은 나를 더 강하게 만들었다.\n- I met a teacher who believed in me.|나는 나를 믿어준 선생님을 만났다.'},
+    {key:'evalAreaText',label:'평가 영역 (선택 · 학생에게도 보여요) — 한 줄에 하나씩: 영역명 | 영역 만점 | 평가 요소1; 평가 요소2 ...',type:'textarea',ph:'내용 | 10 | 주제에 맞는 내용 전개; 구체적인 예시 포함\n어휘·문법 | 5 | 문법 오류 없이 쓰기; 다양한 어휘 사용'},
+    {key:'rubricLevelsText',label:'수행 수준별 채점 기준 (선택 · 학생에게는 안 보이고 "AI 예상 채점" 때만 참고해요) — 한 줄에 하나씩: 영역명 | 상 설명 | 중 설명 | 하 설명',type:'textarea',ph:'내용 | 상(8~10점): 주제와 관련된 내용을 구체적 예시와 함께 전개함 | 중(5~7점): 내용은 있으나 예시가 부족함 | 하(0~4점): 주제에서 벗어남'},
+    {key:'targetSchool',label:'대상 학교',type:'text'},
+    {key:'targetGrade',label:'대상 학년 (예: 중3 — 여러 개는 쉼표로, 숫자만 적으면 초·중·고 모두 해당)',type:'text'},
+    {key:'targetClass',label:'대상 반',type:'text'},
+    {key:'condText',label:'조건 (한 줄에 하나씩)',type:'textarea',ph:'최소 4문장 이상 | 문장수:4\n비교급 사용 | regex:more\\s+\\w+\\s+than'}
+  ]},
+  story:{label:'그림 이야기 쓰기 (Story Writing)',emoji:'🖼️',fields:[
+    {key:'title',label:'제목 (영어)',type:'text',ph:'예) Curious George Goes Shopping'},
+    {key:'titleKo',label:'제목 (한글)',type:'text',ph:'예) 조지의 장보기'},
+    {key:'level',label:'레벨 (초5는 고정 id "L0" — 다른 레벨용이면 레벨 관리에 표시된 id)',type:'text',ph:'초5용이면 L0 이라고 그대로 적어주세요'},
+    {key:'intro',label:'소개 문구 (짧게)',type:'textarea',ph:'그림을 순서대로 보고 이야기를 완성해요.'},
+    {key:'targetSchool',label:'대상 학교',type:'text'},
+    {key:'targetGrade',label:'대상 학년',type:'text'},
+    {key:'targetClass',label:'대상 반',type:'text'},
+    {key:'sampleText',label:'샘플 이야기 (선택 · 학생에게 예시로 보여줘요)',type:'textarea',ph:'First, George draws a picture of bananas in the kitchen. Then, ...'},
+    {key:'minWords',label:'전체 단어 수 최소 기준 (그림들 합쳐서, 선택)',type:'text',ph:'예) 200 — 비워두면 단어 수 검사를 안 해요'}
+  ]}
+};
+/** 컨텐츠 추가/수정 화면의 "👀 미리보기"에서 씀 — 저장하기 전에 지금 입력된 값(또는 AI와 대화해서 나온 값)으로
+ *  학생 화면과 비슷한 느낌을 간단히 보여줘요. 실제 학생 화면 로직(퀴즈·단어배열 등 인터랙션)을 그대로 재현하진 않고,
+ *  제목·설명·조건·이미지처럼 핵심 내용 위주로 정적으로 흉내낸 미리보기예요. */
+function buildContentPreview(type, vals, imgUrls){
+  const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:12px';
+  const imgsHtml=(imgUrls&&imgUrls.length)?renderImages(imgUrls.join('\n')):null;
+  const title=el('div');title.style.cssText='font-size:19px;font-weight:800';title.textContent=vals.title||'(제목 없음)';
+  wrap.appendChild(title);
+  if(imgsHtml)wrap.appendChild(imgsHtml);
+  let blockCount=0;
+  const addBlock=(label,html)=>{
+    if(!html)return;
+    blockCount++;
+    const b=el('div');
+    b.innerHTML='<div style="font-weight:700;font-size:12.5px;color:#6b7684;margin-bottom:4px">'+escH(label)+'</div><div style="font-size:14px;line-height:1.7;white-space:pre-wrap">'+html+'</div>';
+    wrap.appendChild(b);
+  };
+  const linesToHtml=(text)=>String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(x=>'- '+escH(x)).join('<br>');
+  if(type==='pattern'){
+    addBlock('설명 노트', vals.explainNote?escH(vals.explainNote):'');
+    const parts=String(vals.explainPartsText||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+      const m=line.match(/^텍스트\s*:\s*(.*)$/);
+      if(m)return escH(m[1]);
+      const m2=line.match(/^키워드\s*:\s*(.*)$/);
+      const rest=m2?m2[1]:line;
+      const pp=rest.split('|').map(x=>x.trim());
+      return '<b>'+escH(pp[0]||'')+'</b>'+(pp[1]?' — '+escH(pp[1]):'');
+    }).join('<br><br>');
+    addBlock('개념 설명', parts);
+    addBlock('과제 프롬프트', vals.taskPrompt?escH(vals.taskPrompt):'');
+    addBlock('과제 조건', linesToHtml(vals.taskCondText));
+  } else if(type==='paragraph'){
+    const samples=String(vals.sampleText||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+      const pp=line.split('|').map(x=>x.trim());
+      return escH(pp[0]||'')+(pp[1]?' <span style="color:#6b7684">('+escH(pp[1])+')</span>':'');
+    }).join('<br>');
+    addBlock('예시 문단', samples);
+    const outline=['orgTopic','orgS1','orgS2','orgS3','orgConcl'].map(k=>vals[k]).filter(Boolean).map(escH).join('<br>');
+    addBlock('개요짜기', outline);
+  } else if(type==='article'){
+    addBlock('출처', vals.source?escH(vals.source):'');
+    addBlock('기사 본문', vals.body?escH(vals.body):'');
+    addBlock('과제 프롬프트', vals.prompt?escH(vals.prompt):'');
+    addBlock('단어 목록', linesToHtml(vals.vocabText));
+    addBlock('조건', linesToHtml(vals.condText));
+  } else if(type==='exam'){
+    addBlock('과제 프롬프트', vals.prompt?escH(vals.prompt):'');
+    if(vals.evalAreaText){ blockCount++; addBlock('평가 영역', renderEvalAreas(vals.evalAreaText)); }
+  } else if(type==='story'){
+    addBlock('한글 제목', vals.titleKo?escH(vals.titleKo):'');
+    addBlock('소개', vals.intro?escH(vals.intro):'');
+    addBlock('샘플 이야기', vals.sampleText?escH(vals.sampleText):'');
+  }
+  if(!blockCount && !imgsHtml){
+    wrap.appendChild(el('div','hint','아직 미리볼 내용이 없어요. 위 입력 칸을 채우거나 AI와 대화해서 채운 뒤 다시 눌러보세요.'));
+  }
+  return wrap;
+}
+/** 평가 영역 텍스트("영역명 | 영역만점 | 요소1; 요소2 ...", 한 줄에 하나)를 학생이 보기 좋은 HTML로 바꿔줘요.
+ *  형식을 안 지킨 줄(구분자 없는 옛날 자유 서술형 평가 기준)도 앞에 "- "를 붙여 목록처럼 보여줘요. */
+function renderEvalAreas(text){
+  if(!text)return '';
+  return String(text).split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    if(parts.length>=2){
+      const area=parts[0],maxScore=parts[1],factors=(parts[2]||'').split(';').map(x=>x.trim()).filter(Boolean);
+      let html='<div style="margin-top:8px"><b>'+escH(area)+'</b>'+(maxScore?' <span style="color:#6b7684;font-weight:600">(만점 '+escH(maxScore)+'점)</span>':'')+'</div>';
+      html+=factors.length?factors.map(f=>'<div style="padding-left:6px">- '+escH(f)+'</div>').join(''):(parts[2]?'<div style="padding-left:6px">- '+escH(parts[2])+'</div>':'');
+      return html;
+    }
+    return '<div>- '+escH(line)+'</div>';
+  }).join('');
+}
+/* 수행평가의 "🧠 브레인스토밍 마인드맵"(mindmapText)을 파싱해요. 형식(한 줄에 하나씩):
+   가지 이름 | 안내 문구(선택) — 안내 문구는 없어도 돼요. */
+function parseMindmapText(text){
+  if(!text)return [];
+  return String(text).split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return { name: parts[0]||'', guide: parts[1]||'' };
+  }).filter(m=>m.name);
+}
+/* 수행평가의 "📋 표 작성 칸"(tableText)을 파싱해요. 표마다 빈 줄로 구분하고, 각 표는
+     1번째 줄:  표 제목 | 안내 문구(선택)
+     "열: 열1 | 열2 | 열3 ..."  (필수)
+     "예: 값1 | 값2 | ..."      (선택 — 학생에게 회색 예시 줄로 보여줘요)
+     "행: 2"                     (선택 — 처음 보여줄 빈 행 수, 기본 2, 최대 10) */
+function parseTableText(text){
+  if(!text)return [];
+  return String(text).split(/\n\s*\n/).map(block=>{
+    const lines=block.split('\n').map(x=>x.trim()).filter(Boolean);
+    if(!lines.length)return null;
+    const t={title:'',guide:'',cols:[],example:[],rows:2};
+    lines.forEach((ln,i)=>{
+      let m;
+      if((m=ln.match(/^열\s*[:：]\s*(.*)$/)))t.cols=m[1].split('|').map(x=>x.trim()).filter(Boolean);
+      else if((m=ln.match(/^예\s*[:：]\s*(.*)$/)))t.example=m[1].split('|').map(x=>x.trim());
+      else if((m=ln.match(/^행\s*[:：]\s*(\d+)/)))t.rows=Math.max(1,Math.min(10,Number(m[1])||2));
+      else if(i===0){const parts=ln.split('|').map(x=>x.trim());t.title=parts[0]||'';t.guide=parts[1]||'';}
+    });
+    return (t.title&&t.cols.length)?t:null;
+  }).filter(Boolean);
+}
+/* 수행평가의 "✏️ 글의 뼈대 잡기"(frameText)를 파싱해요. 형식(한 줄에 하나씩):
+   구성 이름 | 문장 시작 단서(세미콜론으로 구분) | 선생님 예시 문장 — 뒤 두 칸은 선택이에요. */
+function parseFrameText(text){
+  if(!text)return [];
+  return String(text).split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+    const parts=line.split('|').map(x=>x.trim());
+    return {
+      name: parts[0]||'',
+      starters: (parts[1]||'').split(';').map(x=>x.trim()).filter(Boolean),
+      sample: parts[2]||''
+    };
+  }).filter(f=>f.name);
+}
+/* 수행평가의 "🔧 오늘의 문법 연습"(grammarSwapText)을 파싱해요.
+   [새 형식] 문법 항목마다 빈 줄로 구분하고, 각 항목은:
+     1번째 줄:  문법명 | 설명
+     이어지는 줄들: "- 영어 예문 | 한글 해석" (여러 개 가능)
+     마지막 줄(선택): "연습: 기본 문장" (학생이 이 문법으로 바꿔 써볼 문장)
+   [예전 형식과 호환] 빈 줄 없이 한 줄에 문법 하나씩(문법명 | 설명 | 예시 변형 문장 | 연습용 기본 문장)
+     넣어둔 예전 데이터도 그대로 계속 인식해요.
+   결과 객체: { name, explain, examples:[{en,kr}, ...], base } — 예전 형식은 examples가 항목 1개짜리 배열이 돼요. */
+function parseGrammarSwapText(text){
+  if(!text)return [];
+  const raw=String(text).replace(/\r\n/g,'\n');
+  const blocks=raw.split(/\n\s*\n/).map(b=>b.trim()).filter(Boolean);
+  const allLines=raw.split('\n').map(x=>x.trim()).filter(Boolean);
+  const isLegacy = blocks.length<=1 && allLines.length>0 && allLines.every(l=>l.split('|').length>=3);
+  if(isLegacy){
+    return allLines.map(line=>{
+      const parts=line.split('|').map(x=>x.trim());
+      return { name: parts[0]||'', explain: parts[1]||'', examples: parts[2]?[{en:parts[2],kr:''}]:[], base: parts[3]||'' };
+    }).filter(g=>g.name);
+  }
+  return blocks.map(block=>{
+    const lines=block.split('\n').map(x=>x.trim()).filter(Boolean);
+    if(!lines.length)return null;
+    const header=lines[0].split('|').map(x=>x.trim());
+    const name=header[0]||'', explain=header[1]||'';
+    const examples=[]; let base='';
+    for(let i=1;i<lines.length;i++){
+      let ln=lines[i];
+      if(/^연습\s*:/.test(ln)){ base=ln.replace(/^연습\s*:/,'').trim(); continue; }
+      if(ln.startsWith('-'))ln=ln.slice(1).trim();
+      const p=ln.split('|').map(x=>x.trim());
+      if(p[0])examples.push({en:p[0], kr:p[1]||''});
+    }
+    return { name, explain, examples, base };
+  }).filter(g=>g&&g.name);
+}
+function viewContentAdd(){teacherMount(w=>{
+  w.appendChild(el('h1','title','🧩 컨텐츠 추가'));
+  w.appendChild(el('div','hint','새 주제를 추가할 종류를 골라주세요. 추가한 내용은 스프레드시트에 바로 저장되지만, 스프레드시트 담당 선생님이 "🔄 사이트에 반영하기"를 눌러야 실제 사이트에 보여요.'));
+  const grid=el('div');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:16px';
+  Object.keys(CONTENT_FORMS).forEach(type=>{
+    const spec=CONTENT_FORMS[type];
+    const card=el('div','chapter');card.style.cssText='cursor:pointer;padding:20px;text-align:center';
+    card.innerHTML='<div style="font-size:32px">'+spec.emoji+'</div><div class="ch-h" style="margin-top:8px">'+spec.label+'</div>';
+    card.onclick=()=>viewAddContentForm(type);
+    grid.appendChild(card);
+  });
+  w.appendChild(grid);
+  const back=el('button','btn ghost','← 학생 목록으로');back.type='button';back.style.marginTop='20px';
+  back.onclick=()=>viewTeacherHome();
+  w.appendChild(back);
+});}
+
+/* ---- 종류 구분 없이 한 번에 대화하는 AI 챗봇 — 대화로 내용을 다 만든 뒤 "이어서 만들기"로 해당 종류의
+ *      추가 화면으로 넘어가면, 거기서 이미지 추가·최종 저장까지 마무리해요. ---- */
+function viewAiContentChatBot(){teacherMount(w=>{
+  const bk=el('button','backbtn','◀ 홈으로');bk.onclick=()=>viewTeacherHome();w.appendChild(bk);
+  w.appendChild(el('h1','title','🤖 AI 챗봇으로 컨텐츠 만들기'));
+  w.appendChild(el('div','hint','문법 드릴·문단 쓰기·기사 요약·수행평가 중 어떤 종류인지 먼저 고르지 않아도 돼요 — 그냥 원하는 걸 편하게 말하면 AI가 알아서 종류를 판단하고 내용을 채워가요. 다 됐으면 오른쪽의 "이어서 만들기"를 눌러 해당 종류의 추가 화면으로 넘어가서 이미지 추가와 최종 저장을 마무리하면 돼요.'));
+
+  // (viewAddContentForm과 같은 이유로) 왼쪽 메뉴 사이드바가 생기면서 줄어든 폭에 맞춰 두 칸의
+  // 기준 폭을 살짝 줄여서, 노트북 화면에서도 세로로 안 쌓이고 나란히 보이게 했어요.
+  const cols=el('div');cols.style.cssText='display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:14px';
+  const leftCol=el('div');leftCol.style.cssText='flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:10px';
+  const rightCol=el('div');rightCol.style.cssText='flex:1 1 300px;min-width:260px;display:flex;flex-direction:column;gap:10px';
+  cols.appendChild(leftCol);cols.appendChild(rightCol);
+  w.appendChild(cols);
+
+  const chatBox=el('div');chatBox.style.cssText='background:#eef0ff;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px';
+  const chatLog=el('div');chatLog.style.cssText='display:flex;flex-direction:column;gap:8px;min-height:200px;max-height:460px;overflow-y:auto;padding-right:4px';
+  chatBox.appendChild(chatLog);
+  const chatInputRow=el('div');chatInputRow.style.cssText='display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap';
+  const chatInput=el('textarea','in');chatInput.rows=2;chatInput.placeholder='예: 현재완료 문법 드릴 하나 만들어줘 / 환경 오염 주제로 수행평가 글쓰기 만들어줘 / 초5학년 용 Story Writing에 추가하고 싶어';chatInput.style.cssText='flex:1;min-width:200px;padding:10px;font-size:14px;border-radius:10px;font-family:var(--sans)';
+  const chatPhotoBtn=el('button','btn ghost','📷 사진 첨부');chatPhotoBtn.type='button';chatPhotoBtn.style.cssText='padding:9px 12px;font-size:13px';
+  const chatSendBtn=el('button','btn blue','보내기');chatSendBtn.type='button';chatSendBtn.style.cssText='padding:9px 16px;font-size:14px';
+  const chatPhotoInput=el('input');chatPhotoInput.type='file';chatPhotoInput.accept='image/*';chatPhotoInput.style.display='none';
+  chatInputRow.appendChild(chatInput);chatInputRow.appendChild(chatPhotoBtn);chatInputRow.appendChild(chatSendBtn);
+  chatBox.appendChild(chatInputRow);chatBox.appendChild(chatPhotoInput);
+  const chatMsg=el('div','fx');chatBox.appendChild(chatMsg);
+  leftCol.appendChild(chatBox);
+
+  const statusBox=el('div');statusBox.style.cssText='background:#fff;border:1.5px solid #e2e2ee;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px';
+  const typeBadge=el('div');typeBadge.style.cssText='font-size:13px;font-weight:700;color:#4338ca';
+  statusBox.appendChild(typeBadge);
+  const previewContent=el('div');previewContent.style.cssText='background:#f7f7fb;border-radius:10px;padding:14px';
+  statusBox.appendChild(previewContent);
+  const continueBtn=el('button','btn green','✅ 이 내용으로 이어서 만들기');continueBtn.type='button';continueBtn.style.cssText='display:none;align-self:flex-start';
+  statusBox.appendChild(continueBtn);
+  rightCol.appendChild(statusBox);
+
+  let chatHistory=[];
+  let chatType='';
+  let fieldsAccum={};
+  let chatPendingImage=null;
+
+  function chatBubble(role,text){
+    const b=el('div');
+    const isUser=role==='user';
+    b.style.cssText='max-width:85%;padding:8px 12px;border-radius:12px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;'+(isUser?'align-self:flex-end;background:#4338ca;color:#fff':'align-self:flex-start;background:#fff;color:#1c1c28;border:1px solid #e2e2ee');
+    b.textContent=text;
+    return b;
+  }
+  function renderChatLog(){
+    chatLog.innerHTML='';
+    chatHistory.forEach(m=>{ chatLog.appendChild(chatBubble(m.role,m.content)); });
+    chatLog.scrollTop=chatLog.scrollHeight;
+  }
+  function refreshStatus(){
+    if(chatType){
+      const spec=CONTENT_FORMS[chatType];
+      typeBadge.textContent='감지된 종류: '+spec.emoji+' '+spec.label;
+      previewContent.innerHTML='';
+      previewContent.appendChild(buildContentPreview(chatType, fieldsAccum, []));
+      continueBtn.style.display=fieldsAccum.title?'inline-block':'none';
+    } else {
+      typeBadge.textContent='아직 종류를 판단하지 못했어요 — 대화를 시작해보세요.';
+      previewContent.innerHTML='';
+      continueBtn.style.display='none';
+    }
+  }
+  continueBtn.onclick=()=>{
+    try{
+      localStorage.setItem('ewlDraft_'+(USER.id||'anon')+'_'+chatType+'_new', JSON.stringify({fields:fieldsAccum, imageUrls:[], chatHistory:[], savedAt:Date.now()}));
+    }catch(e){}
+    viewAddContentForm(chatType);
+  };
+  chatPhotoBtn.onclick=()=>chatPhotoInput.click();
+  chatPhotoInput.onchange=async()=>{
+    const file=chatPhotoInput.files&&chatPhotoInput.files[0];
+    if(!file)return;
+    try{
+      const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});
+      const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=dataUrl;});
+      const maxDim=1600;let w2=img.width,h2=img.height;
+      if(w2>maxDim||h2>maxDim){const scale=maxDim/Math.max(w2,h2);w2=Math.round(w2*scale);h2=Math.round(h2*scale);}
+      const canvas=document.createElement('canvas');canvas.width=w2;canvas.height=h2;
+      canvas.getContext('2d').drawImage(img,0,0,w2,h2);
+      const jpegUrl=canvas.toDataURL('image/jpeg',0.82);
+      chatPendingImage={mediaType:'image/jpeg',data:jpegUrl.split(',')[1]};
+      chatMsg.className='fx ok';chatMsg.textContent='📎 사진을 첨부했어요. 메시지를 보내면 같이 전달돼요.';
+    }catch(e){
+      chatMsg.className='fx no';chatMsg.textContent='사진을 처리하지 못했어요.';
+    }finally{
+      chatPhotoInput.value='';
+    }
+  };
+  async function sendChatMsg(){
+    const text=chatInput.value.trim();
+    if(!text&&!chatPendingImage)return;
+    chatHistory.push({role:'user',content:text||'(사진 첨부)'});
+    renderChatLog();
+    chatInput.value='';
+    chatSendBtn.disabled=true;chatMsg.className='fx';chatMsg.textContent='AI가 답하는 중… (몇 초 걸릴 수 있어요)';
+    const fieldsByType={};
+    Object.keys(CONTENT_FORMS).forEach(t=>{ fieldsByType[t]=CONTENT_FORMS[t].fields.map(f=>({key:f.key,label:f.label,hint:f.ph||''})); });
+    const body={ action:'chatContentAny', fieldsByType, lockedType:chatType, messages:chatHistory };
+    if(chatPendingImage)body.image=chatPendingImage;
+    chatPendingImage=null;
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(body)});
+      let data=null;try{data=await res.json();}catch(e){}
+      if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 응답 실패');
+      chatHistory.push({role:'assistant',content:data.reply||'(응답 없음)'});
+      renderChatLog();
+      if(data.contentType)chatType=data.contentType;
+      Object.keys(data.fields||{}).forEach(k=>{ fieldsAccum[k]=data.fields[k]; });
+      refreshStatus();
+      chatMsg.className='fx ok';chatMsg.textContent=chatType?'✅ 답을 받았어요. 오른쪽에서 확인해보세요.':'✅ 답을 받았어요.';
+    }catch(e){
+      chatMsg.className='fx no';chatMsg.textContent=String(e.message||e);
+      chatHistory.pop();
+      renderChatLog();
+    }finally{
+      chatSendBtn.disabled=false;
+    }
+  }
+  chatSendBtn.onclick=sendChatMsg;
+  chatInput.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendChatMsg(); } };
+  refreshStatus();
+});}
+
+/* ---- 기존 컨텐츠 수정 (모든 선생님 계정에서 사용 가능) ---- */
+function viewContentEditPicker(){teacherMount(w=>{
+  w.appendChild(el('h1','title','✏️ 컨텐츠 수정'));
+  w.appendChild(el('div','hint','수정할 컨텐츠의 종류를 골라주세요. 기존에 추가된 항목 중에서 골라 내용을 고칠 수 있어요.'));
+  const grid=el('div');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:16px';
+  Object.keys(CONTENT_FORMS).forEach(type=>{
+    const spec=CONTENT_FORMS[type];
+    const card=el('div','chapter');card.style.cssText='cursor:pointer;padding:20px;text-align:center';
+    card.innerHTML='<div style="font-size:32px">'+spec.emoji+'</div><div class="ch-h" style="margin-top:8px">'+spec.label+'</div>';
+    card.onclick=()=>viewContentEditList(type);
+    grid.appendChild(card);
+  });
+  w.appendChild(grid);
+  const back=el('button','btn ghost','← 학생 목록으로');back.type='button';back.style.marginTop='20px';
+  back.onclick=()=>viewTeacherHome();
+  w.appendChild(back);
+});}
+function viewContentEditList(type){teacherMount(w=>{
+  const spec=CONTENT_FORMS[type];
+  const bk=el('button','backbtn','◀ 종류 다시 고르기');bk.onclick=viewContentEditPicker;w.appendChild(bk);
+  w.appendChild(el('h1','title',spec.emoji+' '+spec.label+' — 수정할 항목 고르기'));
+  if(type==='exam'&&USER.isAdmin){
+    const rb=el('button','btn ghost','🏷️ 수행평가 아이디 한꺼번에 정리하기');rb.type='button';rb.style.cssText='margin-top:10px;padding:8px 14px;font-size:13px';
+    const rmsg=el('div','hint');rmsg.style.whiteSpace='pre-line';
+    const callRenum=async(dry)=>{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'renumberExamIds',role:'teacher',requesterIsAdmin:true,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||'',dryRun:dry})});
+      const data=await res.json();if(!data||data.ok===false)throw new Error((data&&data.error)||'실패');return data;
+    };
+    rb.onclick=async()=>{
+      rb.disabled=true;rmsg.textContent='확인 중…';
+      try{
+        const r=await callRenum(true);
+        if(!r.changes.length){rmsg.textContent='이미 모두 정리되어 있어요.';rb.disabled=false;return;}
+        const list=r.changes.map(c=>c.title+'\n   '+c.from+'  →  '+c.to).join('\n');
+        if(!confirm('아이디를 이렇게 바꿀까요? ('+r.changes.length+'개)\n\n'+list)){rmsg.textContent='취소했어요.';rb.disabled=false;return;}
+        rmsg.textContent='바꾸는 중…';await callRenum(false);
+        rmsg.textContent='✅ '+r.changes.length+'개의 아이디를 바꿨어요. 화면을 새로고침하면 반영돼요.';
+        setTimeout(()=>viewContentEditList(type),1200);
+      }catch(e){rmsg.textContent='바꾸지 못했어요: '+e.message+' (서버 업데이트가 배포됐는지 확인해 주세요)';rb.disabled=false;}
+    };
+    w.appendChild(rb);w.appendChild(rmsg);
+  }
+  const box=el('div');box.style.marginTop='14px';
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  (async()=>{
+    let items=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=contentList&type='+encodeURIComponent(type));
+      const data=await res.json();
+      if(data&&data.ok)items=data.items||[];
+    }catch(e){}
+    // Story Writing은 제목 앞 "[1-2]" 번호로 순서를 관리하시니, 여기도 학생 화면과 똑같은 기준으로
+    // 정렬해서 보여줘요(번호 없는 다른 종류는 원래 순서 그대로예요 — storyTitleSortKey가 그냥 통과시켜요).
+    if(type==='story')items=sortStoryList(items);
+    loading.remove();
+    if(!items.length){box.appendChild(el('div','hint','아직 추가된 항목이 없어요.'));return;}
+    items.forEach(item=>{
+      const row=el('div','point');row.style.cursor='default';
+      row.appendChild(el('div','dot','●'));
+      row.appendChild(el('div','pt',(item.title||'(제목 없음)')+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+item.id+')</span>'));
+      const btnRow=el('div');btnRow.style.cssText='display:flex;gap:8px;margin-top:8px';
+      const editBtn=el('button','btn ghost','✏️ 수정');editBtn.type='button';editBtn.style.cssText='padding:6px 14px;font-size:13px';
+      editBtn.onclick=(ev)=>{ev.stopPropagation();viewAddContentForm(type,item.id);};
+      const delBtn=el('button','btn ghost','🗑 삭제');delBtn.type='button';delBtn.style.cssText='padding:6px 14px;font-size:13px;color:#b91c1c;border-color:#b91c1c';
+      delBtn.onclick=async(ev)=>{
+        ev.stopPropagation();
+        if(!confirm('"'+(item.title||item.id)+'" 항목을 삭제할까요? 이 작업은 되돌릴 수 없어요.'))return;
+        delBtn.disabled=true;delBtn.textContent='삭제 중…';
+        try{
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'deleteContent',contentType:type,id:item.id})});
+          let data=null;try{data=await res.json();}catch(e){}
+          if(data&&data.ok===false)throw new Error(data.error||'삭제 실패');
+          viewContentEditList(type);
+        }catch(e){
+          delBtn.disabled=false;delBtn.textContent='🗑 삭제';
+          alert('삭제하지 못했어요: '+String(e.message||e));
+        }
+      };
+      btnRow.appendChild(editBtn);btnRow.appendChild(delBtn);
+      row.appendChild(btnRow);
+      box.appendChild(row);
+    });
+  })();
+});}
+function viewAddContentForm(type,editId){teacherMount(w=>{
+  const spec=CONTENT_FORMS[type];
+  const isEdit=!!editId;
+  if(isEdit){
+    const bk=el('button','backbtn','◀ 목록으로');bk.onclick=()=>viewContentEditList(type);w.appendChild(bk);
+  }
+  w.appendChild(el('h1','title',spec.emoji+' '+spec.label+(isEdit?' 수정':' 추가')));
+  w.appendChild(el('div','hint',isEdit?'기존 내용을 불러왔어요. 원하는 부분만 고친 뒤 저장하면 돼요.':'한 줄 입력 칸은 짧은 정보를, 여러 줄 입력 칸은 안내(placeholder)에 나온 형식대로 한 줄에 하나씩 적어주세요. 필요 없는 줄은 비워둬도 돼요.'));
+
+  /* ---- 만들다가 중간에 꺼도 이어할 수 있게, 이 선생님(아이디) + 이 컨텐츠(종류·수정이면 그 글 id) 기준으로
+   *      이 브라우저에만 임시 저장해둬요 (다른 선생님 계정이나 다른 컴퓨터에서는 안 보여요, 서버 저장 아님). ---- */
+  function draftKey(){ return 'ewlDraft_'+(USER.id||'anon')+'_'+type+'_'+(editId||'new'); }
+  function saveDraftLocal(){
+    try{
+      const vals={};spec.fields.forEach(f=>{ vals[f.key]=refs[f.key]?refs[f.key].value:''; });
+      localStorage.setItem(draftKey(), JSON.stringify({fields:vals, imageUrls, chatHistory, storyPics, savedAt:Date.now()}));
+    }catch(e){}
+  }
+  function clearDraftLocal(){ try{ localStorage.removeItem(draftKey()); }catch(e){} }
+  function loadDraftLocal(){ try{ const raw=localStorage.getItem(draftKey()); return raw?JSON.parse(raw):null; }catch(e){ return null; } }
+  const draftBanner=el('div');draftBanner.style.cssText='display:none;background:#fff7e6;border:1px solid #f0c674;border-radius:10px;padding:10px 14px;margin-top:10px;align-items:center;gap:10px;flex-wrap:wrap';
+  const draftBannerText=el('span');draftBannerText.style.cssText='font-size:13.5px';draftBannerText.textContent='🕒 이어서 작성 중이던 내용을 불러왔어요.';
+  const draftClearBtn=el('button','btn ghost','새로 시작하기');draftClearBtn.type='button';draftClearBtn.style.cssText='padding:5px 12px;font-size:12.5px';
+  draftBanner.appendChild(draftBannerText);draftBanner.appendChild(draftClearBtn);
+  w.appendChild(draftBanner);
+
+  // ⚠️ 왼쪽에 선생님 메뉴 사이드바가 항상 붙어있게 되면서, 그만큼 이 화면(가운데 입력 폼 + 오른쪽
+  // AI 도구)이 쓸 수 있는 가로 폭이 줄어들었어요. 예전 기준(460+320px)은 노트북 화면에서 폭이
+  // 살짝 모자라 두 칸이 세로로 쌓여버렸고(그래서 AI 도구가 화면 아래로 밀려나 있었어요), 폭을
+  // 조금 줄여서 "메뉴 | 입력 폼 | AI 도구" 세 칸이 웬만한 화면에서는 항상 나란히 보이게 했어요.
+  const cols=el('div');cols.style.cssText='display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:14px';
+  const leftCol=el('div');leftCol.style.cssText='flex:1 1 380px;min-width:0;display:flex;flex-direction:column;gap:16px';
+  const rightCol=el('div');rightCol.style.cssText='flex:0 1 280px;min-width:250px;display:flex;flex-direction:column;gap:16px';
+  cols.appendChild(leftCol);cols.appendChild(rightCol);
+  w.appendChild(cols);
+  const aiBox=el('div');aiBox.style.cssText='background:#eef0ff;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px';
+  aiBox.appendChild(el('div',null,'<b>✨ 제목(주제)만 입력하고 나머지는 AI로 채워볼까요?</b>'));
+  aiBox.appendChild(el('div','hint','제목을 입력한 뒤 버튼을 누르면, 아직 비어있는 칸들을 AI가 채워줘요. 채워진 내용은 자유롭게 고친 뒤 저장하면 돼요. (설정 탭에 Claude API 키가 등록돼 있어야 동작해요)'));
+  const genRow=el('div');genRow.style.cssText='display:flex;gap:10px;align-items:center;flex-wrap:wrap';
+  const genBtn=el('button','btn blue','✨ AI로 나머지 채우기');genBtn.type='button';genBtn.style.cssText='padding:9px 16px;font-size:14px';
+  const genMsg=el('span','fx');genMsg.style.marginTop='0';
+  genRow.appendChild(genBtn);genRow.appendChild(genMsg);
+  aiBox.appendChild(genRow);
+  const imgDivider=el('div','hint','— 또는 —');imgDivider.style.cssText='margin:2px 0';aiBox.appendChild(imgDivider);
+  aiBox.appendChild(el('div','hint','수행평가 안내문이나 과제지를 사진으로 찍어서(여러 장 한꺼번에 선택 가능) 올리면, 사진 속 내용을 읽고 제목·과제 설명·조건 등을 자동으로 채워줘요. 과제지에 학생이 적어 넣는 칸·단계·표가 있으면 같은 이름·순서로 🧠 생각 정리 칸(마인드맵)에 옮겨줘서, 학생이 화면에서 같은 뼈대를 채울 수 있어요 (제목을 안 써도 돼요). 사진에 없는 세부 조건(예: 특정 문법 사용)은 과제 설명 문장 안에 그대로 담아주고, 문장 개수처럼 정확히 셀 수 있는 조건만 조건 칸에 넣어요.'));
+  const imgRow=el('div');imgRow.style.cssText='display:flex;gap:10px;align-items:center;flex-wrap:wrap';
+  const imgBtn=el('button','btn blue','📷 사진으로 자동 채우기');imgBtn.type='button';imgBtn.style.cssText='padding:9px 16px;font-size:14px';
+  const imgInput=el('input');imgInput.type='file';imgInput.accept='image/*';imgInput.multiple=true;imgInput.style.display='none';
+  const imgMsg=el('span','fx');imgMsg.style.marginTop='0';
+  imgRow.appendChild(imgBtn);imgRow.appendChild(imgMsg);
+  aiBox.appendChild(imgRow);aiBox.appendChild(imgInput);
+  if(isEdit)aiBox.style.display='none'; // AI 자동 채우기는 새로 만들 때만 필요해요 — 수정 화면에서는 숨겨요.
+  rightCol.appendChild(aiBox);
+  const form=el('div');form.style.cssText='display:flex;flex-direction:column;gap:14px';
+  const loadMsg=el('div','hint','불러오는 중…');
+  if(isEdit)form.appendChild(loadMsg);
+  const refs={};
+  spec.fields.forEach(f=>{
+    const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:6px';
+    wrap.appendChild(el('div','hint',f.label));
+    let inp;
+    if(f.type==='textarea'){inp=el('textarea','in');inp.rows=4;inp.style.cssText='padding:10px;font-size:14px;border-radius:10px;font-family:var(--sans);white-space:pre-wrap';}
+    else{inp=el('input','in');inp.type='text';inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';}
+    if(f.ph)inp.placeholder=f.ph;
+    if(isEdit&&type==='pattern'&&f.key==='unitId'){inp.value=editId;inp.disabled=true;}
+    // 대상 학년처럼 "숫자만" 받아야 하는 칸은 입력하는 중에 숫자가 아닌 글자를 바로 걸러내요
+    // (학생 계정의 '학년' 칸과 정확히 문자열로 매칭되는 값이라, 숫자 형태를 지켜야 매칭이 잘 돼요).
+    if(f.numeric){inp.inputMode='numeric';inp.addEventListener('input',()=>{const v=inp.value.replace(/[^0-9]/g,'');if(v!==inp.value)inp.value=v;});}
+    inp.oninput=()=>saveDraftLocal();
+    wrap.appendChild(inp);
+    refs[f.key]=inp;
+    form.appendChild(wrap);
+  });
+  leftCol.appendChild(form);
+
+  /* ---- 그림 이야기(Story) 전용: 그림별 정보(사진·크롭 위치·질문·단어·시작 문장) — 1~4장 ---- */
+  let storyPics=[];
+  let renderStoryPics=function(){};
+  const STORY_CROP_OPTS=CROP_OPTS;
+  const storyPicsBox=el('div');storyPicsBox.style.cssText='display:flex;flex-direction:column;gap:14px';
+  if(type==='story'){
+    const spHead=el('div');spHead.innerHTML='<b>🖼️ 그림별 정보 (1~4장)</b>';storyPicsBox.appendChild(spHead);
+    storyPicsBox.appendChild(el('div','hint','그림마다 사진(또는 AI 생성 그림)·질문·단어·시작 문장을 따로 넣어요. 사진 비율이 저마다 달라도 크롭 위치를 골라두면 학생 화면에는 항상 같은 크기로 예쁘게 잘려서 보여요.'));
+    const cardsWrap=el('div');cardsWrap.style.cssText='display:flex;flex-direction:column;gap:12px';storyPicsBox.appendChild(cardsWrap);
+    const addPicBtn=el('button','btn ghost','+ 그림 추가');addPicBtn.type='button';addPicBtn.style.cssText='align-self:flex-start;padding:8px 14px;font-size:13px';
+    storyPicsBox.appendChild(addPicBtn);
+    const picBtnRow2=el('div');picBtnRow2.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:-6px';
+    const splitBtn=el('button','btn ghost','🔪 그림 1장을 3~4등분해서 넣기');splitBtn.type='button';splitBtn.style.cssText='align-self:flex-start;padding:8px 14px;font-size:13px';
+    picBtnRow2.appendChild(splitBtn);storyPicsBox.appendChild(picBtnRow2);
+    const splitPanel=el('div');splitPanel.style.cssText='display:none;background:#f0f2ff;border-radius:10px;padding:12px;flex-direction:column;gap:8px';
+    storyPicsBox.appendChild(splitPanel);
+    splitPanel.appendChild(el('div','hint','필름스트립처럼 한 장짜리 그림 안에 여러 장면이 나란히 들어있을 때, 그 그림을 똑같은 크기로 나눠서 위의 "그림별 정보" 칸에 자동으로 채워줘요. (나누면 기존에 넣어둔 그림 정보는 사라지고 나눈 조각들로 새로 채워져요)'));
+    const splitRow=el('div');splitRow.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+    const splitFileBtn=el('button','btn ghost','🖼️ 나눌 이미지 선택');splitFileBtn.type='button';splitFileBtn.style.cssText='padding:6px 10px;font-size:12px';
+    const splitFileInput=el('input');splitFileInput.type='file';splitFileInput.accept='image/*';splitFileInput.style.display='none';
+    const splitCountSel=el('select','in');splitCountSel.style.cssText='padding:6px 10px;font-size:12px;border-radius:8px';
+    [['3','3등분'],['4','4등분']].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;splitCountSel.appendChild(o);});
+    const splitDirSel=el('select','in');splitDirSel.style.cssText='padding:6px 10px;font-size:12px;border-radius:8px';
+    function updateSplitDirOptions(){
+      const n=Number(splitCountSel.value)||3;
+      const prevVal=splitDirSel.value;
+      splitDirSel.innerHTML='';
+      const opts=[['h','가로로 나란히 있는 그림 (세로선으로 자르기)'],['v','세로로 나란히 있는 그림 (가로선으로 자르기)']];
+      if(n===4)opts.push(['grid','십자 모양(2x2)으로 나뉘어 있는 그림 (가로+세로선으로 4등분)']);
+      opts.forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;splitDirSel.appendChild(o);});
+      if(opts.some(o=>o[0]===prevVal))splitDirSel.value=prevVal;
+    }
+    splitCountSel.onchange=updateSplitDirOptions;
+    updateSplitDirOptions();
+    const splitPreviewName=el('span','hint');splitPreviewName.style.fontSize='12px';
+    const splitGoBtn=el('button','btn blue','나누기');splitGoBtn.type='button';splitGoBtn.style.cssText='padding:6px 14px;font-size:12px';
+    splitGoBtn.disabled=true;
+    const splitMsg=el('div','fx');
+    splitRow.appendChild(splitFileBtn);splitRow.appendChild(splitPreviewName);splitRow.appendChild(splitCountSel);splitRow.appendChild(splitDirSel);splitRow.appendChild(splitGoBtn);
+    splitPanel.appendChild(splitRow);splitPanel.appendChild(splitMsg);splitPanel.appendChild(splitFileInput);
+    splitBtn.onclick=()=>{ splitPanel.style.display=(splitPanel.style.display==='none'?'flex':'none'); };
+    let splitFile=null;
+    splitFileBtn.onclick=()=>splitFileInput.click();
+    splitFileInput.onchange=()=>{
+      splitFile=splitFileInput.files&&splitFileInput.files[0];
+      splitPreviewName.textContent=splitFile?splitFile.name:'';
+      splitGoBtn.disabled=!splitFile;
+    };
+    splitGoBtn.onclick=async()=>{
+      if(!splitFile)return;
+      splitGoBtn.disabled=true;splitMsg.className='fx';splitMsg.textContent='나누는 중…';
+      try{
+        const n=Number(splitCountSel.value)||3;
+        const dir=splitDirSel.value;
+        const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(splitFile);});
+        const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=dataUrl;});
+        const pieces=[];
+        // 그림칸은 항상 정사각형으로 꽉 채워 보여주기(cover) 때문에, 조각이 정사각형이 아니면 화면에
+        // 표시될 때 길쭉한 방향의 양 끝이 밀려나 안 보일 수 있어요. 그래서 조각을 자를 때부터 아예
+        // 정사각형 캔버스 한가운데에 비율 그대로(레터박스) 그려 넣어요 — 남는 위아래(또는 좌우) 여백은
+        // 검은색으로 채우고, 이렇게 만들어진 정사각형 이미지 자체를 저장하니 나중에 크롭/줌을 어떻게
+        // 조정해도 원본 조각의 어느 부분도 잘리지 않아요.
+        for(let i=0;i<n;i++){
+          let cw,ch,sx,sy;
+          if(dir==='grid'){
+            // 십자(2x2) 분할: 왼쪽 위→오른쪽 위→왼쪽 아래→오른쪽 아래 순서로 잘라요.
+            cw=Math.floor(img.width/2);ch=Math.floor(img.height/2);
+            const col=i%2, row=Math.floor(i/2);
+            sx=cw*col;sy=ch*row;
+          }else{
+            cw=dir==='h'?Math.floor(img.width/n):img.width;
+            ch=dir==='h'?img.height:Math.floor(img.height/n);
+            sx=dir==='h'?cw*i:0;
+            sy=dir==='h'?0:ch*i;
+          }
+          const side=640;
+          const canvas=document.createElement('canvas');
+          canvas.width=side;canvas.height=side;
+          const ctx=canvas.getContext('2d');
+          ctx.fillStyle='#000';ctx.fillRect(0,0,side,side);
+          const fitScale=Math.min(side/cw,side/ch);
+          const dw=Math.max(1,Math.round(cw*fitScale)),dh=Math.max(1,Math.round(ch*fitScale));
+          const dx=Math.round((side-dw)/2),dy=Math.round((side-dh)/2);
+          ctx.drawImage(img,sx,sy,cw,ch,dx,dy,dw,dh);
+          let quality=0.85,out=canvas.toDataURL('image/jpeg',quality);
+          while(out.length>40000&&quality>0.35){quality-=0.1;out=canvas.toDataURL('image/jpeg',quality);}
+          pieces.push(out);
+        }
+        // 조각의 데이터 URL(url)에서 base64 부분만 뽑아 _imgB64/_imgMime에도 같이 저장해요 — 이게 없으면
+        // "✨ AI로 질문·단어 채우기"가 이 조각 그림을 전혀 못 보고 이야기 제목만 보고 단어를 지어내서,
+        // 실제로 그림에 없는 단어가 자꾸 섞이거나 그림마다 비슷한 단어가 겹치는 문제가 있었어요.
+        storyPics=pieces.map(url=>({url,crop:'center center',zoom:100,questions:'',words:'',starter:'',_imgB64:url.split(',')[1]||'',_imgMime:'image/jpeg'}));
+        renderStoryPics();refreshPreview();saveDraftLocal();
+        splitMsg.className='fx ok';splitMsg.textContent=n+'등분해서 그림 칸을 새로 채웠어요! 조각이 정사각형이 아니어도 잘리지 않도록 위아래(또는 좌우) 여백을 검은색으로 채워 전체가 다 보이게 넣었어요. 이제 각 칸에 질문·단어를 채워주세요.';
+      }catch(e){
+        splitMsg.className='fx no';splitMsg.textContent='나누지 못했어요: '+String(e.message||e);
+      }finally{
+        splitGoBtn.disabled=false;
+      }
+    };
+    function newPic(){ return {url:'', crop:'center center', zoom:100, questions:'', words:'', starter:''}; }
+    renderStoryPics=function(){
+      cardsWrap.innerHTML='';
+      storyPics.forEach((p,i)=>{
+        const card=el('div');card.style.cssText='background:#f7f7fb;border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px';
+        const head=el('div');head.style.cssText='display:flex;justify-content:space-between;align-items:center';
+        head.appendChild(el('b',null,'그림 '+(i+1)));
+        const rmBtn=el('button','btn ghost','✕ 삭제');rmBtn.type='button';rmBtn.style.cssText='padding:4px 10px;font-size:12px';
+        rmBtn.disabled=storyPics.length<=1;
+        rmBtn.onclick=()=>{storyPics.splice(i,1);renderStoryPics();refreshPreview();saveDraftLocal();};
+        head.appendChild(rmBtn);card.appendChild(head);
+        const row=el('div');row.style.cssText='display:flex;gap:12px;flex-wrap:wrap';
+        const thumbCol=el('div');thumbCol.style.cssText='display:flex;flex-direction:column;gap:6px;width:150px';
+        thumbCol.appendChild(buildCropPicker(p,()=>p.url,150,()=>{refreshPreview();saveDraftLocal();}));
+        thumbCol.appendChild(el('div','hint','👆 그림을 눌러(또는 드래그해서) 보여줄 부분을 정확히 골라보세요.'));
+        const upRow=el('div');upRow.style.cssText='display:flex;gap:6px;flex-wrap:wrap';
+        const upBtn=el('button','btn ghost','📤 업로드');upBtn.type='button';upBtn.style.cssText='padding:6px 10px;font-size:12px';
+        const upInput=el('input');upInput.type='file';upInput.accept='image/*';upInput.style.display='none';
+        const genBtnP=el('button','btn ghost','🎨 AI 생성');genBtnP.type='button';genBtnP.style.cssText='padding:6px 10px;font-size:12px';
+        upRow.appendChild(upBtn);upRow.appendChild(genBtnP);thumbCol.appendChild(upRow);
+        const upMsg=el('div','fx');thumbCol.appendChild(upMsg);
+        upBtn.onclick=()=>upInput.click();
+        upInput.onchange=async()=>{
+          const file=upInput.files&&upInput.files[0];if(!file)return;
+          upMsg.className='fx';upMsg.textContent='업로드 중…';
+          try{
+            const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});
+            const base64=dataUrl.split(',')[1];
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'uploadContentImage',imageBase64:base64,mimeType:file.type||'image/jpeg',filename:file.name||''})});
+            const data=await res.json();
+            if(!data||!data.ok)throw new Error((data&&data.error)||'업로드하지 못했어요.');
+            p.url=data.url;p._imgB64=base64;p._imgMime=file.type||'image/jpeg';p._imgDesc='';
+            renderStoryPics();refreshPreview();saveDraftLocal();
+          }catch(e){ upMsg.className='fx no';upMsg.textContent=String(e.message||e); }
+          finally{ upInput.value=''; }
+        };
+        genBtnP.onclick=async()=>{
+          const prompt=window.prompt('어떤 그림을 만들지 짧게 설명해주세요 (예: 소년이 부엌에서 바나나 그림을 그린다, 만화 스타일)');
+          if(!prompt)return;
+          genBtnP.disabled=true;upMsg.className='fx';upMsg.textContent='그림을 그리는 중…';
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'generateContentImage',prompt})});
+            const data=await res.json();
+            if(!data||!data.ok)throw new Error((data&&data.error)||'그림을 생성하지 못했어요.');
+            p.url=data.url;p._imgDesc=prompt;p._imgB64='';p._imgMime='';
+            renderStoryPics();refreshPreview();saveDraftLocal();
+          }catch(e){ upMsg.className='fx no';upMsg.textContent=String(e.message||e); }
+          finally{ genBtnP.disabled=false; }
+        };
+        const aiFillBtn=el('button','btn ghost','✨ AI로 질문·단어 채우기');aiFillBtn.type='button';aiFillBtn.style.cssText='padding:6px 10px;font-size:12px';
+        // ⚠️ 이미 단어가 겹치거나(예: 다른 그림에서 쓴 "bucket"을 또 씀) 그림을 잘못 읽어서 엉뚱한
+        // 결과가 나왔을 때, "다시 시킬 수 있는 게 없다"는 요청으로 추가한 재생성 버튼이에요.
+        // 원래 "AI로 채우기" 버튼은 이미 값이 채워진 칸은 "그대로 두라"고 AI에게 보내서, 한 번
+        // 채워지고 나면 다시 눌러도 사실상 아무것도 안 바뀌었어요(재시도가 안 되는 버그나 다름없었어요).
+        // 이 버튼은 지금 채워진 값을 아예 AI에게 안 보내고(새로 만들라고), 결과가 오면 무조건
+        // 덮어써서 진짜로 "다시 생성"이 되게 해요.
+        const aiRedoBtn=el('button','btn ghost','🔄 다시 생성');aiRedoBtn.type='button';aiRedoBtn.style.cssText='padding:6px 10px;font-size:12px';
+        const aiFillDifficultySel=el('select','in');aiFillDifficultySel.style.cssText='padding:4px 8px;font-size:11.5px;border-radius:8px';
+        [['초3-4','난이도: 쉬움(초3-4)'],['초5-6','난이도: 초5-6'],['중등','난이도: 중등(더 어렵게)']].forEach(([v,l])=>{const o=document.createElement('option');o.value=v;o.textContent=l;aiFillDifficultySel.appendChild(o);});
+        aiFillDifficultySel.value='초5-6';
+        const aiFillMsg=el('div','fx');
+        const runAiFillPic=async(force)=>{
+          if(force&&(p.questions||p.words||p.starter)&&!window.confirm('지금 있는 질문·단어·시작 문장을 지우고 새로 만들까요?'))return;
+          const picFields=[
+            {key:'questions',label:'질문 (영어, 한 줄에 하나, 예/아니오로 답할 수 없는 상상 질문 정확히 2개)',hint:'What is the boy going to do next?\nHow do you think the girl feels, and why?'},
+            {key:'words',label:'단어 (영어|한글, 한 줄에 하나, 그림에 실제로 보이는 것만 3~5개. ⚠️ "green gloves"·"yellow boots"처럼 색깔 형용사를 붙이지 말고 "gloves"·"boots"처럼 사물 이름(명사)만 — 그림 속 색은 학생이 직접 보고 알면 되니까 단어에는 색을 넣지 마)',hint:'banana|바나나\ndraw|그리다'},
+            {key:'starter',label:'시작 문장 (선택, 영어 한 문장)',hint:'First, George draws a picture.'}
+          ];
+          const seed={};
+          // force일 때는 지금 채워진 값을 seed로 안 보내요 — "이미 채워진 값(그대로 두기)"로 보이면
+          // AI가 새로 안 만들고 그대로 돌려주니까요. 대신 아래서 결과를 받으면 무조건 덮어써요.
+          if(!force){
+            if(p.questions&&p.questions.trim())seed.questions=p.questions.trim();
+            if(p.words&&p.words.trim())seed.words=p.words.trim();
+            if(p.starter&&p.starter.trim())seed.starter=p.starter.trim();
+          }
+          const titleVal=(refs.title&&refs.title.value||'').trim();
+          const introVal=(refs.intro&&refs.intro.value||'').trim();
+          if(titleVal)seed.storyTitle=titleVal;
+          if(introVal)seed.storyIntro=introVal;
+          seed.pictureNumber=String(i+1)+' / '+storyPics.length;
+          if(p._imgDesc)seed.pictureDescription=p._imgDesc;
+          const diffLabelMap={'초3-4':'초등 3-4학년 수준 (짧고 쉬운 단어·문장 위주)','초5-6':'초등 5-6학년 수준 (조금 더 다양한 단어와 문장 구조)','중등':'중학생 수준 (더 풍부한 어휘와 문장을 쓰되, 여전히 명확하고 이해하기 쉽게)'};
+          seed.difficulty=diffLabelMap[aiFillDifficultySel.value]||aiFillDifficultySel.value;
+          // 다른 그림에서 이미 쓴 단어·질문을 모아서 같이 보내면, AI가 이번 그림에서는 그걸 반복하지 않고
+          // 새로운 단어·질문으로 채워줄 수 있어요(그림이 여러 장이라 단어/질문이 자꾸 비슷하게 겹치던 문제를 줄여줘요).
+          const otherWordsArr=[],otherQuestionsArr=[];
+          storyPics.forEach((op,oi)=>{
+            if(oi===i)return;
+            splitWordLines(op.words).forEach(line=>{
+              const en=parseWordLine(line).en;
+              if(en)otherWordsArr.push(en);
+            });
+            String(op.questions||'').split('\n').map(s=>s.trim()).filter(Boolean).forEach(q=>otherQuestionsArr.push(q));
+          });
+          if(otherWordsArr.length)seed.otherWords=otherWordsArr.join(', ');
+          if(otherQuestionsArr.length)seed.otherQuestions=otherQuestionsArr.join(' / ');
+          aiFillBtn.disabled=true;aiRedoBtn.disabled=true;aiFillMsg.className='fx';aiFillMsg.textContent=force?'다시 만드는 중…':'AI가 채우는 중…';
+          try{
+            const body={action:'generateContent',contentType:'story',seed,fields:picFields};
+            const dataUrlMatch=!p._imgB64&&/^data:([^;]+);base64,(.+)$/.exec(p.url||'');
+            if(p._imgB64&&p._imgMime)body.image={mediaType:p._imgMime,data:p._imgB64};
+            else if(dataUrlMatch)body.image={mediaType:dataUrlMatch[1],data:dataUrlMatch[2]};
+            else if(/^https?:\/\//i.test(p.url||''))body.image={url:p.url};
+            const callAI=async(b)=>{
+              const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(b)});
+              let data=null;try{data=await res.json();}catch(e){}
+              if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 자동 채우기 실패');
+              const results=data.results||{};
+              return (results.claude&&results.claude.fields)||(results.gpt&&results.gpt.fields)||null;
+            };
+            let picked=await callAI(body);
+            if(!picked||!Object.keys(picked).length){aiFillMsg.className='fx';aiFillMsg.textContent='채울 빈 칸이 없었어요.';return;}
+            // ⚠️ 단어 중복을 프롬프트만 믿지 않고 여기서 직접 검사해요 — 다른 그림에 이미 있는 단어(색·복수형 차이 무시)나
+            // 같은 그림 안에서 두 번 나온 단어를 걸러내고, 걸러진 게 있으면 "이 단어들은 빼고" 한 번 더 시켜서 채워요.
+            const otherKeys=new Set(otherWordsArr.map(normWordKey).filter(Boolean));
+            const cleanWords=(txt)=>{
+              const seen=new Set(),kept=[],dropped=[];
+              splitWordLines(txt).map(stripColorFromWordLine).forEach(line=>{
+                const w=parseWordLine(line);const k=normWordKey(w.en);
+                if(!k)return;
+                if(otherKeys.has(k)||seen.has(k)){dropped.push(w.en);return;}
+                seen.add(k);kept.push(line);
+              });
+              return {kept,dropped};
+            };
+            if(picked.words!==undefined&&(force||!seed.words)){
+              let cw=cleanWords(picked.words);
+              if(cw.dropped.length||cw.kept.length<3){
+                aiFillMsg.textContent='겹치는 단어('+cw.dropped.join(', ')+')를 빼고 다시 만드는 중…';
+                try{
+                  const body2=JSON.parse(JSON.stringify(body));
+                  body2.seed.bannedWords=Array.from(new Set(otherWordsArr.concat(cw.dropped))).join(', ');
+                  body2.seed.keepWords=cw.kept.join(' / ');
+                  const picked2=await callAI(body2);
+                  if(picked2&&picked2.words){
+                    const cw2=cleanWords(picked2.words);
+                    if(cw2.kept.length>=cw.kept.length){cw=cw2;picked.words=picked2.words;}
+                  }
+                }catch(e){}
+              }
+              picked.words=cw.kept.join('\n');
+              // 한글 뜻이 빠진 단어("tail")는 사전으로 뜻을 채워요.
+              const lines2=splitWordLines(picked.words);
+              for(let li=0;li<lines2.length;li++){
+                const w=parseWordLine(lines2[li]);
+                if(w.en&&!w.ko){
+                  try{
+                    const r2=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'lookupWord',word:w.en})});
+                    const d2=await r2.json();
+                    const e0=d2&&d2.ok&&d2.result&&((d2.result.entries&&d2.result.entries[0])||d2.result);
+                    if(e0&&e0.meaningKo)lines2[li]=w.en+'|'+e0.meaningKo;
+                  }catch(e){}
+                }
+              }
+              picked.words=lines2.join('\n');
+            }
+            if(picked.questions!==undefined)picked.questions=fixQuestionLines(picked.questions);
+            if(picked.questions!==undefined&&(force||!seed.questions))p.questions=picked.questions;
+            if(picked.words!==undefined&&(force||!seed.words))p.words=picked.words;
+            if(picked.starter!==undefined&&(force||!seed.starter))p.starter=picked.starter;
+            renderStoryPics();refreshPreview();saveDraftLocal();
+            if(force){aiFillMsg.className='fx ok';aiFillMsg.textContent='새로 만들었어요! 그림·단어가 잘 맞는지 확인해보세요.';}
+          }catch(e){
+            aiFillMsg.className='fx no';aiFillMsg.textContent=String(e.message||e);
+          }finally{
+            aiFillBtn.disabled=false;aiRedoBtn.disabled=false;
+          }
+        };
+        aiFillBtn.onclick=()=>runAiFillPic(false);
+        aiRedoBtn.onclick=()=>runAiFillPic(true);
+        row.appendChild(thumbCol);
+        const fieldsCol=el('div');fieldsCol.style.cssText='flex:1 1 220px;display:flex;flex-direction:column;gap:8px;min-width:200px';
+        const mkField=(labelText,ph,rows,val,onInput)=>{
+          const w2=el('div');w2.style.cssText='display:flex;flex-direction:column;gap:3px';
+          w2.appendChild(el('div','hint',labelText));
+          const ta=rows?el('textarea','in'):el('input','in');
+          if(rows){ta.rows=rows;}else{ta.type='text';}
+          ta.style.cssText='padding:8px;font-size:13px;border-radius:8px;font-family:var(--sans)';
+          ta.placeholder=ph;ta.value=val||'';
+          ta.oninput=()=>{onInput(ta.value);saveDraftLocal();};
+          w2.appendChild(ta);
+          return w2;
+        };
+        const aiFillRow=el('div');aiFillRow.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+        aiFillRow.appendChild(aiFillBtn);aiFillRow.appendChild(aiRedoBtn);aiFillRow.appendChild(aiFillDifficultySel);aiFillRow.appendChild(aiFillMsg);
+        fieldsCol.appendChild(aiFillRow);
+        fieldsCol.appendChild(mkField('질문 (한 줄에 하나, 영어로, 예/아니오 질문 X, 상상 질문 2개 권장)','What is the boy going to do next?\nHow do you think the girl feels, and why?',2,p.questions,v=>p.questions=v));
+        const wordsWrap=mkField('단어 (한 줄에 하나: en|ko)','banana|바나나\ndraw|그리다',3,p.words,v=>p.words=v);
+        const wordsTa=wordsWrap.querySelector('textarea');
+        const wordImgBtn=el('button','btn ghost','🖼️ 단어 그림 자동 생성 ("그림 보고 맞추기"용)');wordImgBtn.type='button';wordImgBtn.style.cssText='padding:6px 10px;font-size:12px;align-self:flex-start;margin-top:4px';
+        const wordImgMsg=el('div','fx');
+        wordImgBtn.onclick=async()=>{
+          const lines=splitWordLines(wordsTa.value);
+          if(!lines.length){wordImgMsg.className='fx no';wordImgMsg.textContent='먼저 단어를 입력해주세요.';return;}
+          const parsed=lines.map(parseWordLine);
+          const todo=parsed.filter(w=>w.en&&!w.img);
+          if(!todo.length){wordImgMsg.className='fx';wordImgMsg.textContent='이미 모든 단어에 그림이 있어요.';return;}
+          wordImgBtn.disabled=true;
+          for(let idx=0;idx<todo.length;idx++){
+            const w=todo[idx];
+            wordImgMsg.className='fx';wordImgMsg.textContent='그림 생성 중… ('+(idx+1)+'/'+todo.length+': '+w.en+')';
+            try{
+              const prompt='a single "'+w.en+'", simple flat icon illustration, plain white background, no text, no letters';
+              const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'generateContentImage',prompt})});
+              const data=await res.json();
+              if(!data||!data.ok)throw new Error((data&&data.error)||'그림 생성 실패');
+              w.img=data.url;
+            }catch(e){
+              wordImgMsg.className='fx no';wordImgMsg.textContent='"'+w.en+'" 그림 생성 실패: '+String(e.message||e)+' (나머지는 계속 진행해요)';
+            }
+          }
+          const newText=parsed.map(w=>w.en+'|'+w.ko+(w.img?'|'+w.img:'')).join('\n');
+          wordsTa.value=newText;p.words=newText;saveDraftLocal();
+          wordImgMsg.className='fx ok';wordImgMsg.textContent='단어 그림 생성 완료!';
+          wordImgBtn.disabled=false;
+        };
+        wordsWrap.appendChild(wordImgBtn);wordsWrap.appendChild(wordImgMsg);
+        fieldsCol.appendChild(wordsWrap);
+        fieldsCol.appendChild(mkField('시작 문장 (선택)','First, George draws ...',0,p.starter,v=>p.starter=v));
+        row.appendChild(fieldsCol);
+        card.appendChild(row);
+        cardsWrap.appendChild(card);
+      });
+      addPicBtn.disabled=storyPics.length>=4;
+    }
+    addPicBtn.onclick=()=>{ if(storyPics.length<4){ storyPics.push(newPic()); renderStoryPics(); saveDraftLocal(); } };
+    if(!storyPics.length)storyPics.push(newPic());
+    renderStoryPics();
+    leftCol.appendChild(storyPicsBox);
+  }
+
+  /* ---- 사진 업로드 (문법/문단/기사/수행평가 어떤 종류든 똑같이 쓸 수 있어요) ---- */
+  const uploadBox=el('div');uploadBox.style.cssText='background:#f7f7fb;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px';
+  uploadBox.appendChild(el('div',null,'<b>🖼️ 이미지 추가 (선택)</b>'));
+  uploadBox.appendChild(el('div','hint','사진·그림 파일을 올리면 학생 화면에 그대로 보여요. 여러 장 올릴 수 있고, 미리보기에서 ✕를 눌러 뺄 수 있어요.'));
+  const thumbWrap=el('div');thumbWrap.style.cssText='display:flex;flex-wrap:wrap;gap:10px';
+  uploadBox.appendChild(thumbWrap);
+  const uploadRow=el('div');uploadRow.style.cssText='display:flex;gap:10px;align-items:center;flex-wrap:wrap';
+  const uploadBtn=el('button','btn ghost','📤 이미지 업로드');uploadBtn.type='button';uploadBtn.style.cssText='padding:8px 14px;font-size:13px';
+  const uploadInput=el('input');uploadInput.type='file';uploadInput.accept='image/*';uploadInput.style.display='none';
+  const uploadMsg=el('span','fx');
+  uploadRow.appendChild(uploadBtn);uploadRow.appendChild(uploadMsg);
+  uploadBox.appendChild(uploadRow);uploadBox.appendChild(uploadInput);
+  if(type!=='story')rightCol.appendChild(uploadBox); // 그림 이야기는 그림별로 따로 업로드해서(위 leftCol) 공용 업로드 칸이 필요 없어요.
+
+  /* ---- AI로 그림 생성 (업로드할 사진이 없을 때 대신 그려달라고 하는 별도 도구) ---- */
+  const genImgBox=el('div');genImgBox.style.cssText='background:#f7f7fb;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px';
+  genImgBox.appendChild(el('div',null,'<b>🎨 AI로 그림 생성하기</b>'));
+  genImgBox.appendChild(el('div','hint','올릴 사진이 없으면, 원하는 그림을 설명만 적어서 AI가 직접 그려주는 것도 가능해요 (설정 탭에 OPENAI_API_KEY가 있어야 동작해요). 만든 그림은 위 이미지 목록에 같이 추가돼요.'));
+  const genImgInput=el('input','in');genImgInput.type='text';genImgInput.placeholder='예: 도서관에서 책을 읽는 학생, 만화 스타일';genImgInput.style.cssText='padding:8px 10px;font-size:13px;border-radius:8px';
+  const genImgBtn=el('button','btn ghost','🎨 AI로 그림 생성하기');genImgBtn.type='button';genImgBtn.style.cssText='padding:8px 14px;font-size:13px;align-self:flex-start';
+  genImgBox.appendChild(genImgInput);genImgBox.appendChild(genImgBtn);
+  const genImgMsg=el('span','fx');genImgBox.appendChild(genImgMsg);
+  if(type!=='story')rightCol.appendChild(genImgBox); // 그림 이야기는 그림별 카드 안에 자체 "AI 생성" 버튼이 있어요.
+  let imageUrls=[];
+  function renderThumbs(){
+    thumbWrap.innerHTML='';
+    imageUrls.forEach((u,i)=>{
+      const cell=el('div');cell.style.cssText='position:relative;width:96px;height:96px';
+      const img=document.createElement('img');img.src=fixDriveImageUrl(u);img.style.cssText='width:100%;height:100%;object-fit:cover;border-radius:8px;display:block';
+      const rm=el('button','btn ghost','✕');rm.type='button';rm.style.cssText='position:absolute;top:-6px;right:-6px;width:22px;height:22px;padding:0;font-size:11px;border-radius:50%;background:#fff;line-height:1';
+      rm.onclick=()=>{imageUrls.splice(i,1);renderThumbs();refreshPreview();saveDraftLocal();};
+      cell.appendChild(img);cell.appendChild(rm);
+      thumbWrap.appendChild(cell);
+    });
+  }
+  uploadBtn.onclick=()=>uploadInput.click();
+  uploadInput.onchange=async()=>{
+    const file=uploadInput.files&&uploadInput.files[0];
+    if(!file)return;
+    uploadMsg.className='fx';uploadMsg.textContent='업로드 중…';
+    try{
+      const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});
+      const base64=dataUrl.split(',')[1];
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'uploadContentImage',imageBase64:base64,mimeType:file.type||'image/jpeg',filename:file.name||''})});
+      const data=await res.json();
+      if(!data||!data.ok)throw new Error((data&&data.error)||'업로드하지 못했어요.');
+      imageUrls.push(data.url);renderThumbs();refreshPreview();saveDraftLocal();
+      uploadMsg.className='fx ok';uploadMsg.textContent='✅ 업로드했어요!';
+    }catch(e){ uploadMsg.className='fx no';uploadMsg.textContent=String(e.message||e); }
+    finally{ uploadInput.value=''; }
+  };
+  genImgBtn.onclick=async()=>{
+    const prompt=genImgInput.value.trim();
+    if(!prompt){genImgMsg.className='fx no';genImgMsg.textContent='어떤 그림을 만들지 먼저 적어주세요.';return;}
+    genImgBtn.disabled=true;genImgMsg.className='fx';genImgMsg.textContent='그림을 그리는 중… (몇 초~수십 초 걸릴 수 있어요)';
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'generateContentImage',prompt})});
+      const data=await res.json();
+      if(!data||!data.ok)throw new Error((data&&data.error)||'그림을 생성하지 못했어요.');
+      imageUrls.push(data.url);renderThumbs();refreshPreview();saveDraftLocal();
+      genImgMsg.className='fx ok';genImgMsg.textContent='✅ 그림을 만들었어요! 마음에 안 들면 미리보기에서 지우고 다시 시도해보세요.';
+    }catch(e){ genImgMsg.className='fx no';genImgMsg.textContent=String(e.message||e); }
+    finally{ genImgBtn.disabled=false; }
+  };
+
+  /* ---- AI와 대화하며 만들기 (여러 번 주고받으며 다듬기 — 추가·수정 화면 둘 다에서 써요) ---- */
+  const chatBox=el('div');chatBox.style.cssText='background:#eef0ff;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px';
+  chatBox.appendChild(el('div',null,'<b>🤖 AI와 대화하며 만들기</b>'));
+  chatBox.appendChild(el('div','hint','채팅으로 요청하면 AI가 위 입력 칸들을 채우거나 고쳐줘요. "이 문장 더 쉽게 바꿔줘", "조건 하나 추가해줘"처럼 여러 번 이어서 다듬을 수 있어요. (설정 탭에 Claude 또는 GPT API 키가 등록돼 있어야 동작해요)'));
+  const chatLog=el('div');chatLog.style.cssText='display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto;padding-right:4px';
+  chatBox.appendChild(chatLog);
+  const chatInputRow=el('div');chatInputRow.style.cssText='display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap';
+  const chatInput=el('textarea','in');chatInput.rows=2;chatInput.placeholder='예: 현재완료 사용 조건을 하나 추가해줘 / 과제 설명을 더 쉽게 풀어써줘';chatInput.style.cssText='flex:1;min-width:200px;padding:10px;font-size:14px;border-radius:10px;font-family:var(--sans)';
+  const chatPhotoBtn=el('button','btn ghost','📷 사진 첨부');chatPhotoBtn.type='button';chatPhotoBtn.style.cssText='padding:9px 12px;font-size:13px';
+  const chatSendBtn=el('button','btn blue','보내기');chatSendBtn.type='button';chatSendBtn.style.cssText='padding:9px 16px;font-size:14px';
+  const chatPhotoInput=el('input');chatPhotoInput.type='file';chatPhotoInput.accept='image/*';chatPhotoInput.style.display='none';
+  chatInputRow.appendChild(chatInput);chatInputRow.appendChild(chatPhotoBtn);chatInputRow.appendChild(chatSendBtn);
+  chatBox.appendChild(chatInputRow);chatBox.appendChild(chatPhotoInput);
+  const chatMsg=el('div','fx');chatBox.appendChild(chatMsg);
+  rightCol.appendChild(chatBox);
+
+  /* ---- 미리보기 (학생 화면 느낌 미리 보기) — AI와 대화하거나 직접 입력 칸을 고칠 때마다 새로고침해서 확인할 수 있어요 ---- */
+  const previewBox=el('div');previewBox.style.cssText='background:#fff;border:1.5px solid #e2e2ee;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px';
+  const previewHead=el('div');previewHead.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap';
+  previewHead.appendChild(el('div',null,'<b>👀 미리보기 (학생 화면 느낌)</b>'));
+  const previewRefreshBtn=el('button','btn ghost','🔄 새로고침');previewRefreshBtn.type='button';previewRefreshBtn.style.cssText='padding:6px 12px;font-size:13px';
+  previewHead.appendChild(previewRefreshBtn);
+  previewBox.appendChild(previewHead);
+  previewBox.appendChild(el('div','hint','실제 학생 화면을 그대로 재현한 건 아니고, 지금까지 채워진 제목·설명·조건·이미지가 대략 어떤 느낌으로 보일지 참고용으로 보여주는 화면이에요.'));
+  const previewContent=el('div');previewContent.style.cssText='background:#f7f7fb;border-radius:10px;padding:14px';
+  previewBox.appendChild(previewContent);
+  leftCol.appendChild(previewBox);
+  function refreshPreview(){
+    const vals={};spec.fields.forEach(f=>{ vals[f.key]=refs[f.key]?refs[f.key].value:''; });
+    previewContent.innerHTML='';
+    previewContent.appendChild(buildContentPreview(type, vals, imageUrls));
+  }
+  previewRefreshBtn.onclick=refreshPreview;
+  refreshPreview();
+
+  let chatHistory=[];
+  let chatPendingImage=null;
+  function chatBubble(role,text){
+    const b=el('div');
+    const isUser=role==='user';
+    b.style.cssText='max-width:85%;padding:8px 12px;border-radius:12px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;'+(isUser?'align-self:flex-end;background:#4338ca;color:#fff':'align-self:flex-start;background:#fff;color:#1c1c28;border:1px solid #e2e2ee');
+    b.textContent=text;
+    return b;
+  }
+  function renderChatLog(){
+    chatLog.innerHTML='';
+    chatHistory.forEach(m=>{ chatLog.appendChild(chatBubble(m.role,m.content)); });
+    chatLog.scrollTop=chatLog.scrollHeight;
+  }
+  chatPhotoBtn.onclick=()=>chatPhotoInput.click();
+  chatPhotoInput.onchange=async()=>{
+    const file=chatPhotoInput.files&&chatPhotoInput.files[0];
+    if(!file)return;
+    try{
+      const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});
+      const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=dataUrl;});
+      const maxDim=1600;let w2=img.width,h2=img.height;
+      if(w2>maxDim||h2>maxDim){const scale=maxDim/Math.max(w2,h2);w2=Math.round(w2*scale);h2=Math.round(h2*scale);}
+      const canvas=document.createElement('canvas');canvas.width=w2;canvas.height=h2;
+      canvas.getContext('2d').drawImage(img,0,0,w2,h2);
+      const jpegUrl=canvas.toDataURL('image/jpeg',0.82);
+      chatPendingImage={mediaType:'image/jpeg',data:jpegUrl.split(',')[1]};
+      chatMsg.className='fx ok';chatMsg.textContent='📎 사진을 첨부했어요. 메시지를 보내면 같이 전달돼요.';
+    }catch(e){
+      chatMsg.className='fx no';chatMsg.textContent='사진을 처리하지 못했어요.';
+    }finally{
+      chatPhotoInput.value='';
+    }
+  };
+  async function sendChatMsg(){
+    const text=chatInput.value.trim();
+    if(!text&&!chatPendingImage)return;
+    chatHistory.push({role:'user',content:text||'(사진 첨부)'});
+    renderChatLog();
+    chatInput.value='';
+    chatSendBtn.disabled=true;chatMsg.className='fx';chatMsg.textContent='AI가 답하는 중… (몇 초 걸릴 수 있어요)';
+    const currentValues={};spec.fields.forEach(f=>{const v=refs[f.key].value;if(v&&v.trim())currentValues[f.key]=v.trim();});
+    const body={
+      action:'chatContent',
+      fields:spec.fields.map(f=>({key:f.key,label:f.label,hint:f.ph||''})),
+      messages:chatHistory,
+      currentValues
+    };
+    if(chatPendingImage)body.image=chatPendingImage;
+    if(type==='story'&&Array.isArray(storyPics)&&storyPics.length){
+      body.storyPics=storyPics.map((p,idx)=>({
+        index:idx+1,
+        hasImage:!!(p.url&&p.url.trim()),
+        questions:p.questions||'',
+        words:p.words||'',
+        starter:p.starter||''
+      }));
+    }
+    chatPendingImage=null;
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(body)});
+      let data=null;try{data=await res.json();}catch(e){}
+      if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 응답 실패');
+      chatHistory.push({role:'assistant',content:data.reply||'(응답 없음)'});
+      renderChatLog();
+      let n=0;
+      Object.keys(data.fields||{}).forEach(k=>{ if(refs[k]){refs[k].value=data.fields[k];n++;} });
+      if(type==='story'&&data.pics&&typeof data.pics==='object'){
+        Object.keys(data.pics).forEach(k=>{
+          const idx=Number(k)-1;
+          if(!storyPics[idx])return;
+          const pf=data.pics[k]||{};
+          if(pf.questions!==undefined){storyPics[idx].questions=pf.questions;n++;}
+          if(pf.words!==undefined){storyPics[idx].words=pf.words;n++;}
+          if(pf.starter!==undefined){storyPics[idx].starter=pf.starter;n++;}
+        });
+        renderStoryPics();
+      }
+      if(n)refreshPreview();
+      saveDraftLocal();
+      chatMsg.className='fx ok';chatMsg.textContent=n?('✅ '+n+'개 칸을 반영했어요. 아래 미리보기에서 확인해보세요.'):'✅ 답을 받았어요.';
+    }catch(e){
+      chatMsg.className='fx no';chatMsg.textContent=String(e.message||e);
+      chatHistory.pop();
+      renderChatLog();
+    }finally{
+      chatSendBtn.disabled=false;
+    }
+  }
+  chatSendBtn.onclick=sendChatMsg;
+  chatInput.onkeydown=(e)=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendChatMsg(); } };
+
+  function applyDraftValues(d){
+    if(!d)return;
+    if(d.fields)spec.fields.forEach(f=>{ if(refs[f.key]&&d.fields[f.key]!==undefined)refs[f.key].value=d.fields[f.key]; });
+    if(Array.isArray(d.imageUrls)){ imageUrls=d.imageUrls.slice(); renderThumbs(); }
+    if(Array.isArray(d.chatHistory)&&d.chatHistory.length){ chatHistory=d.chatHistory.slice(); renderChatLog(); }
+    if(type==='story'&&Array.isArray(d.storyPics)&&d.storyPics.length){ storyPics=d.storyPics.slice(); renderStoryPics(); }
+    refreshPreview();
+    draftBanner.style.display='flex';
+  }
+  draftClearBtn.onclick=()=>{ clearDraftLocal(); viewAddContentForm(type, editId); };
+
+  /* ---- Story Writing 전용: 새로 추가할 때 제목 앞 "[n-n]" 번호를 자동으로 매겨요. 같은 레벨
+   *      안에서 가장 큰 번호 다음으로 이어 붙이고, 뒷자리(n)가 10을 넘어가면 앞자리를 하나 올리고
+   *      뒷자리는 1로 돌아가요(1-10 다음은 2-1). 레벨 칸을 바꾸면(예: L0→L1) 그 레벨 기준으로
+   *      다시 계산해요. 수정 화면에서는 이미 정해진 번호를 건드리지 않아요. ---- */
+  if(type==='story'&&!isEdit){
+    const computeNextStoryNum=(levelVal)=>{
+      const lvl=String(levelVal||'').trim();
+      let maxN=0,maxM=0;
+      (typeof GENSTORY!=='undefined'?GENSTORY:[]).forEach(g=>{
+        if(String((g&&g.level)||'').trim()!==lvl)return;
+        const m=String((g&&g.title)||'').trim().match(/^\[(\d+)-(\d+)\]/);
+        if(!m)return;
+        const n=Number(m[1]),mm=Number(m[2]);
+        if(n>maxN||(n===maxN&&mm>maxM)){maxN=n;maxM=mm;}
+      });
+      if(maxN===0)return [1,1];
+      if(maxM>=10)return [maxN+1,1];
+      return [maxN,maxM+1];
+    };
+    const applyAutoStoryNumber=()=>{
+      if(!refs.title)return;
+      const [n,m]=computeNextStoryNum(refs.level?refs.level.value:'');
+      const stripped=String(refs.title.value||'').replace(/^\[\d+-\d+\]\s*/,'');
+      refs.title.value='['+n+'-'+m+'] '+stripped;
+      saveDraftLocal();
+    };
+    applyAutoStoryNumber();
+    if(refs.level)refs.level.addEventListener('blur',applyAutoStoryNumber);
+  }
+
+  if(!isEdit){
+    applyDraftValues(loadDraftLocal());
+  }
+
+  if(isEdit){
+    (async()=>{
+      try{
+        const res=await fetch(SUBMIT_URL+'?view=contentDetail&type='+encodeURIComponent(type)+'&id='+encodeURIComponent(editId));
+        const data=await res.json();
+        if(data&&data.ok&&data.fields){
+          spec.fields.forEach(f=>{ if(refs[f.key]&&data.fields[f.key]!==undefined) refs[f.key].value=data.fields[f.key]; });
+          if(data.fields.imagesText){ imageUrls=String(data.fields.imagesText).split('\n').map(s=>s.trim()).filter(Boolean); renderThumbs(); }
+          if(type==='story'&&Array.isArray(data.fields.pics)&&data.fields.pics.length){ storyPics=data.fields.pics.map(p=>({url:p.imageUrl||'',crop:p.crop||'center center',zoom:Number(p.zoom||100)||100,questions:p.questions||'',words:p.words||'',starter:p.starter||''})); renderStoryPics(); }
+          applyDraftValues(loadDraftLocal());
+          refreshPreview();
+          loadMsg.remove();
+        } else {
+          loadMsg.className='hint';loadMsg.textContent='기존 내용을 불러오지 못했어요: '+((data&&data.error)||'알 수 없는 오류');
+        }
+      }catch(e){
+        loadMsg.textContent='기존 내용을 불러오지 못했어요. 인터넷 연결을 확인해주세요.';
+      }
+    })();
+  }
+  const PROVIDERS=[{key:'claude',label:'✨ Claude 결과',color:'#4338ca'},{key:'gpt',label:'✨ GPT 결과',color:'#0f766e'}];
+  const compareBox=el('div');compareBox.style.cssText='display:none;flex-direction:column;gap:10px;margin-top:4px';
+  aiBox.appendChild(compareBox);
+  const renderCompare=(results)=>{
+    compareBox.innerHTML='';results=results||{};
+    let any=false;
+    PROVIDERS.forEach(p=>{
+      const r=results[p.key];
+      if(!r)return;
+      any=true;
+      const card=el('div');card.style.cssText='border:1.5px solid '+p.color+';border-radius:10px;padding:10px 12px;background:#fff';
+      const head=el('div');head.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap';
+      head.appendChild(el('b',null,p.label));
+      card.appendChild(head);
+      if(r.error){
+        const errEl=el('div','hint',r.error);errEl.style.color='#b91c1c';card.appendChild(errEl);
+      } else if(r.fields){
+        const applyBtn=el('button','btn ghost','체크한 칸 적용하기');applyBtn.type='button';
+        applyBtn.style.cssText='padding:6px 12px;font-size:13px;border-color:'+p.color+';color:'+p.color;
+        head.appendChild(applyBtn);
+        // 필요 없는 부분은 체크를 풀어서 뺄 수 있어요. 지금 칸이 비어 있으면 기본으로 체크돼 있고,
+        // 이미 내용이 있는 칸은 기본으로 체크가 풀려 있어요(체크하면 AI 결과로 덮어써요).
+        const rowsBox=el('div');rowsBox.style.cssText='margin-top:6px;display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto';
+        const checks=[];
+        Object.keys(r.fields).forEach(k=>{
+          const f=spec.fields.find(x=>x.key===k);
+          const hasVal=!!(refs[k]&&refs[k].value.trim());
+          const row=el('label');row.style.cssText='display:flex;gap:8px;align-items:flex-start;font-size:12.5px;cursor:pointer;border:1px solid rgba(0,0,0,.08);border-radius:8px;padding:6px 8px';
+          const cb=el('input');cb.type='checkbox';cb.checked=!hasVal;cb.style.marginTop='3px';
+          const body=el('div');body.style.cssText='flex:1;min-width:0';
+          const tt=el('div',null,(f?f.label:k)+(hasVal?' · 지금 내용이 있어요(체크하면 덮어써요)':''));tt.style.cssText='font-weight:700;color:#3b4151';
+          const tx=el('div');tx.style.cssText='color:#6b7684;white-space:pre-wrap;word-break:break-word';tx.textContent=String(r.fields[k]||'');
+          body.appendChild(tt);body.appendChild(tx);row.appendChild(cb);row.appendChild(body);rowsBox.appendChild(row);
+          checks.push({k,cb});
+        });
+        if(!checks.length){const none=el('div','hint','(채울 내용이 없었어요)');rowsBox.appendChild(none);}
+        card.appendChild(rowsBox);
+        applyBtn.onclick=()=>{
+          let n=0;
+          checks.forEach(({k,cb})=>{ if(cb.checked&&refs[k]){refs[k].value=r.fields[k];n++;} });
+          applyBtn.textContent=n?('✅ '+n+'개 칸 적용 완료'):'체크한 칸이 없어요';
+          if(n)refreshPreview();
+          saveDraftLocal();
+        };
+      }
+      compareBox.appendChild(card);
+    });
+    compareBox.style.display=any?'flex':'none';
+  };
+  const runAiFill=async(extra,btn,msgEl,busyText)=>{
+    const seed={};spec.fields.forEach(f=>{const v=refs[f.key].value;if(v&&v.trim())seed[f.key]=v.trim();});
+    btn.disabled=true;msgEl.className='fx';msgEl.textContent=busyText;compareBox.style.display='none';
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(Object.assign({
+        action:'generateContent',contentType:type,seed,
+        fields:spec.fields.map(f=>({key:f.key,label:f.label,hint:f.ph||''}))
+      },extra))});
+      let data=null;try{data=await res.json();}catch(e){}
+      if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 자동 채우기 실패');
+      renderCompare(data.results);
+      const provCount=Object.keys(data.results||{}).length;
+      msgEl.className='fx ok';msgEl.textContent=provCount?('✅ 결과를 받았어요. 아래에서 비교해보고 원하는 쪽을 적용하세요.'):'채울 빈 칸이 없었어요.';
+    }catch(e){
+      msgEl.className='fx no';msgEl.textContent=String(e.message||e);
+    }finally{
+      btn.disabled=false;
+    }
+  };
+  genBtn.onclick=()=>{
+    const titleVal=(refs.title&&refs.title.value||'').trim();
+    if(!titleVal){genMsg.className='fx no';genMsg.textContent='제목(주제)을 먼저 입력해주세요.';return;}
+    runAiFill({},genBtn,genMsg,'AI가 채우는 중… (몇 초 걸릴 수 있어요)');
+  };
+  imgBtn.onclick=()=>imgInput.click();
+  imgInput.onchange=async()=>{
+    // 사진을 여러 장 한꺼번에 골라도 돼요(과제지가 여러 장일 때) — 전부 같은 과제의 일부로 보고 함께 읽어요(최대 8장).
+    const files=Array.from(imgInput.files||[]).slice(0,8);
+    if(!files.length)return;
+    imgMsg.className='fx';imgMsg.textContent='사진 '+files.length+'장을 준비하는 중…';
+    try{
+      const images=[];
+      for(const file of files){
+        const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});
+        const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=dataUrl;});
+        const maxDim=files.length>3?1300:1600;
+        let w2=img.width,h2=img.height;
+        if(w2>maxDim||h2>maxDim){const scale=maxDim/Math.max(w2,h2);w2=Math.round(w2*scale);h2=Math.round(h2*scale);}
+        const canvas=document.createElement('canvas');canvas.width=w2;canvas.height=h2;
+        canvas.getContext('2d').drawImage(img,0,0,w2,h2);
+        images.push({mediaType:'image/jpeg',data:canvas.toDataURL('image/jpeg',0.8).split(',')[1]});
+      }
+      await runAiFill({images},imgBtn,imgMsg,'사진 '+images.length+'장을 읽는 중… (몇 초 걸릴 수 있어요)');
+    }catch(e){
+      imgMsg.className='fx no';imgMsg.textContent='사진을 처리하지 못했어요. 다른 사진으로 시도해주세요.';
+    }finally{
+      imgInput.value='';
+    }
+  };
+  const msg=el('div','fx');
+  const btnRow=el('div');btnRow.style.cssText='display:flex;gap:10px';
+  const saveBtn=el('button','btn green',isEdit?'수정 저장하기':'저장하기');saveBtn.type='button';
+  const back=el('button','btn ghost','← 목록으로');back.type='button';back.onclick=()=>isEdit?viewContentEditList(type):viewContentAdd();
+  btnRow.appendChild(saveBtn);btnRow.appendChild(back);
+  leftCol.appendChild(btnRow);
+  leftCol.appendChild(msg);
+  saveBtn.onclick=async()=>{
+    const payload={action:isEdit?'editContent':'addContent',contentType:type};
+    if(isEdit)payload.id=editId;
+    spec.fields.forEach(f=>{payload[f.key]=refs[f.key].value||'';});
+    payload.imagesText=imageUrls.join('\n');
+    if(type==='story'){
+      payload.pics=storyPics.filter(p=>p.url||p.questions||p.words||p.starter).map(p=>({imageUrl:p.url||'',crop:p.crop||'center center',zoom:Number(p.zoom||100)||100,questions:p.questions||'',words:p.words||'',starter:p.starter||''}));
+      if(!payload.pics.length){msg.className='fx no';msg.textContent='그림을 최소 1장 이상 추가해주세요.';return;}
+    }
+    if(!payload.title){msg.className='fx no';msg.textContent='제목을 입력해주세요.';return;}
+    if(type==='pattern'&&!isEdit){
+      if(!payload.unitId||!payload.unitId.trim()){msg.className='fx no';msg.textContent='유닛 아이디를 입력해주세요. "🏷️ 레벨 관리 > Pattern Drill 챕터/유닛"에서 먼저 만들 수 있어요.';return;}
+      payload.id=payload.unitId.trim();
+    }
+    saveBtn.disabled=true;msg.className='fx';msg.textContent='저장 중…';
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+      let data=null;try{data=await res.json();}catch(e){}
+      if(data&&data.ok===false)throw new Error(data.error||'저장 실패');
+      clearDraftLocal();
+      // 저장/수정 직후 이 화면(같은 페이지)에서 바로 다른 화면으로 이동해도 방금 바뀐 내용이 보이도록,
+      // 페이지를 새로고침하지 않고도 서버 최신 컨텐츠를 다시 받아와서 메모리(GEN·GENEXAM 등)를 갱신해요.
+      // (이걸 안 해두면, 예전처럼 브라우저를 완전히 새로고침해야만 방금 저장한 내용이 화면에 반영됐어요.)
+      try{ await loadLiveContent(); }catch(e){}
+      msg.className='fx ok';msg.textContent='✅ '+(isEdit?'수정했어요!':'저장했어요!')+' 바로 반영됐어요 — 다른 화면으로 이동하면 최신 내용으로 보여요.';
+      if(!isEdit)spec.fields.forEach(f=>{refs[f.key].value='';});
+    }catch(e){
+      msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요: '+String((e&&e.message)||e)+' (스프레드시트에 필요한 시트 탭이 없는 경우 이런 오류가 날 수 있어요. 안내서를 참고해 탭을 만들어주세요.)';
+    }finally{
+      saveBtn.disabled=false;
+    }
+  };
+});}
+
+/* ---- 관리자 전용: 레벨(홈 화면 상단 탭) 관리 — 추가 / 이름·교재명 변경 ---- */
+function viewLevelManage(){teacherMount(w=>{
+  const bk=el('button','backbtn','◀ 학생 목록으로');bk.onclick=viewTeacherHome;w.appendChild(bk);
+  w.appendChild(el('h1','title','🏷️ 레벨 관리'));
+  w.appendChild(el('div','hint','홈 화면 상단 탭(예: 초6/중1/중2)의 이름·교재명·순서를 바꾸거나, 새 레벨을 추가할 수 있어요. 저장 후 "🔄 사이트에 반영하기"를 눌러야 실제 사이트에 반영돼요. 새로 추가한 레벨은 Paragraph Writing·Article Reading·수행평가·Re-Writing 컨텐츠 등록 시 "레벨" 칸에 그 아이디(예: L4)를 적으면 바로 연결돼요. Pattern Drill 챕터·유닛은 아래 각 레벨 카드의 "📚 Pattern Drill 챕터/유닛 관리"에서 직접 만들 수 있어요.'));
+  const box=el('div');box.style.marginTop='14px';
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  (async()=>{
+    let levels=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=levels&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok)levels=data.levels||[];
+    }catch(e){}
+    loading.remove();
+    levels.forEach(lv=>{
+      const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:14px 16px;margin-bottom:12px;background:#fff';
+      card.appendChild(el('div','hint','아이디: '+lv.id+' (바꿀 수 없어요)'));
+      const nameWrap=el('div');nameWrap.style.cssText='display:flex;flex-direction:column;gap:4px;margin-top:6px';
+      nameWrap.appendChild(el('div','hint','탭에 보일 이름'));
+      const nameIn=el('input','in');nameIn.type='text';nameIn.value=lv.name;nameIn.style.cssText='padding:8px 10px;font-size:14px';
+      nameWrap.appendChild(nameIn);card.appendChild(nameWrap);
+      const bookWrap=el('div');bookWrap.style.cssText='display:flex;flex-direction:column;gap:4px;margin-top:8px';
+      bookWrap.appendChild(el('div','hint','교재명'));
+      const bookIn=el('input','in');bookIn.type='text';bookIn.value=lv.book;bookIn.style.cssText='padding:8px 10px;font-size:14px';
+      bookWrap.appendChild(bookIn);card.appendChild(bookWrap);
+      const seqWrap=el('div');seqWrap.style.cssText='display:flex;flex-direction:column;gap:4px;margin-top:8px';
+      seqWrap.appendChild(el('div','hint','순서 (탭 위치 — 숫자가 작을수록 왼쪽에 나와요. 예: 초5를 초6보다 앞에 두려면 초6보다 작은 값으로)'));
+      const seqIn=el('input','in');seqIn.type='number';seqIn.step='any';seqIn.value=lv.seq;seqIn.style.cssText='padding:8px 10px;font-size:14px;max-width:120px';
+      seqWrap.appendChild(seqIn);card.appendChild(seqWrap);
+      const saveBtn=el('button','btn blue','저장');saveBtn.type='button';saveBtn.style.cssText='margin-top:10px;padding:7px 14px;font-size:13px';
+      const msg=el('span','fx');msg.style.marginLeft='8px';
+      card.appendChild(saveBtn);card.appendChild(msg);
+      saveBtn.onclick=async()=>{
+        if(!nameIn.value.trim()){msg.className='fx no';msg.textContent='이름을 입력해주세요.';return;}
+        saveBtn.disabled=true;
+        try{
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'saveLevel',id:lv.id,name:nameIn.value.trim(),book:bookIn.value.trim(),seq:seqIn.value})});
+          const data=await res.json();
+          if(!data||!data.ok)throw new Error((data&&data.error)||'저장하지 못했어요.');
+          msg.className='fx ok';msg.textContent='저장했어요! (새로고침하면 순서가 바뀐 게 보여요)';
+        }catch(e){ msg.className='fx no';msg.textContent=String(e.message||e); }
+        saveBtn.disabled=false;
+      };
+      const pdBtn=el('button','btn ghost','📚 Pattern Drill 챕터/유닛 관리');pdBtn.type='button';pdBtn.style.cssText='margin-top:10px;margin-left:8px;padding:7px 14px;font-size:13px';
+      pdBtn.onclick=()=>viewPatternStructure(lv.id,lv.name);
+      card.appendChild(pdBtn);
+      box.appendChild(card);
+    });
+    const addCard=el('div');addCard.style.cssText='border:1.5px dashed rgba(0,0,0,.15);border-radius:14px;padding:14px 16px;margin-top:6px';
+    addCard.appendChild(el('div',null,'<b>+ 새 레벨 추가</b>'));
+    const addName=el('input','in');addName.type='text';addName.placeholder='탭에 보일 이름 (예: 고1)';addName.style.cssText='margin-top:8px;padding:8px 10px;font-size:14px';
+    const addBook=el('input','in');addBook.type='text';addBook.placeholder='교재명 (선택)';addBook.style.cssText='margin-top:8px;padding:8px 10px;font-size:14px';
+    const addSeq=el('input','in');addSeq.type='number';addSeq.step='any';addSeq.placeholder='순서 (선택 — 비워두면 맨 뒤에 추가. 예: 초5를 초6보다 앞에 두려면 초6의 순서보다 작은 값)';addSeq.style.cssText='margin-top:8px;padding:8px 10px;font-size:14px';
+    const addBtn=el('button','btn green','추가하기');addBtn.type='button';addBtn.style.cssText='margin-top:10px;padding:7px 14px;font-size:13px';
+    const addMsg=el('span','fx');addMsg.style.marginLeft='8px';
+    addCard.appendChild(addName);addCard.appendChild(addBook);addCard.appendChild(addSeq);addCard.appendChild(addBtn);addCard.appendChild(addMsg);
+    w.appendChild(addCard);
+    addBtn.onclick=async()=>{
+      if(!addName.value.trim()){addMsg.className='fx no';addMsg.textContent='이름을 입력해주세요.';return;}
+      addBtn.disabled=true;
+      try{
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'saveLevel',name:addName.value.trim(),book:addBook.value.trim(),seq:addSeq.value})});
+        const data=await res.json();
+        if(!data||!data.ok)throw new Error((data&&data.error)||'추가하지 못했어요.');
+        addMsg.className='fx ok';addMsg.textContent='✅ 추가했어요! ('+data.id+') 화면을 새로고침하면 목록에 나타나요.';
+      }catch(e){ addMsg.className='fx no';addMsg.textContent=String(e.message||e); }
+      addBtn.disabled=false;
+    };
+  })();
+});}
+/* ---- 관리자 전용: 레벨별 Pattern Drill 챕터/유닛 관리 (선생님이 직접 챕터·유닛을 만들어요) ---- */
+function viewPatternStructure(levelId,levelName){teacherMount(w=>{
+  const bk=el('button','backbtn','◀ 레벨 관리로');bk.onclick=viewLevelManage;w.appendChild(bk);
+  w.appendChild(el('h1','title','📚 '+levelName+' — Pattern Drill 챕터/유닛 관리'));
+  w.appendChild(el('div','hint','기존 하드코딩된 챕터는 목록으로만 보이고(이름 변경 불가), 여기서 만든 새 챕터·유닛은 이름을 바꿀 수 있어요. 새 유닛을 만들면 아이디가 생기는데, 그 아이디를 "✏️ 컨텐츠 수정/추가 > 문법 포인트"의 "유닛 아이디" 칸에 적으면 실제 개념 설명·퀴즈·과제 내용을 채울 수 있어요. 저장 후 "🔄 사이트에 반영하기"를 눌러야 실제 사이트에 반영돼요.'));
+  const box=el('div');box.style.marginTop='14px';
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  (async()=>{
+    let sheetChapters=[],sheetUnits=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=patternStructure&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok){sheetChapters=data.chapters||[];sheetUnits=data.units||[];}
+    }catch(e){}
+    loading.remove();
+    const lv=LEVELS.find(l=>l.id===levelId);
+    const hardChapters=(lv?lv.chapters:[]).map(c=>({id:c.id,title:c.t,units:c.points.map(p=>({id:p.id,title:p.title||(p.title===undefined?'':p.title)})),editable:false}));
+    const myChapters=sheetChapters.filter(c=>c.level_id===levelId).map(c=>({id:c.id,title:c.title,editable:true}));
+    const unitsByChapter={};sheetUnits.forEach(u=>{(unitsByChapter[u.chapter_id]=unitsByChapter[u.chapter_id]||[]).push(u);});
+    const allChapters=hardChapters.concat(myChapters.map(c=>({id:c.id,title:c.title,units:[],editable:true})));
+    allChapters.forEach(ch=>{
+      const sheetUs=(unitsByChapter[ch.id]||[]);
+      const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:14px 16px;margin-bottom:12px;background:#fff';
+      const headWrap=el('div');headWrap.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+      headWrap.appendChild(el('div','hint','챕터 아이디: '+ch.id));
+      if(ch.editable){
+        const titleIn=el('input','in');titleIn.type='text';titleIn.value=ch.title;titleIn.style.cssText='padding:6px 8px;font-size:13px;flex:1;min-width:140px';
+        const chSaveBtn=el('button','btn blue','저장');chSaveBtn.type='button';chSaveBtn.style.cssText='padding:6px 12px;font-size:12px';
+        const chMsg=el('span','fx');
+        chSaveBtn.onclick=async()=>{
+          if(!titleIn.value.trim()){chMsg.className='fx no';chMsg.textContent='제목을 입력해주세요.';return;}
+          chSaveBtn.disabled=true;
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'savePatternChapter',id:ch.id,title:titleIn.value.trim()})});
+            const data=await res.json();if(!data||!data.ok)throw new Error((data&&data.error)||'저장하지 못했어요.');
+            chMsg.className='fx ok';chMsg.textContent='저장했어요!';
+          }catch(e){chMsg.className='fx no';chMsg.textContent=String(e.message||e);}
+          chSaveBtn.disabled=false;
+        };
+        card.appendChild(headWrap);
+        const chBox=el('div');chBox.style.cssText='display:flex;gap:8px;margin-top:6px;align-items:center';
+        chBox.appendChild(titleIn);chBox.appendChild(chSaveBtn);chBox.appendChild(chMsg);
+        card.appendChild(chBox);
+      } else {
+        headWrap.appendChild(el('b',null,ch.title));
+        card.appendChild(headWrap);
+      }
+      const unitList=el('div');unitList.style.cssText='margin-top:10px;padding-left:6px;border-left:2px solid rgba(0,0,0,.06)';
+      (ch.units||[]).forEach(u=>{
+        const row=el('div','hint',(u.title?u.title:'(준비 중)')+' — '+u.id);row.style.marginBottom='4px';unitList.appendChild(row);
+      });
+      sheetUs.forEach(u=>{
+        const uRow=el('div');uRow.style.cssText='display:flex;gap:8px;align-items:center;margin-bottom:6px';
+        uRow.appendChild(el('span','hint',u.id+' :'));
+        const uIn=el('input','in');uIn.type='text';uIn.value=u.title;uIn.style.cssText='padding:5px 8px;font-size:13px';
+        const uSaveBtn=el('button','btn blue','저장');uSaveBtn.type='button';uSaveBtn.style.cssText='padding:5px 10px;font-size:12px';
+        const uMsg=el('span','fx');
+        uSaveBtn.onclick=async()=>{
+          if(!uIn.value.trim()){uMsg.className='fx no';uMsg.textContent='제목을 입력해주세요.';return;}
+          uSaveBtn.disabled=true;
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'savePatternUnit',id:u.id,title:uIn.value.trim()})});
+            const data=await res.json();if(!data||!data.ok)throw new Error((data&&data.error)||'저장하지 못했어요.');
+            uMsg.className='fx ok';uMsg.textContent='저장했어요!';
+          }catch(e){uMsg.className='fx no';uMsg.textContent=String(e.message||e);}
+          uSaveBtn.disabled=false;
+        };
+        uRow.appendChild(uIn);uRow.appendChild(uSaveBtn);uRow.appendChild(uMsg);
+        unitList.appendChild(uRow);
+      });
+      card.appendChild(unitList);
+      const addUnitRow=el('div');addUnitRow.style.cssText='display:flex;gap:8px;align-items:center;margin-top:8px';
+      const addUnitIn=el('input','in');addUnitIn.type='text';addUnitIn.placeholder='+ 새 유닛 제목 (예: 관계부사)';addUnitIn.style.cssText='padding:6px 8px;font-size:13px;flex:1;min-width:140px';
+      const addUnitBtn=el('button','btn green','유닛 추가');addUnitBtn.type='button';addUnitBtn.style.cssText='padding:6px 12px;font-size:12px';
+      const addUnitMsg=el('span','fx');
+      addUnitBtn.onclick=async()=>{
+        if(!addUnitIn.value.trim()){addUnitMsg.className='fx no';addUnitMsg.textContent='제목을 입력해주세요.';return;}
+        addUnitBtn.disabled=true;
+        try{
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'savePatternUnit',chapterId:ch.id,title:addUnitIn.value.trim()})});
+          const data=await res.json();if(!data||!data.ok)throw new Error((data&&data.error)||'추가하지 못했어요.');
+          addUnitMsg.className='fx ok';addUnitMsg.textContent='✅ 추가했어요! 유닛 아이디: '+data.id+' — 이 아이디로 컨텐츠 추가에서 내용을 채워주세요. 새로고침하면 목록에 나타나요.';
+        }catch(e){addUnitMsg.className='fx no';addUnitMsg.textContent=String(e.message||e);}
+        addUnitBtn.disabled=false;
+      };
+      addUnitRow.appendChild(addUnitIn);addUnitRow.appendChild(addUnitBtn);addUnitRow.appendChild(addUnitMsg);
+      card.appendChild(addUnitRow);
+      box.appendChild(card);
+    });
+    const addChCard=el('div');addChCard.style.cssText='border:1.5px dashed rgba(0,0,0,.15);border-radius:14px;padding:14px 16px;margin-top:6px';
+    addChCard.appendChild(el('div',null,'<b>+ 새 챕터 추가</b>'));
+    const addChIn=el('input','in');addChIn.type='text';addChIn.placeholder='챕터 제목 (예: CHAPTER 13 특수구문)';addChIn.style.cssText='margin-top:8px;padding:8px 10px;font-size:14px';
+    const addChBtn=el('button','btn green','추가하기');addChBtn.type='button';addChBtn.style.cssText='margin-top:10px;padding:7px 14px;font-size:13px';
+    const addChMsg=el('span','fx');addChMsg.style.marginLeft='8px';
+    addChCard.appendChild(addChIn);addChCard.appendChild(addChBtn);addChCard.appendChild(addChMsg);
+    w.appendChild(addChCard);
+    addChBtn.onclick=async()=>{
+      if(!addChIn.value.trim()){addChMsg.className='fx no';addChMsg.textContent='제목을 입력해주세요.';return;}
+      addChBtn.disabled=true;
+      try{
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'savePatternChapter',levelId:levelId,title:addChIn.value.trim()})});
+        const data=await res.json();if(!data||!data.ok)throw new Error((data&&data.error)||'추가하지 못했어요.');
+        addChMsg.className='fx ok';addChMsg.textContent='✅ 추가했어요! ('+data.id+') 화면을 새로고침하면 목록에 나타나요.';
+      }catch(e){addChMsg.className='fx no';addChMsg.textContent=String(e.message||e);}
+      addChBtn.disabled=false;
+    };
+  })();
+});}
+/* ---- 관리자 전용: 학생 명단 관리 ---- */
+const STUDENT_FIELDS=[
+  {key:'id',label:'아이디',ph:'예) kim01'},
+  {key:'pw',label:'비밀번호',ph:'예) 1234'},
+  {key:'name',label:'이름',ph:'예) 김민준'},
+  // 학교/학년 형식이 콘텐츠의 "대상 학교"·"대상 학년" 칸과 글자 그대로 똑같아야 매칭돼요(예:
+  // 콘텐츠에 "잠원중"이라고 적어뒀는데 학생 정보엔 "잠원중학교"라고 적으면 그 콘텐츠가 안 보여요).
+  // 그래서 형식을 여기 직접 보이게 적어뒀어요.
+  {key:'school',label:'학교',ph:'예) 잠원중',note:'꼭 "OO초"·"OO중"·"OO고" 형식으로 적어주세요 (예: 잠원중, 서울고). "잠원중학교"처럼 적으면 콘텐츠 대상 매칭이 안 될 수 있어요.'},
+  {key:'schoolGrade',label:'학년',type:'gradeSelect'},
+  {key:'cls',label:'반',ph:'예) A반 (없으면 비워둬도 돼요)'},
+  {key:'academy',label:'학원',ph:'예) 아이콘 학원 (한 학원만 쓰면 비워둬도 돼요)'},
+  {key:'isTestAccount',label:'테스트 계정',type:'testSelect',note:'"테스트 계정"으로 두면 이 아이디는 학생 화면 그대로 보이면서, 학교·학년·반으로 제한된 컨텐츠까지 전부 보여요. 선생님이 학생 입장에서 확인해 볼 때 쓰세요. 실제 학생은 "아니요"로 두세요.'},
+  {key:'status',label:'상태',type:'statusSelect',note:'휴원: 로그인하면 "휴원 중이에요. 선생님께 문의해주세요"가 떠요. 퇴원: "아이디를 확인해주세요"가 떠요(없는 아이디처럼 보여요). 둘 다 선생님 목록에서는 기본으로 숨겨지고, 제출·첨삭 기록은 그대로 남아요.'}
+];
+function viewStudentManage(){teacherMount(w=>{
+  const bk=el('button','backbtn','◀ 학생 목록으로');bk.onclick=viewTeacherHome;w.appendChild(bk);
+  const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
+  titleRow.appendChild(el('h1','title','👥 학생 명단 관리'));
+  const addBtn=el('button','btn green','+ 새 학생 추가');addBtn.type='button';addBtn.style.cssText='padding:10px 18px;font-size:14px';
+  addBtn.onclick=()=>viewStudentForm(null);
+  titleRow.appendChild(addBtn);
+  w.appendChild(titleRow);
+  w.appendChild(el('div','hint','아이디·비밀번호·이름과 학교/학년/반/학원 정보를 여기서 바로 추가·수정·삭제할 수 있어요. 저장은 즉시 반영돼요 (별도 사이트 반영 버튼이 필요 없어요).'));
+  // 학생이 많아지면 이름순 나열만으론 찾기 불편해서, 교사 홈 화면 필터와 같은 방식으로
+  // 학원/학교/학년/반을 각각 골라 좁혀볼 수 있게 했어요 (선택 안 하면 "전체").
+  const mkFilterSelect=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:110px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
+    return{wrap,sel};};
+  const showAcademyFilter=USER.isAdmin; // 학원별 관리자는 학원이 하나로 고정이라 이 필터가 필요 없어요.
+  const fAcademy=mkFilterSelect('학원'),fSchool=mkFilterSelect('학교'),fGrade=mkFilterSelect('학년'),fCls=mkFilterSelect('반'),fStatus=mkFilterSelect('상태');
+  [['','재원생(기본)'],['휴원','휴원'],['퇴원','퇴원'],['all','전체']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;fStatus.sel.appendChild(o);});
+  const filterBox=el('div');filterBox.style.cssText='display:flex;gap:10px;flex-wrap:wrap;margin-top:12px';
+  (showAcademyFilter?[fAcademy,fSchool,fGrade,fCls,fStatus]:[fSchool,fGrade,fCls,fStatus]).forEach(f=>filterBox.appendChild(f.wrap));
+  w.appendChild(filterBox);
+  filterBox.style.display='none';
+  const box=el('div');box.style.marginTop='14px';
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  (async()=>{
+    let students=[];
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=studentList');
+      const data=await res.json();
+      if(data&&data.ok)students=data.students||[];
+    }catch(e){}
+    // 학원별 관리자(isAcademyAdmin)는 전체 관리자와 달리 자기 학원 학생만 봐야 해서, 여기서
+    // 미리 걸러둬요(학원 선택 필터도 안 보여줘요 — 어차피 하나뿐이라 고를 필요가 없어요).
+    if(!USER.isAdmin&&USER.isAcademyAdmin)students=students.filter(s=>String(s.academy||'').trim()===String(USER.academy||'').trim());
+    loading.remove();
+    if(!students.length){box.appendChild(el('div','hint','등록된 학생이 없어요. "+ 새 학생 추가"로 첫 학생을 등록해보세요.'));return;}
+    const renderRow=(container,s)=>{
+      const row=el('div','point');row.style.cursor='default';
+      row.appendChild(el('div','dot','●'));
+      const ctx=[s.academy,s.school,stageGrade(s.school,s.schoolGrade),s.cls].filter(Boolean).join(' · ');
+      const stBadge=studentStatus(s)?' <span style="background:'+(studentStatus(s)==='휴원'?'#fef3c7;color:#92400e':'#e5e7eb;color:#374151')+';border-radius:8px;padding:1px 8px;font-size:12px;font-weight:700">'+studentStatus(s)+'</span>':'';
+      row.appendChild(el('div','pt',(s.name||s.id)+stBadge+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+s.id+(ctx?' · '+ctx:'')+')</span>'));
+      const btnRow=el('div');btnRow.style.cssText='display:flex;gap:8px;margin-top:8px';
+      const editBtn=el('button','btn ghost','✏️ 수정');editBtn.type='button';editBtn.style.cssText='padding:6px 14px;font-size:13px';
+      editBtn.onclick=(ev)=>{ev.stopPropagation();viewStudentForm(s);};
+      const delBtn=el('button','btn ghost','🗑 삭제');delBtn.type='button';delBtn.style.cssText='padding:6px 14px;font-size:13px;color:#b91c1c;border-color:#b91c1c';
+      delBtn.onclick=async(ev)=>{
+        ev.stopPropagation();
+        if(!confirm((s.name||s.id)+' 학생을 삭제할까요? 이 작업은 되돌릴 수 없어요.'))return;
+        delBtn.disabled=true;delBtn.textContent='삭제 중…';
+        try{
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'deleteStudent',id:s.id,role:'teacher',requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||''})});
+          let data=null;try{data=await res.json();}catch(e){}
+          if(data&&data.ok===false)throw new Error(data.error||'삭제 실패');
+          viewStudentManage();
+        }catch(e){
+          delBtn.disabled=false;delBtn.textContent='🗑 삭제';
+          alert('삭제 중 문제가 생겼어요: '+String(e.message||e));
+        }
+      };
+      btnRow.appendChild(editBtn);btnRow.appendChild(delBtn);
+      row.appendChild(btnRow);
+      container.appendChild(row);
+    };
+    const fillOptions=(sel,values,allLabel)=>{
+      const prev=sel.value;
+      sel.innerHTML='';
+      const optAll=el('option');optAll.value='';optAll.textContent=allLabel;sel.appendChild(optAll);
+      values.forEach(v=>{const o=el('option');o.value=v;o.textContent=v;sel.appendChild(o);});
+      if(values.includes(prev))sel.value=prev;
+    };
+    const uniq=key=>Array.from(new Set(students.map(s=>String(s[key]||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko',{numeric:true}));
+    const render=()=>{
+      box.innerHTML='';
+      // 학원을 고르면 그 학원에 속한 학생만 대상으로 학교/학년/반 선택지를 다시 만들어서,
+      // 존재하지 않는 조합(예: 그 학원엔 없는 학교)이 안 뜨게 해요.
+      const wantAcademy=fAcademy.sel.value,wantSchool=fSchool.sel.value,wantGrade=fGrade.sel.value,wantCls=fCls.sel.value;
+      const byAcademy=wantAcademy?students.filter(s=>String(s.academy||'').trim()===wantAcademy):students;
+      fillOptions(fAcademy.sel,uniq('academy'),'학원 전체');fAcademy.sel.value=wantAcademy;
+      fillOptions(fSchool.sel,Array.from(new Set(byAcademy.map(s=>String(s.school||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko')),'학교 전체');fSchool.sel.value=wantSchool;
+      fillOptions(fGrade.sel,sortStageGrades(Array.from(new Set(byAcademy.map(s=>stageGrade(s.school,s.schoolGrade)).filter(Boolean)))),'학년 전체');fGrade.sel.value=wantGrade;
+      fillOptions(fCls.sel,Array.from(new Set(byAcademy.map(s=>String(s.cls||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'ko',{numeric:true})),'반 전체');fCls.sel.value=wantCls;
+      const filtered=students.filter(s=>
+        (!wantAcademy||String(s.academy||'').trim()===wantAcademy)&&
+        (!wantSchool||String(s.school||'').trim()===wantSchool)&&
+        (!wantGrade||stageGrade(s.school,s.schoolGrade)===wantGrade)&&
+        (!wantCls||String(s.cls||'').trim()===wantCls)&&
+        (fStatus.sel.value==='all'||studentStatus(s)===fStatus.sel.value)
+      ).sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko'));
+      if(!filtered.length){box.appendChild(el('div','hint','조건에 맞는 학생이 없어요.'));return;}
+      filtered.forEach(s=>renderRow(box,s));
+    };
+    filterBox.style.display='flex';
+    fillOptions(fAcademy.sel,uniq('academy'),'학원 전체');
+    fillOptions(fSchool.sel,uniq('school'),'학교 전체');
+    fillOptions(fGrade.sel,sortStageGrades(Array.from(new Set(students.map(s=>stageGrade(s.school,s.schoolGrade)).filter(Boolean)))),'학년 전체');
+    fillOptions(fCls.sel,uniq('cls'),'반 전체');
+    [fAcademy,fSchool,fGrade,fCls,fStatus].forEach(f=>f.sel.onchange=render);
+    render();
+  })();
+});}
+function viewStudentForm(existing){teacherMount(w=>{
+  const isEdit=!!existing;
+  const bk=el('button','backbtn','◀ 학생 명단으로');bk.onclick=viewStudentManage;w.appendChild(bk);
+  w.appendChild(el('h1','title',isEdit?'✏️ 학생 정보 수정':'+ 새 학생 추가'));
+  w.appendChild(el('div','hint',isEdit?'아이디를 바꾸면 학생은 새 아이디로 로그인해야 해요 (다른 학생이 이미 쓰는 아이디로는 바꿀 수 없어요).':'아이디·비밀번호·이름은 꼭 채워주세요. 나머지는 비워둬도 로그인엔 문제없어요.'));
+  const form=el('div');form.style.cssText='display:flex;flex-direction:column;gap:14px;margin-top:16px';
+  const refs={};
+  // 학원별 관리자(isAcademyAdmin)는 다른 학원에 학생을 등록/이관할 수 없게, "학원" 칸을 자기
+  // 학원 값으로 고정하고 수정하지 못하게 해요(전체 관리자만 자유롭게 적을 수 있어요).
+  const lockAcademy=!USER.isAdmin&&USER.isAcademyAdmin;
+  STUDENT_FIELDS.forEach(f=>{
+    const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:6px';
+    wrap.appendChild(el('div','hint',f.label));
+    let inp;
+    if(f.type==='testSelect'){
+      inp=el('select','in');inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
+      [['','아니요 (일반 학생)'],['Y','네 (모든 컨텐츠 보기)']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;inp.appendChild(o);});
+      inp.value=(existing&&String(existing.isTestAccount||'').trim())?'Y':'';
+    }else if(f.type==='statusSelect'){
+      inp=el('select','in');inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
+      [['','재원'],['휴원','휴원'],['퇴원','퇴원']].forEach(([v,l])=>{const o=el('option');o.value=v;o.textContent=l;inp.appendChild(o);});
+      inp.value=existing?studentStatus(existing):'';
+    }else if(f.type==='gradeSelect'){
+      // 학년은 초1~고3 드롭다운으로 골라요. 예전에 숫자(1~6)만 저장된 학생은 학교 이름(…초/…중/…고)으로 학교급을 알아내서 미리 선택해둬요.
+      inp=el('select','in');inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
+      const o0=el('option');o0.value='';o0.textContent='선택 안 함';inp.appendChild(o0);
+      GRADE_OPTIONS.forEach(v=>{const o=el('option');o.value=v;o.textContent=v;inp.appendChild(o);});
+      const cur=existing?stageGrade(existing.school,existing.schoolGrade):'';
+      if(cur&&!GRADE_OPTIONS.includes(cur)){const o=el('option');o.value=cur;o.textContent=cur+' (학교급 미확인)';inp.appendChild(o);}
+      inp.value=cur;
+    }else{
+    inp=el('input','in');inp.type='text';inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
+    if(f.ph)inp.placeholder=f.ph;
+    if(existing&&existing[f.key]!==undefined)inp.value=existing[f.key];
+    }
+    if(f.key==='academy'&&lockAcademy){inp.value=USER.academy||'';inp.disabled=true;inp.style.background='#f2f2f0';}
+    wrap.appendChild(inp);
+    if(f.note){const noteEl=el('div',null,f.note);noteEl.style.cssText='font-size:12px;color:#c2650a';wrap.appendChild(noteEl);}
+    refs[f.key]=inp;
+    form.appendChild(wrap);
+  });
+  w.appendChild(form);
+  const msg=el('div','fx');msg.style.marginTop='10px';
+  const btnRow=el('div');btnRow.style.cssText='display:flex;gap:10px;margin-top:16px';
+  const saveBtn=el('button','btn green',isEdit?'수정 저장하기':'추가하기');saveBtn.type='button';
+  const back=el('button','btn ghost','← 취소');back.type='button';back.onclick=()=>viewStudentManage();
+  btnRow.appendChild(saveBtn);btnRow.appendChild(back);
+  w.appendChild(btnRow);
+  w.appendChild(msg);
+  saveBtn.onclick=async()=>{
+    const payload={action:'saveStudent',role:'teacher',requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||''};
+    STUDENT_FIELDS.forEach(f=>{payload[f.key]=refs[f.key].value.trim();});
+    if(lockAcademy)payload.academy=USER.academy||''; // disabled input이라 값이 안 들어올 수 있어서 확실히 채워요.
+    if(isEdit)payload.originalId=existing.id;
+    if(!payload.id){msg.className='fx no';msg.textContent='아이디를 입력해주세요.';return;}
+    if(!payload.pw){msg.className='fx no';msg.textContent='비밀번호를 입력해주세요.';return;}
+    if(!payload.name){msg.className='fx no';msg.textContent='이름을 입력해주세요.';return;}
+    saveBtn.disabled=true;msg.className='fx';msg.textContent='저장 중…';
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+      let data=null;try{data=await res.json();}catch(e){}
+      if(data&&data.ok===false)throw new Error(data.error||'저장 실패');
+      viewStudentManage();
+    }catch(e){
+      msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요: '+String(e.message||e);
+      saveBtn.disabled=false;
+    }
+  };
+});}
+
+/* "전체 관리자"뿐 아니라 "학원별 관리자"도 선생님 계정을 만들 수 있게 해달라는 요청으로 추가했어요.
+ * - 전체 관리자(USER.isAdmin): 모든 학원의 선생님 계정을 보고, 새 관리자(전체/학원별)를 지정할 수 있어요.
+ * - 학원별 관리자(USER.isAcademyAdmin만 true): 자기 학원 선생님만 보이고, 새로 만드는 계정은 항상
+ *   "일반 선생님"이에요(관리자 권한은 줄 수 없어요) — 다른 관리자 계정도 여기서 손댈 수 없어요.
+ * 실제 권한 확인은 서버(handleSaveTeacher/handleDeleteTeacher)에서 한 번 더 해요 — 화면에서 막아놔도
+ * 요청 자체를 조작하면 우회될 수 있어서, 학원 밖 계정 수정·관리자 권한 부여는 서버도 거절해요. */
+function viewTeacherManage(){teacherMount(w=>{
+  const bk=el('button','backbtn','◀ 선생님 홈');bk.onclick=viewTeacherHome;w.appendChild(bk);
+  const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
+  titleRow.appendChild(el('h1','title','🧑‍🏫 선생님 계정 관리'));
+  const addBtn=el('button','btn green','+ 새 선생님 추가');addBtn.type='button';addBtn.style.cssText='padding:10px 18px;font-size:14px';
+  addBtn.onclick=()=>viewTeacherForm(null);
+  titleRow.appendChild(addBtn);
+  w.appendChild(titleRow);
+  w.appendChild(el('div','hint',USER.isAdmin?'모든 학원의 선생님 계정을 관리할 수 있어요. 관리자 권한(전체/학원별)도 여기서 지정할 수 있어요.':'우리 학원('+(USER.academy||'')+') 선생님 계정만 보여요. 관리자 권한은 전체 관리자만 지정할 수 있어요.'));
+  // 선생님 수가 늘면서 "학원별로, 권한별로 좁혀서 보고 싶다"는 요청으로 필터를 추가했어요.
+  // 학원 드롭다운은 전체 관리자한테만 의미가 있어요(학원별 관리자는 애초에 자기 학원 계정만
+  // 보이니까요). 권한 드롭다운(전체 관리자/학원 관리자/선생님)은 누구나 쓸 수 있어요.
+  const filterBox=el('div');filterBox.style.cssText='display:none;gap:10px;flex-wrap:wrap;margin:14px 0';
+  w.appendChild(filterBox);
+  const mkSelect=(label)=>{const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:4px;min-width:130px';
+    const lb=el('div','hint',label);lb.style.fontSize='12px';wrap.appendChild(lb);
+    const sel=el('select','in');sel.style.cssText='padding:8px 10px;font-size:14px;border-radius:10px';wrap.appendChild(sel);
+    return{wrap,sel};};
+  const fAcademy=USER.isAdmin?mkSelect('학원'):null;
+  const fRole=mkSelect('권한');
+  if(fAcademy)filterBox.appendChild(fAcademy.wrap);
+  filterBox.appendChild(fRole.wrap);
+  const opt0=(sel,label)=>{const o=el('option');o.value='';o.textContent=label;sel.appendChild(o);};
+  opt0(fRole.sel,'권한 전체');
+  [['admin','전체 관리자'],['academyAdmin','학원 관리자'],['teacher','선생님']].forEach(([v,label])=>{const o=el('option');o.value=v;o.textContent=label;fRole.sel.appendChild(o);});
+  const box=el('div');box.style.marginTop='14px';
+  const loading=el('div','hint','불러오는 중…');box.appendChild(loading);
+  w.appendChild(box);
+  const roleLabel=t=>t.isAdmin?'전체 관리자':(t.isAcademyAdmin?'학원 관리자':'선생님');
+  const roleKey=t=>t.isAdmin?'admin':(t.isAcademyAdmin?'academyAdmin':'teacher');
+  (async()=>{
+    let teachers=[];
+    // ⚠️ fetchRoster()는 한 번 받아오면 그 결과를 계속 재사용하는 캐시라(로그인 화면에서는 그게
+    // 맞아요 — 매번 새로 받을 필요가 없으니까), 여기서 그대로 쓰면 방금 추가·삭제한 선생님이
+    // 새로고침 전까지 반영이 안 됐어요. 이 화면은 "지금 명단"을 봐야 하는 관리 화면이라 캐시를
+    // 거치지 않고 매번 서버에서 새로 받아와요(전역 TEACHERS·캐시도 같이 갱신해서 다른 화면도
+    // 최신 값을 쓰게 해요).
+    try{
+      const res=await fetch(SUBMIT_URL+'?_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok&&Array.isArray(data.teachers)){
+        teachers=data.teachers;
+        TEACHERS=teachers;
+        if(Array.isArray(data.students))ROSTER=data.students;
+        saveRosterCache(ROSTER,TEACHERS,CLASS_LEVELS);
+      }else{
+        const c=loadRosterCache();teachers=c.teachers||[];
+      }
+    }catch(e){const c=loadRosterCache();teachers=c.teachers||[];}
+    if(!USER.isAdmin&&USER.isAcademyAdmin)teachers=teachers.filter(t=>String(t.academy||'').trim()===String(USER.academy||'').trim());
+    loading.remove();
+    if(!teachers.length){box.appendChild(el('div','hint','등록된 선생님 계정이 없어요.'));return;}
+    if(fAcademy){
+      opt0(fAcademy.sel,'학원 전체');
+      uniqSorted(teachers.map(t=>t.academy)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v||'(학원 미지정)';fAcademy.sel.appendChild(o);});
+    }
+    filterBox.style.display='flex';
+    const renderRow=(t)=>{
+      const row=el('div','point');row.style.cursor='default';
+      row.appendChild(el('div','dot','●'));
+      const ctx=[t.academy,roleLabel(t)].filter(Boolean).join(' · ');
+      row.appendChild(el('div','pt',(t.name||t.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+t.id+(ctx?' · '+ctx:'')+')</span>'));
+      // 학원별 관리자는 다른 관리자 계정(전체/학원별)을 건드릴 수 없게, 그런 계정엔 수정·삭제
+      // 버튼 자체를 안 보여줘요(본인이 본인 계정을 고치는 것도 실수로 관리자 권한을 잃을 수
+      // 있어서 막아뒀어요 — 계정 정보를 바꾸고 싶으면 전체 관리자에게 요청하면 돼요).
+      const canManage=USER.isAdmin||(USER.isAcademyAdmin&&!t.isAdmin&&!t.isAcademyAdmin&&String(t.id)!==String(USER.id));
+      if(canManage){
+        const btnRow=el('div');btnRow.style.cssText='display:flex;gap:8px;margin-top:8px';
+        const editBtn=el('button','btn ghost','✏️ 수정');editBtn.type='button';editBtn.style.cssText='padding:6px 14px;font-size:13px';
+        editBtn.onclick=(ev)=>{ev.stopPropagation();viewTeacherForm(t);};
+        const delBtn=el('button','btn ghost','🗑 삭제');delBtn.type='button';delBtn.style.cssText='padding:6px 14px;font-size:13px;color:#b91c1c;border-color:#b91c1c';
+        delBtn.onclick=async(ev)=>{
+          ev.stopPropagation();
+          if(!confirm((t.name||t.id)+' 선생님 계정을 삭제할까요? 이 작업은 되돌릴 수 없어요.'))return;
+          delBtn.disabled=true;delBtn.textContent='삭제 중…';
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'deleteTeacher',id:t.id,role:'teacher',requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||''})});
+            let data=null;try{data=await res.json();}catch(e){}
+            if(data&&data.ok===false)throw new Error(data.error||'삭제 실패');
+            viewTeacherManage();
+          }catch(e){
+            delBtn.disabled=false;delBtn.textContent='🗑 삭제';
+            alert('삭제 중 문제가 생겼어요: '+String(e.message||e));
+          }
+        };
+        btnRow.appendChild(editBtn);btnRow.appendChild(delBtn);
+        row.appendChild(btnRow);
+      }
+      return row;
+    };
+    const render=()=>{
+      Array.from(box.children).forEach(c=>c.remove());
+      const fa=fAcademy?fAcademy.sel.value:'',fr=fRole.sel.value;
+      const filtered=teachers.filter(t=>(!fa||String(t.academy||'')===fa)&&(!fr||roleKey(t)===fr));
+      if(!filtered.length){box.appendChild(el('div','hint','조건에 맞는 선생님 계정이 없어요.'));return;}
+      filtered.slice().sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id),'ko')).forEach(t=>box.appendChild(renderRow(t)));
+    };
+    (fAcademy?[fAcademy.sel,fRole.sel]:[fRole.sel]).forEach(sel=>sel.addEventListener('change',render));
+    render();
+  })();
+});}
+function viewTeacherForm(existing){teacherMount(w=>{
+  const isEdit=!!existing;
+  const bk=el('button','backbtn','◀ 선생님 명단으로');bk.onclick=viewTeacherManage;w.appendChild(bk);
+  w.appendChild(el('h1','title',isEdit?'✏️ 선생님 정보 수정':'+ 새 선생님 추가'));
+  w.appendChild(el('div','hint',isEdit?'아이디를 바꾸면 그 선생님은 새 아이디로 로그인해야 해요.':'아이디·비밀번호·이름은 꼭 채워주세요.'));
+  const lockAcademy=!USER.isAdmin&&USER.isAcademyAdmin; // 학원별 관리자는 자기 학원으로 고정.
+  const form=el('div');form.style.cssText='display:flex;flex-direction:column;gap:14px;margin-top:16px';
+  const mkText=(label,key,ph,val,disabled)=>{
+    const wrap=el('div');wrap.style.cssText='display:flex;flex-direction:column;gap:6px';
+    wrap.appendChild(el('div','hint',label));
+    const inp=el('input','in');inp.type='text';inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
+    if(ph)inp.placeholder=ph;
+    if(val!=null)inp.value=val;
+    if(disabled){inp.disabled=true;inp.style.background='#f2f2f0';}
+    wrap.appendChild(inp);form.appendChild(wrap);
+    return inp;
+  };
+  const idInp=mkText('아이디','id','예) teacher01',existing&&existing.id);
+  const pwInp=mkText('비밀번호','pw','예) 1234',existing&&existing.pw);
+  const nameInp=mkText('이름','name','예) 김선생',existing&&existing.name);
+  const academyInp=mkText('학원','academy','예) 아이콘 학원 (한 학원만 쓰면 비워둬도 돼요)',lockAcademy?(USER.academy||''):(existing&&existing.academy),lockAcademy);
+  let adminSel=null,academyAdminSel=null;
+  // 관리자 권한(전체/학원별) 지정은 전체 관리자만 할 수 있어요 — 학원별 관리자 화면에는
+  // 이 체크박스 자체가 안 보여서, 새로 만드는 계정은 항상 "일반 선생님"이에요.
+  if(USER.isAdmin){
+    const roleWrap=el('div');roleWrap.style.cssText='display:flex;flex-direction:column;gap:8px';
+    roleWrap.appendChild(el('div','hint','관리자 권한'));
+    const mkCheck=(label,checked)=>{
+      const row=el('label');row.style.cssText='display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer';
+      const cb=el('input');cb.type='checkbox';cb.checked=!!checked;
+      row.appendChild(cb);row.appendChild(document.createTextNode(label));
+      roleWrap.appendChild(row);
+      return cb;
+    };
+    adminSel=mkCheck('전체 관리자로 지정 (모든 학원을 볼 수 있어요)',existing&&existing.isAdmin);
+    academyAdminSel=mkCheck('학원 관리자로 지정 (자기 학원의 학생·선생님 계정을 관리할 수 있어요)',existing&&existing.isAcademyAdmin);
+    form.appendChild(roleWrap);
+  }
+  w.appendChild(form);
+  const msg=el('div','fx');msg.style.marginTop='10px';
+  const btnRow=el('div');btnRow.style.cssText='display:flex;gap:10px;margin-top:16px';
+  const saveBtn=el('button','btn green',isEdit?'수정 저장하기':'추가하기');saveBtn.type='button';
+  const back=el('button','btn ghost','← 취소');back.type='button';back.onclick=()=>viewTeacherManage();
+  btnRow.appendChild(saveBtn);btnRow.appendChild(back);
+  w.appendChild(btnRow);
+  w.appendChild(msg);
+  saveBtn.onclick=async()=>{
+    const payload={
+      action:'saveTeacher',role:'teacher',
+      requesterIsAdmin:!!USER.isAdmin,requesterIsAcademyAdmin:!!USER.isAcademyAdmin,requesterAcademy:USER.academy||'',
+      id:idInp.value.trim(),pw:pwInp.value.trim(),name:nameInp.value.trim(),
+      academy:lockAcademy?(USER.academy||''):academyInp.value.trim(),
+      isAdmin:adminSel?adminSel.checked:false,
+      isAcademyAdmin:academyAdminSel?academyAdminSel.checked:false
+    };
+    if(isEdit)payload.originalId=existing.id;
+    if(!payload.id){msg.className='fx no';msg.textContent='아이디를 입력해주세요.';return;}
+    if(!payload.pw){msg.className='fx no';msg.textContent='비밀번호를 입력해주세요.';return;}
+    if(!payload.name){msg.className='fx no';msg.textContent='이름을 입력해주세요.';return;}
+    saveBtn.disabled=true;msg.className='fx';msg.textContent='저장 중…';
+    try{
+      const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+      let data=null;try{data=await res.json();}catch(e){}
+      if(data&&data.ok===false)throw new Error(data.error||'저장 실패');
+      viewTeacherManage();
+    }catch(e){
+      msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요: '+String(e.message||e);
+      saveBtn.disabled=false;
+    }
+  };
+});}
+
+/* 학생을 누르면 예전엔 그 학생의 제출물을 평평한 목록으로 보여줬는데,
+   이제는 학생이 실제로 보는 홈 화면(레벨·트랙·챕터 구조)을 그대로 보여주고,
+   그 안에서 컨텐츠 하나를 누르면 그 컨텐츠에 대한 제출물이 보이도록 바꿨어요.
+   (TEACHER_PREVIEW를 세팅하고 viewHome()을 그대로 재사용해요.) */
+/** afterLoad를 안 주면(보통의 경우) 기존처럼 학생 홈 화면(viewHome)을 보여줘요. afterLoad를 주면
+ *  (새로고침 복원용) 데이터를 다 받아온 뒤 그 콜백을 대신 실행해요 — 예를 들어 새로고침 전에 보고
+ *  있던 특정 제출물 상세 화면으로 바로 들어가는 데 써요. */
+function viewTeacherStudent(studentId,studentName,afterLoad){
+  saveTeacherNav(studentId,studentName);
+  // "불러오는 중…" 문구를 화면 전체에 띄웠다가 곧바로 학생 홈 화면으로 바뀌는 게 계속 반복되면서
+  // 깜빡이는 느낌이 나서(특히 새로고침 직후 boot()의 로딩 문구 바로 뒤에 또 떴었어요), 이 화면은
+  // 그냥 이전 화면을 그대로 둔 채 조용히 데이터만 받아온 뒤 한 번에 바꿔요.
+  (async()=>{
+    let subs=[],ctx='';
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(studentId)+'&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&role=teacher&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      if(data&&data.ok&&(data.submissions||[]).length){
+        const first=data.submissions[0];
+        ctx=[first.school,stageGrade(first.school,first.schoolGrade),first.cls].filter(Boolean).join(' · ');
+      }
+      if(data&&data.ok)subs=data.submissions||[];
+    }catch(e){}
+    // 수행평가/기사/이야기처럼 target_school·target_grade·target_class로 공개 대상이 제한된 컨텐츠는
+    // "지금 로그인한 사용자(선생님)"가 아니라 "미리보기 중인 그 학생" 기준으로 보여야 해요. 학생계정
+    // 목록(ROSTER)에서 이 학생의 학교/학년/반을 찾아두고(제출 기록이 하나도 없어도 확인 가능하도록),
+    // 혹시 못 찾으면 제출 기록의 값으로 대신해요. visibleToUser()가 이 값을 사용해요.
+    const acct=(ROSTER||[]).find(r=>String(r.id)===String(studentId));
+    const first=subs[0];
+    const pSchool=(acct&&acct.school)||(first&&first.school)||'';
+    const pGrade=(acct&&acct.schoolGrade)||(first&&first.schoolGrade)||'';
+    const pCls=(acct&&acct.cls)||(first&&first.cls)||'';
+    // ⚠️ curLevel(L1/L2/L3)을 이 학생 기준으로 안 맞춰주면, 선생님이 방금 전까지 보고 있던 다른
+    // 학생·자기 화면의 레벨이 그대로 남아있어서, 이 학생이 실제로 낸 글(다른 레벨의 Story/Pattern
+    // Drill 등)과 화면에 뜨는 목록(엉뚱한 레벨)이 안 맞아 "학습 안 한 것"처럼 보이는 문제가 있었어요
+    // (예: Cain의 Story Writing 글이 분명 제출됐는데도 안 보이던 문제). applyClassLevel로 이 학생의
+    // 반(cls)에 등록된 레벨로 먼저 맞춰줘요.
+    applyClassLevel(pCls);
+    TEACHER_PREVIEW={studentId,studentName,subs,ctx,school:pSchool,schoolGrade:pGrade,cls:pCls};
+    if(afterLoad){ afterLoad(subs); } else { viewHome(); }
+  })();
+}
+/** 새로고침 복원 전용 — 학생 홈이 아니라, 새로고침 전에 보고 있던 그 제출물의 첨삭 화면까지
+ *  바로 들어가요. subId로 못 찾으면(글이 삭제됐거나 형식이 안 맞으면) 그냥 학생 홈으로 대신 가요. */
+function restoreTeacherSubmissionDetail(studentId,studentName,subId){
+  viewTeacherStudent(studentId,studentName,(subs)=>{
+    const target=(subs||[]).find(s=>s.subId===subId);
+    if(!target){ viewHome(); return; }
+    const matches=teacherPreviewSubsFor(target.chapter,target.point);
+    viewTeacherSubmissionDetail(target,studentId,studentName,matches&&matches.length?matches:[target],()=>viewTeacherStudent(studentId,studentName));
+  });
+}
+
+/* 선생님이 학생 홈 화면(TEACHER_PREVIEW)에서 컨텐츠 하나를 눌렀을 때 보여주는 화면.
+   matches가 비어있으면 "아직 제출 안 함" 안내만, 있으면 가장 최근 제출물의 상세 화면으로
+   바로 들어가고(같은 컨텐츠를 여러 번 냈으면 상세 화면 안에서 "이전 제출 보기"로 넘나들 수 있어요). */
+function viewTeacherContentSubmissions(title,matches,backFn){
+  const back=backFn||viewHome;
+  if(!matches||!matches.length){
+    teacherMount(w=>{
+      const bk=el('button','backbtn','◀ 뒤로');bk.onclick=back;w.appendChild(bk);
+      w.appendChild(el('h1','title',title));
+      w.appendChild(el('div','hint','아직 제출하지 않았어요.'));
+    });
+    return;
+  }
+  const studentId=TEACHER_PREVIEW?TEACHER_PREVIEW.studentId:'';
+  const studentName=TEACHER_PREVIEW?TEACHER_PREVIEW.studentName:'';
+  viewTeacherSubmissionDetail(matches[0],studentId,studentName,matches,back);
+}
+
+/* 학생 목록에서 제출물 하나를 골랐을 때 보여주는 상세 화면 — 글 전체, 문장별 코멘트,
+   AI 첨삭, 종합 의견 저장까지 여기서 다 해요. */
+/** AI 첨삭 전체 총평 박스를 그리는데, "✏️ 수정" 버튼을 누르면 textarea로 바뀌어서
+ *  선생님이 내용을 직접 고쳐 쓰고 저장할 수 있어요(문장별 첨삭은 그대로 두고 총평만 덮어써요). */
+function mountAiOverallBox(card,beforeNode,boxStyle,overallText,s,provider,fbObj){
+  const box=el('div');box.style.cssText=boxStyle;
+  const showView=()=>{
+    box.innerHTML='';
+    const row=el('div');row.style.cssText='display:flex;justify-content:space-between;align-items:flex-start;gap:8px';
+    const textEl=el('div');textEl.style.flex='1';textEl.innerHTML='<b>👩‍🏫 선생님 첨삭</b><br>'+escH(overallText);
+    const editBtn=el('button','btn ghost','✏️ 수정');editBtn.type='button';editBtn.style.cssText='padding:3px 8px;font-size:11px;white-space:nowrap';
+    row.appendChild(textEl);row.appendChild(editBtn);
+    box.appendChild(row);
+    editBtn.onclick=showEdit;
+  };
+  const showEdit=()=>{
+    box.innerHTML='';
+    const ta=el('textarea','in');ta.value=overallText;ta.style.cssText='min-height:70px;font-size:13px;white-space:pre-wrap';
+    const btnRow=el('div');btnRow.style.cssText='display:flex;gap:6px;margin-top:6px;align-items:center';
+    const saveBtn=el('button','btn blue','저장');saveBtn.type='button';saveBtn.style.cssText='padding:4px 10px;font-size:12px';
+    const cancelBtn=el('button','btn ghost','취소');cancelBtn.type='button';cancelBtn.style.cssText='padding:4px 10px;font-size:12px';
+    const msg=el('span','fx');
+    btnRow.appendChild(saveBtn);btnRow.appendChild(cancelBtn);btnRow.appendChild(msg);
+    box.appendChild(ta);box.appendChild(btnRow);
+    cancelBtn.onclick=showView;
+    saveBtn.onclick=async()=>{
+      if(!s.subId){msg.className='fx no';msg.textContent='이 제출물은 지원하지 않는 예전 형식이에요.';return;}
+      saveBtn.disabled=true;const prev=saveBtn.textContent;saveBtn.textContent='저장 중…';
+      const aiFeedbackStr=JSON.stringify({overall:ta.value,sentences:(fbObj&&fbObj.sentences)||{}});
+      try{
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'editAiFeedback',subId:s.subId,provider:provider,aiFeedback:aiFeedbackStr,academy:s.academy||''})});
+        let data=null;try{data=await res.json();}catch(e){}
+        if(!data||!data.ok)throw new Error((data&&data.error)||'저장하지 못했어요.');
+        overallText=ta.value;showView();
+      }catch(e){
+        msg.className='fx no';msg.textContent=String(e.message||e);saveBtn.disabled=false;saveBtn.textContent=prev;
+      }
+    };
+  };
+  showView();
+  if(beforeNode)card.insertBefore(box,beforeNode);else card.appendChild(box);
+  return box;
+}
+function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
+  if(s&&s.subId&&studentId)saveTeacherNav(studentId,studentName,s.subId);
+  teacherMount(w=>{
+  const bk=el('button','backbtn',backFn?'◀ 뒤로':'◀ 제출 목록');bk.onclick=backFn||(()=>viewTeacherStudent(studentId,studentName));w.appendChild(bk);
+  w.appendChild(el('h1','title',studentName+' · '+(s.point||s.chapter||'')));
+  w.appendChild(el('div','hint','('+submissionTypeLabel(s)+' · '+(s.datetime||'')+')'));
+  // 다른 학생 아이디로 잘못 제출된 글이면, 이 글 한 편을 올바른 학생에게 옮길 수 있어요.
+  if(s&&s.subId&&!TEACHER_PREVIEW){
+    const mvWrap=el('div');mvWrap.style.cssText='margin-top:8px';
+    const mvBtn=el('button','btn ghost','↪ 다른 학생으로 옮기기');mvBtn.type='button';mvBtn.style.cssText='padding:6px 12px;font-size:13px';
+    const mvBox=el('div');mvBox.style.cssText='display:none;margin-top:8px;gap:8px;align-items:center;flex-wrap:wrap';
+    const mvSel=el('select','in');mvSel.style.cssText='padding:8px;font-size:13px;border-radius:10px;max-width:100%';
+    const mvGo=el('button','btn green','옮기기');mvGo.type='button';mvGo.style.cssText='padding:7px 14px;font-size:13px';
+    const mvMsg=el('div','fx');
+    mvBox.appendChild(mvSel);mvBox.appendChild(mvGo);
+    mvWrap.appendChild(mvBtn);mvWrap.appendChild(mvBox);mvWrap.appendChild(mvMsg);
+    w.appendChild(mvWrap);
+    mvBtn.onclick=async()=>{
+      const show=mvBox.style.display==='none';mvBox.style.display=show?'flex':'none';
+      if(!show||mvSel.options.length)return;
+      mvSel.appendChild(Object.assign(el('option'),{value:'',textContent:'불러오는 중…'}));
+      try{
+        const r=await fetchRoster();
+        const list=((r&&r.students)||[]).filter(x=>String(x.id)!==String(studentId)&&(USER.isAdmin||!USER.academy||String(x.academy||'')===String(USER.academy||'')))
+          .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'ko'));
+        mvSel.innerHTML='';
+        mvSel.appendChild(Object.assign(el('option'),{value:'',textContent:'받을 학생 고르기'}));
+        list.forEach(x=>mvSel.appendChild(Object.assign(el('option'),{value:x.id,textContent:(x.name||x.id)+' ('+x.id+(x.cls?' · '+x.cls:'')+(x.school?' · '+x.school:'')+')'})));
+      }catch(e){mvSel.innerHTML='';mvMsg.className='fx no';mvMsg.textContent='학생 목록을 불러오지 못했어요.';}
+    };
+    mvGo.onclick=async()=>{
+      const to=mvSel.value;if(!to){mvMsg.className='fx no';mvMsg.textContent='받을 학생을 골라주세요.';return;}
+      const toName=mvSel.options[mvSel.selectedIndex].textContent;
+      if(!confirm('이 글을 "'+toName+'" 학생에게 옮길까요?\n(이 글의 이름·학교·반 정보도 그 학생으로 바뀌어요)'))return;
+      mvGo.disabled=true;mvMsg.className='fx';mvMsg.textContent='옮기는 중…';
+      try{
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'moveSubmission',role:'teacher',subId:s.subId,toStudentId:to})});
+        const data=await res.json();
+        if(!data||data.ok===false)throw new Error((data&&data.error)||'실패');
+        mvMsg.className='fx ok';mvMsg.textContent='✅ 옮겼어요. 이 학생 제출 목록에서는 사라지고 "'+toName+'" 쪽에 보여요.';
+        setTimeout(()=>viewTeacherStudent(studentId,studentName),1400);
+      }catch(e){mvGo.disabled=false;mvMsg.className='fx no';mvMsg.textContent='옮기지 못했어요: '+e.message+' (서버 업데이트가 배포됐는지 확인해 주세요)';}
+    };
+  }
+  // 같은 컨텐츠를 여러 번 제출한 경우, 지금 보는 것 말고 다른 제출물도 눌러서 볼 수 있게
+  // "이전 제출 보기" 토글을 보여줘요. (siblings는 최신순으로 정렬돼 있어요.)
+  if(siblings&&siblings.length>1){
+    const others=siblings.filter(x=>x!==s);
+    const togWrap=el('div');togWrap.style.cssText='margin-top:10px';
+    const togBtn=el('button','btn ghost','🕓 이전 제출 보기 ('+others.length+'개)');togBtn.type='button';togBtn.style.cssText='padding:6px 12px;font-size:13px';
+    const listWrap=el('div');listWrap.style.cssText='display:none;margin-top:8px';
+    others.forEach(o=>{
+      const row=el('button','btn ghost');row.type='button';
+      row.style.cssText='display:block;width:100%;text-align:left;padding:10px 14px;margin-bottom:8px;border-radius:10px';
+      row.innerHTML='<div style="font-weight:700">'+escH(o.datetime||'')+(submissionTypeLabel(o)?(' <span style="font-weight:800;color:'+(submissionTypeLabel(o)==='Re-Writing'?'#059669':'#4338ca')+'">· '+escH(submissionTypeLabel(o))+'</span>'):'')+'</div>'+
+        '<div style="margin-top:2px;color:#6b7684;font-size:13px">점수: '+escH(String(o.total||'-'))+(o.grade?(' · '+escH(o.grade)+'등급'):'')+(o.feedback?' · 첨삭 있음':'')+'</div>';
+      row.onclick=()=>viewTeacherSubmissionDetail(o,studentId,studentName,siblings,backFn);
+      listWrap.appendChild(row);
+    });
+    togBtn.onclick=()=>{const show=listWrap.style.display==='none';listWrap.style.display=show?'block':'none';};
+    togWrap.appendChild(togBtn);togWrap.appendChild(listWrap);
+    w.appendChild(togWrap);
+  }
+  (()=>{
+      const card=el('div');
+      card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px;margin-top:14px;background:#fff';
+      card.innerHTML='<div style="color:#6b7684;font-size:13px">점수: '+(s.total||'-')+(s.grade?(' · '+s.grade+'등급'):'')+'</div>';
+      w.appendChild(card);
+      // 원본 글(Re-Writing 자체가 아니고, 첨삭을 받아서 다시 쓸 수 있는 글)이면, 같은 컨텐츠의 다른
+      // 제출물(siblings — teacherPreviewSubsFor가 Re-Writing도 같은 제목으로 이미 함께 묶어줘요) 중에
+      // type이 'Re-Writing'인 게 있는지 확인해서, 그 학생이 이 글로 다시쓰기를 했는지 배지로 바로 보여줘요.
+      if(submissionTypeLabel(s)!=='Re-Writing'){
+        const rewriteEligible=!!(s.text&&s.text.trim()&&(s.aiFeedback||s.aiFeedbackGpt));
+        const rewriteDone=(siblings||[]).some(x=>submissionTypeLabel(x)==='Re-Writing');
+        if(rewriteEligible||rewriteDone){
+          // 예전엔 이 배지가 그냥 글자만 있는 <div>라서, "Re-Writing 완료함"이라고는 뜨는데 정작 그
+          // 다시 쓴 글이 어디 있는지 갈 방법이 없었어요(직접 "🕓 이전 제출 보기"를 펼쳐서 찾아야 했어요).
+          // 완료된 경우엔 눌러서 바로 그 Re-Writing 제출물 상세로 이동하게 버튼으로 바꿨어요.
+          const rewriteSubs=(siblings||[]).filter(x=>submissionTypeLabel(x)==='Re-Writing').sort((a,b)=>String(b.datetime||'').localeCompare(String(a.datetime||'')));
+          const rwBadge=el(rewriteDone?'button':'div');
+          if(rewriteDone)rwBadge.type='button';
+          rwBadge.style.cssText='margin-top:8px;display:inline-block;padding:4px 12px;border-radius:999px;font-size:12.5px;font-weight:700;border:none;'+
+            (rewriteDone?'background:#e6f6ec;color:#059669;cursor:pointer':'background:#fdf1e7;color:#c2650a');
+          rwBadge.textContent=rewriteDone?'🔁 Re-Writing 완료함 (눌러서 보기)':'⏳ 아직 Re-Writing 안 함';
+          if(rewriteDone&&rewriteSubs[0]){
+            const rewriteSub=rewriteSubs[0];
+            rwBadge.onclick=()=>viewTeacherSubmissionDetail(rewriteSub,studentId,studentName,siblings,()=>viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn));
+          }
+          card.appendChild(rwBadge);
+        }
+      }
+      const wrBtn3=el('button','btn blue','📄 Writing Report (학부모님께 보내기)');wrBtn3.type='button';wrBtn3.style.cssText='margin:8px 0 0 0;padding:5px 12px;font-size:12px';
+      wrBtn3.onclick=()=>printWritingReport(s,studentName,studentId,s.academy,siblings);
+      card.appendChild(wrBtn3);
+      const audioBox=renderAudioPlayback(s);if(audioBox)card.appendChild(audioBox);
+      if(s.wrongReport){
+        const wrongWrap=el('div');wrongWrap.innerHTML=renderDrillWrongReport(parseWrongReport(s.wrongReport));
+        card.appendChild(wrongWrap);
+      }
+      if(s.mindmapNotes||s.tableNotes){
+        const mmWrap=el('div');mmWrap.style.cssText='margin-top:10px';
+        mmWrap.innerHTML=processSectionHtml({mindmapNotes:s.mindmapNotes,tableNotes:s.tableNotes});
+        card.appendChild(mmWrap);
+      }
+      if(s.grammarPractice){
+        const gpWrap=el('div');gpWrap.style.cssText='margin-top:10px';
+        const gpResultBox=el('div');
+        gpResultBox.innerHTML=grammarPracticeHtml(s);
+        gpWrap.appendChild(gpResultBox);
+        // "🤖 문법 연습 AI 검토" 버튼은 선생님 전용이에요 — 이 상세 화면 자체가 선생님만 들어오는
+        // 화면이지만, 혹시 모를 상황(예: 테스트계정)까지 대비해 한 번 더 역할을 확인해서, 학생 계정
+        // 흐름에서는 이 화면에 들어오더라도 절대 이 버튼이 안 보이게 해요. 서버(generateGrammarFeedbackNow)
+        // 에서도 role이 teacher가 아니면 거부해서, 화면에 버튼이 없어도 요청 자체를 막아요.
+        if(USER.role==='teacher'){
+          const gpBtn=el('button','btn ghost',s.grammarFeedback?'🤖 문법 연습 AI 검토 다시하기':'🤖 문법 연습 AI 검토');
+          gpBtn.type='button';gpBtn.style.cssText='padding:6px 12px;font-size:13px;margin-top:8px';
+          const gpMsg=el('div','fx');
+          gpWrap.appendChild(gpBtn);gpWrap.appendChild(gpMsg);
+          gpBtn.onclick=async()=>{
+            gpBtn.disabled=true;const prevT=gpBtn.textContent;gpBtn.textContent='검토하는 중… (몇 초 걸릴 수 있어요)';
+            gpMsg.className='fx';gpMsg.textContent='';
+            try{
+              const payload={action:'generateGrammarFeedbackNow',academy:s.academy||'',role:USER.role};
+              if(s.subId){payload.subId=s.subId;}else{payload.studentId=studentId;payload.datetime=s.datetime||'';}
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+            let data=null;try{data=await res.json();}catch(e){}
+            if(!data||!data.ok)throw new Error((data&&data.error)||'문법 연습 AI 검토에 실패했어요.');
+            gpResultBox.innerHTML=grammarPracticeHtml(Object.assign({},s,{grammarFeedback:data.grammarFeedback}));
+            gpMsg.className='fx ok';gpMsg.textContent='✅ 방금 검토했어요. 인쇄 리포트에도 함께 나와요.';
+            gpBtn.textContent='🤖 문법 연습 AI 검토 다시하기';
+          }catch(e){
+            gpMsg.className='fx no';gpMsg.textContent=String(e.message||e);
+          }finally{
+            gpBtn.disabled=false;if(gpBtn.textContent.indexOf('검토하는 중')>-1)gpBtn.textContent=prevT;
+          }
+          };
+        }
+        card.appendChild(gpWrap);
+      }
+      const fb=parseFeedback(s.feedback);
+      const aifb=parseAiFeedback(s.aiFeedback);
+      const aifbGpt=parseAiFeedback(s.aiFeedbackGpt);
+      const sentInputs=[];
+      if(submissionTypeLabel(s)==='Re-Writing'){
+        // Re-Writing 제출물 자체엔 보통 첨삭(틀린 부분)이 안 남아있어요 — 그 첨삭은 원본 글에 달려있어요.
+        // 그래서 여긴 "문장별 코멘트 남기기" 편집 UI 대신, 인쇄 리포트(printSubmissionReport)와 똑같은
+        // "처음 쓴 글(지적된 부분) → 고쳐 쓴 최종 글" 비교 레이아웃을 화면에도 그대로 보여줘요.
+        let original=null;
+        if(siblings&&siblings.length){
+          const key=s.point||s.chapter||'';
+          const cands=siblings.filter(x=>x!==s&&submissionTypeLabel(x)!=='Re-Writing'&&(x.point||x.chapter||'')===key);
+          cands.sort((a,b)=>String(a.datetime||'')<String(b.datetime||'')?1:-1);
+          original=cands[0]||null;
+        }
+        const cmpWrap=el('div','rwcmp');cmpWrap.style.marginTop='12px';
+        if(original){
+          const oOverallHtml=(function(){const of=parseFeedback(original.feedback),oai=parseAiFeedback(original.aiFeedback),oaiGpt=parseAiFeedback(original.aiFeedbackGpt);
+            return [oai.overall,oaiGpt.overall,of.overall].filter(Boolean).map(t=>'<div class="overall">'+escH(t).replace(/\n/g,'<br>')+'</div>').join('');})();
+          // 원본이 문법드릴이면 첨삭 대신 문항별 결과(wrongReport)에 "틀린 부분"이 담겨있어요.
+          const oWrongHtml=original.wrongReport?renderDrillWrongReport(parseWrongReport(original.wrongReport)):'';
+          const oNoFeedbackHtml=hasAnyOriginalFeedback(original)?'':'<div class="hint" style="margin-top:8px">⚠️ 이 원본 글에는 아직 저장된 첨삭이 없어요 — 원본 제출물 화면에서 먼저 첨삭(AI 첨삭 또는 선생님 첨삭)을 남기면 여기에도 나와요.</div>';
+          cmpWrap.innerHTML='<div class="compare">'+
+            '<div class="win orig"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>처음 쓴 글 · 지적된 부분</div>'+
+              '<div class="win-body osent-wrap">'+annotatedSentencesHtml(original)+oOverallHtml+oWrongHtml+oNoFeedbackHtml+'</div></div>'+
+            '<div class="win fixed"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 최종 글</div>'+
+              '<div class="win-body rsent-wrap">'+
+              (s.text?splitSentences(s.text).map((sent)=>'<p>'+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+
+              processSectionHtml(original)+
+              '</div></div>'+
+            '</div>';
+        } else {
+          cmpWrap.innerHTML='<div class="win"><div class="win-bar"><span class="win-dots"><span></span><span></span><span></span></span>고쳐 쓴 글</div>'+
+            '<div class="win-body osent-wrap">'+(s.text?splitSentences(s.text).map((sent)=>'<p>'+escH(sent)+'</p>').join(''):'<p style="color:#888">(작성한 글이 없어요)</p>')+'</div></div>';
+        }
+        card.appendChild(cmpWrap);
+      } else if(s.text){
+        const sents=splitSentences(s.text);
+        const listWrap=el('div');listWrap.style.marginTop='10px';
+        listWrap.appendChild(el('div','fl','문장별 코멘트 (선택 — 틀린 이유를 남기고 싶은 문장에만 달아주세요)'));
+        sents.forEach((sent,i)=>{
+          const existing=fb.sentences[i]||fb.sentences[String(i)]||'';
+          const aiEntry=aifb.sentences[i]||aifb.sentences[String(i)];
+          const aiEntryGpt=aifbGpt.sentences[i]||aifbGpt.sentences[String(i)];
+          const row=el('div');row.style.cssText='border:1px solid rgba(0,0,0,.06);border-radius:8px;padding:8px 10px;margin-top:6px;background:#faf9fb';
+          const sentLine=el('div');sentLine.style.cssText='font-size:14px;line-height:1.5';sentLine.textContent=sent;
+          row.appendChild(sentLine);
+          if(aiEntry&&typeof aiEntry==='string'){
+            // 옛날 문자열 형태 코멘트는 그대로 읽기 전용으로 보여줘요(아주 예전 제출물에만 남아있어요).
+            const aiHtml=renderAiSentenceBlock(aiEntry,'선생님 첨삭','#4338ca');
+            if(aiHtml){const aiBox=el('div');aiBox.innerHTML=aiHtml;row.appendChild(aiBox);}
+          } else {
+            // AI가 이 문장에 첨삭을 만들어뒀으면 고칠 수 있고, 없어도(또는 AI 첨삭 자체가 아직 없어도)
+            // "✏️ 첨삭 추가"로 선생님이 직접 틀린 부분 → 고친 부분을 처음부터 남길 수 있어요.
+            mountEditableAiSentenceBlock(row,aiEntry||null,'claude',i,aifb,'#4338ca',s);
+          }
+          if(aiEntryGpt&&typeof aiEntryGpt==='object'){
+            mountEditableAiSentenceBlock(row,aiEntryGpt,'gpt',i,aifbGpt,'#0f766e',s);
+          } else {
+            const aiHtmlGpt=renderAiSentenceBlock(aiEntryGpt,'선생님 첨삭','#0f766e');
+            if(aiHtmlGpt){const aiBoxGpt=el('div');aiBoxGpt.innerHTML=aiHtmlGpt;row.appendChild(aiBoxGpt);}
+          }
+          const toggle=el('button','btn ghost',existing?'💬 코멘트 수정':'💬 코멘트 남기기');
+          toggle.style.cssText='margin-top:6px;padding:4px 10px;font-size:12px';
+          const inputWrap=el('div');inputWrap.style.cssText='margin-top:6px;'+(existing?'':'display:none');
+          const input=el('input','in');input.type='text';input.placeholder='이 문장에 대한 코멘트 (예: 시제 오류 — 과거형으로 써야 해요)';input.style.cssText='font-size:13px;padding:6px 8px';input.value=existing;
+          inputWrap.appendChild(input);
+          row.appendChild(toggle);row.appendChild(inputWrap);
+          toggle.onclick=()=>{const show=inputWrap.style.display==='none';inputWrap.style.display=show?'block':'none';if(show)setTimeout(()=>input.focus(),30);};
+          sentInputs.push(input);
+          listWrap.appendChild(row);
+        });
+        card.appendChild(listWrap);
+      } else {
+        const noTextEl=el('div','hint','(작성한 글 없음)');noTextEl.style.marginTop='10px';card.appendChild(noTextEl);
+      }
+      if(aifb.overall){
+        mountAiOverallBox(card,null,'background:#eef0ff;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.6;white-space:pre-line;margin-top:12px',aifb.overall,s,'claude',aifb);
+      }
+      if(aifbGpt.overall){
+        mountAiOverallBox(card,null,'background:#e6f6f3;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.6;white-space:pre-line;margin-top:8px',aifbGpt.overall,s,'gpt',aifbGpt);
+      }
+      if(s.text){
+        const nowWrap=el('div');nowWrap.style.cssText='margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+        const nowBtn=el('button','btn ghost','⚡ AI 첨삭 지금 생성하기');nowBtn.type='button';nowBtn.style.cssText='padding:6px 12px;font-size:13px';
+        const nowMsg=el('div','fx');
+        nowWrap.appendChild(nowBtn);nowWrap.appendChild(nowMsg);
+        if(String(s.chapter||'')==='Performance Assessment'&&!aifb.overall&&!aifbGpt.overall){
+          const pa=el('div','hint',"수행평가는 AI 첨삭이 자동으로 만들어지지 않아요. 필요할 때 이 버튼을 눌러주세요.");pa.style.cssText='font-size:12.5px;width:100%';nowWrap.appendChild(pa);
+        }
+        card.appendChild(nowWrap);
+        nowBtn.onclick=async()=>{
+          nowBtn.disabled=true;const prevT=nowBtn.textContent;nowBtn.textContent='생성 중… (몇 초 걸릴 수 있어요)';
+          nowMsg.className='fx';nowMsg.textContent='';
+          try{
+            const payload={action:'generateFeedbackNow',academy:s.academy||''};
+            if(s.subId){payload.subId=s.subId;}else{payload.studentId=studentId;payload.datetime=s.datetime||'';}
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+            let data=null;try{data=await res.json();}catch(e){}
+            if(!data||!data.ok)throw new Error((data&&data.error)||'AI 첨삭 생성에 실패했어요.');
+            // 예전엔 여기서 총평 박스만 손으로 끼워넣고 "새로고침해서 문장별 첨삭 보세요"라고 안내했는데,
+            // 그러지 말고 s(제출물 객체, siblings 안의 것과 같은 참조라서 여기서 바로 갱신해도 안전해요)에
+            // 새 첨삭을 반영한 뒤 이 상세 화면 자체를 다시 그려서, 문장별 첨삭까지 클릭 한 번으로 바로 보이게 해요.
+            s.aiFeedback=data.aiFeedback||s.aiFeedback;
+            if(data.aiFeedbackGpt)s.aiFeedbackGpt=data.aiFeedbackGpt;
+            viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn);
+            return;
+          }catch(e){
+            nowMsg.className='fx no';nowMsg.textContent=String(e.message||e);
+          }finally{
+            nowBtn.disabled=false;nowBtn.textContent=prevT;
+          }
+        };
+      }
+      const fl=el('div','fl','종합 의견 (선택)');fl.style.marginTop='12px';card.appendChild(fl);
+      const ta=el('textarea','in');ta.placeholder='전체적인 총평을 써 주세요. (문장별 코멘트는 위에서 따로 남길 수 있어요)';ta.value=fb.overall||'';ta.style.minHeight='60px';card.appendChild(ta);
+      const saveBtn=el('button','btn blue','첨삭 저장');saveBtn.style.marginTop='8px';card.appendChild(saveBtn);
+      const fx=el('div','fx');card.appendChild(fx);
+      saveBtn.onclick=async()=>{
+        if(!s.subId){fx.className='fx no';fx.textContent='이 제출물은 첨삭 저장을 지원하지 않는 예전 형식이에요.';return;}
+        saveBtn.disabled=true;const prev=saveBtn.textContent;saveBtn.textContent='저장 중…';
+        const sentencesOut={};
+        sentInputs.forEach((inp,i)=>{const v=inp.value.trim();if(v)sentencesOut[i]=v;});
+        const feedbackStr=JSON.stringify({overall:ta.value,sentences:sentencesOut});
+        try{
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'feedback',subId:s.subId,feedback:feedbackStr,academy:s.academy||''})});
+          let data=null;try{data=await res.json();}catch(e){}
+          if(data&&data.ok){fx.className='fx ok';fx.textContent='저장했어요.';}
+          else{fx.className='fx no';fx.textContent='저장하지 못했어요: '+((data&&data.error)||'알 수 없는 오류');}
+        }catch(e){fx.className='fx no';fx.textContent='저장하지 못했어요. 인터넷 연결을 확인하세요.';}
+        saveBtn.disabled=false;saveBtn.textContent=prev;
+      };
+      // 학생이 첨삭을 이미 받았거나(Re-Writing 포함) 제출 형식이 예전 것이라 학생 스스로는 못 고치는
+      // 글도, 선생님 권한으로는 오타·내용을 직접 고쳐 쓸 수 있게 해요(첨삭·AI 첨삭은 그대로 남아있어요).
+      if(s.text){
+        const teditWrap=el('div');teditWrap.style.cssText='margin-top:18px;padding-top:14px;border-top:1px dashed rgba(0,0,0,.1)';
+        const teditBtn=el('button','btn ghost','✏️ 학생 글 수정 (선생님 권한)');teditBtn.type='button';teditBtn.style.cssText='padding:5px 12px;font-size:12px';
+        const teditBody=el('div');teditBody.style.cssText='display:none;margin-top:8px';
+        const teditTa=el('textarea','in tedit-ta');teditTa.value=s.text;teditTa.style.cssText='min-height:110px;font-size:13.5px';
+        const teditBtnRow=el('div');teditBtnRow.style.cssText='display:flex;gap:8px;margin-top:6px;align-items:center';
+        const teditSave=el('button','btn blue tedit-save','저장');teditSave.type='button';teditSave.style.cssText='padding:5px 12px;font-size:12.5px';
+        const teditCancel=el('button','btn ghost','취소');teditCancel.type='button';teditCancel.style.cssText='padding:5px 12px;font-size:12.5px';
+        const teditMsg=el('span','fx');
+        teditBtnRow.appendChild(teditSave);teditBtnRow.appendChild(teditCancel);teditBtnRow.appendChild(teditMsg);
+        teditBody.appendChild(el('div','hint','여기서 고치면 이 제출물의 "작성한 글"만 바뀌어요 — 이미 남아있는 첨삭·AI 첨삭 내용은 그대로 유지돼요.'));
+        teditBody.appendChild(teditTa);teditBody.appendChild(teditBtnRow);
+        teditBtn.onclick=()=>{const show=teditBody.style.display==='none';teditBody.style.display=show?'block':'none';if(show)setTimeout(()=>teditTa.focus(),30);};
+        teditCancel.onclick=()=>{teditTa.value=s.text;teditBody.style.display='none';};
+        teditSave.onclick=async()=>{
+          if(!s.subId){teditMsg.className='fx no';teditMsg.textContent='이 제출물은 지원하지 않는 예전 형식이에요.';return;}
+          if(!teditTa.value.trim()){teditMsg.className='fx no';teditMsg.textContent='내용을 입력해주세요.';return;}
+          teditSave.disabled=true;teditCancel.disabled=true;teditMsg.className='fx';teditMsg.textContent='저장 중…';
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'teacherEditSubmission',subId:s.subId,text:teditTa.value,academy:s.academy||''})});
+            let data=null;try{data=await res.json();}catch(e){}
+            if(!data||data.ok===false)throw new Error((data&&data.error)||'저장하지 못했어요.');
+            s.text=teditTa.value;
+            viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn);
+          }catch(e){
+            teditMsg.className='fx no';teditMsg.textContent=String((e&&e.message)||e);
+            teditSave.disabled=false;teditCancel.disabled=false;
+          }
+        };
+        teditWrap.appendChild(teditBtn);teditWrap.appendChild(teditBody);
+        card.appendChild(teditWrap);
+      }
+      // 학교 성적표 스타일(Title/Class Level/Writing Level + 평가영역 그래프)의 리포트 섹션은 이제
+      // 점수만 있으면 자동으로 채워져서 나와요(선생님이 따로 입력 안 해도 돼요) — 여기 입력창은 자동으로
+      // 매겨진 값이 마음에 안 들 때 "직접 조정해서 고정해두고 싶을 때만" 쓰는 선택 기능이에요. 저장하면
+      // 그 뒤로는 자동 계산 대신 여기서 입력한 값이 리포트에 계속 쓰여요.
+      (()=>{
+        const savedRb=parseRubricEval(s.rubric);
+        const autoRb=autoComputeRubric(s);
+        const rb=savedRb||autoRb;
+        const rubWrap=el('div');rubWrap.style.cssText='margin-top:14px;padding-top:14px;border-top:1px dashed rgba(0,0,0,.1)';
+        const rubBtn=el('button','btn ghost',(savedRb?'📊 성적표 그래프 수정':'📊 성적표 그래프 직접 조정')+' (선생님 권한)');rubBtn.type='button';rubBtn.style.cssText='padding:5px 12px;font-size:12px';
+        const rubBody=el('div');rubBody.style.cssText='display:'+(savedRb?'block':'none')+';margin-top:10px;max-width:420px';
+        rubBody.appendChild(el('div','hint',autoRb?'점수를 기준으로 이미 자동 계산돼서 리포트에 나오고 있어요(과제완성 '+autoRb.taskGrade+', 형식 '+autoRb.formatGrade+' · 총점 '+autoRb.totalScore+'/20 '+autoRb.totalGrade+'). 이대로가 아니라 직접 등급을 정하고 싶을 때만 아래를 고쳐서 저장하세요.':'이 제출물은 아직 점수가 없어서 자동 계산도 안 돼요. 아래 등급은 기본으로 만점(A)이 선택돼 있으니, 감점할 부분만 낮춰서 저장하면 돼요.'));
+        const mkField=(label,slug,val)=>{const w=el('div');w.style.marginTop='8px';w.appendChild(el('div','fl',label));const inp=el('input','in rubric-'+slug);inp.type='text';inp.value=val||'';inp.style.cssText='font-size:13px;padding:6px 8px';w.appendChild(inp);rubBody.appendChild(w);return inp;};
+        const clInput=mkField('Class Level','class-level',rb&&rb.classLevel);
+        const wlInput=mkField('Writing Level','writing-level',rb&&rb.writingLevel);
+        // 등급 선택칸은 처음부터 빈 칸("(선택)")이 아니라 만점(A)이 기본으로 골라져 있게 해서, 선생님이
+        // 감점할 부분만 낮추면 되게 했어요(모든 학생이 매번 만점부터 하나하나 고를 필요 없게).
+        const mkGradeSel=(label,val)=>{const w=el('div');w.style.marginTop='8px';w.appendChild(el('div','fl',label+' (과제완성/형식 — A~E, 기본 만점 A)'));const sel=document.createElement('select');sel.className='in';sel.style.cssText='font-size:13px;padding:6px 8px';['A','B','C','D','E'].forEach(g=>{const o=document.createElement('option');o.value=g;o.textContent=g;sel.appendChild(o);});sel.value=val||'A';w.appendChild(sel);rubBody.appendChild(w);return sel;};
+        const taskSel=mkGradeSel('과제완성',(rb&&rb.taskGrade)||'A');taskSel.classList.add('rubric-task-grade');
+        const fmtSel=mkGradeSel('형식',(rb&&rb.formatGrade)||'A');fmtSel.classList.add('rubric-format-grade');
+        const previewLine=el('div','hint');previewLine.style.cssText='margin-top:8px;font-weight:700';
+        const updatePreview=()=>{
+          const ts=rubricGradeToScore(taskSel.value),fs=rubricGradeToScore(fmtSel.value);
+          const total=ts+fs,pct=Math.round(total/20*100);
+          previewLine.textContent='총점 미리보기: '+total+'/20 ('+rubricPercentToGrade(pct)+')';
+        };
+        taskSel.onchange=updatePreview;fmtSel.onchange=updatePreview;updatePreview();
+        rubBody.appendChild(previewLine);
+        const rubBtnRow=el('div');rubBtnRow.style.cssText='display:flex;gap:8px;margin-top:8px;align-items:center';
+        const rubSave=el('button','btn blue rubric-save','저장');rubSave.type='button';rubSave.style.cssText='padding:5px 12px;font-size:12.5px';
+        const rubMsg=el('span','fx');
+        rubBtnRow.appendChild(rubSave);rubBtnRow.appendChild(rubMsg);
+        rubBody.appendChild(rubBtnRow);
+        rubBtn.onclick=()=>{const show=rubBody.style.display==='none';rubBody.style.display=show?'block':'none';};
+        rubSave.onclick=async()=>{
+          if(!s.subId){rubMsg.className='fx no';rubMsg.textContent='이 제출물은 지원하지 않는 예전 형식이에요.';return;}
+          if(!taskSel.value||!fmtSel.value){rubMsg.className='fx no';rubMsg.textContent='과제완성/형식 등급을 모두 골라주세요.';return;}
+          rubSave.disabled=true;rubMsg.className='fx';rubMsg.textContent='저장 중…';
+          try{
+            const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'saveRubricEval',subId:s.subId,academy:s.academy||'',classLevel:clInput.value,writingLevel:wlInput.value,taskGrade:taskSel.value,formatGrade:fmtSel.value})});
+            let data=null;try{data=await res.json();}catch(e){}
+            if(!data||data.ok===false)throw new Error((data&&data.error)||'저장하지 못했어요.');
+            s.rubric=JSON.stringify(data.rubric);
+            rubMsg.className='fx ok';rubMsg.textContent='저장했어요. 리포트를 다시 열면 표+그래프가 보여요.';
+          }catch(e){
+            rubMsg.className='fx no';rubMsg.textContent=String((e&&e.message)||e);
+          }finally{
+            rubSave.disabled=false;
+          }
+        };
+        rubWrap.appendChild(rubBtn);rubWrap.appendChild(rubBody);
+        card.appendChild(rubWrap);
+      })();
+  })();
+});}
+
+/* ================= SLIDE DECK (drill & paragraph) ================= */
+let slides=[],idx=0;
+function deckInit(){clearStage();slides=[];idx=0;nav.classList.add('on');}
+/* ---- 실시간 학습 시간 표시 (nav 바에 계속 보임) ---- */
+let studyTimerId=null,studyTimerBase=null,studyTimerLabel='';
+function setStudyTimer(base,label){if(studyTimerId){clearInterval(studyTimerId);studyTimerId=null;}
+  studyTimerBase=base;studyTimerLabel=label;
+  const tick=()=>{const el=document.getElementById('studyTimer');if(el&&studyTimerBase!=null)el.textContent=studyTimerLabel+' '+fmtDur(Date.now()-studyTimerBase);};
+  tick();studyTimerId=setInterval(tick,1000);}
+function freezeStudyTimer(){if(studyTimerId){clearInterval(studyTimerId);studyTimerId=null;}}
+function clearStudyTimer(){freezeStudyTimer();studyTimerBase=null;const el=document.getElementById('studyTimer');if(el)el.textContent='';}
+function slideAdd(build,opts){const s=el('div','slide');const b=el('div','inner');s.appendChild(b);build(b);if(opts){if(opts.onEnter)s._onEnter=opts.onEnter;if(opts.collect)s._collect=opts.collect;if(opts.focus)s._focusSel=opts.focus;if(opts.wide)b.style.maxWidth=(opts.wideMax||'1120px');if(opts.lock)s._lock=opts.lock;}s._box=b;stage.appendChild(s);slides.push(s);return s;}
+function deckShow(i){const cur=slides[idx];
+  if(cur&&i>idx&&!!cur._lock&&cur._lock())return; // 잠금 상태에서는 다음으로 넘어갈 수 없음
+  if(cur&&cur._collect)try{cur._collect();}catch(e){}
+  if(cur)cur.classList.remove('active');idx=Math.max(0,Math.min(slides.length-1,i));const s=slides[idx];s.classList.add('active');
+  prog.style.width=(idx/(slides.length-1||1)*100)+'%';counter.innerHTML=`<b>${idx+1}</b> / ${slides.length}`;
+  prevB.disabled=idx===0;nextB.disabled=(idx===slides.length-1)|| !!s._lock&&s._lock();
+  if(s._onEnter)try{s._onEnter();}catch(e){}
+  if(s._focusSel){const f=s.querySelector(s._focusSel);if(f)setTimeout(()=>f.focus(),60);}}
+function deckStart(){prevB.onclick=()=>deckShow(idx-1);nextB.onclick=()=>deckShow(idx+1);deckShow(0);}
+document.addEventListener('keydown',e=>{if(document.getElementById('exprModal'))return;const tag=(e.target.tagName||'').toLowerCase();if(tag==='input'||tag==='textarea')return;if(!nav.classList.contains('on'))return;
+  if(e.key==='Enter'){const s=slides[idx];if(s&&s._box&&s._box._enterKey){e.preventDefault();s._box._enterKey();}return;}
+  if(e.key==='ArrowRight')deckShow(idx+1);else if(e.key==='ArrowLeft')deckShow(idx-1);});
+homeBtn.onclick=()=>{nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;if(USER.role==='teacher')viewTeacherHome();else viewHome();};
+logoutBtn.onclick=()=>{document.body.classList.remove('can-copy');nav.classList.remove('on');clearStudyTimer();TEACHER_PREVIEW=null;USER={id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isAcademyAdmin:false,isTestAccount:false};clearSession();clearTeacherNav();whoEl.textContent='';homeBtn.style.display='none';logoutBtn.style.display='none';try{fbAuth.signOut();}catch(e){}viewLogin();};
+
+/* ================= DRILL RUNNER ================= */
+function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
+  // 같은 유닛을 다시 열 때 이전에 채점된 표시(_graded)가 남아 있으면 그 문제가 채점 안 되는 문제가 있어서, 시작할 때 항상 비워둬요.
+  (P.arrange||[]).forEach(x=>{if(x)x._graded=false;});(P.compose||[]).forEach(x=>{if(x)x._graded=false;});
+  const drillStart=Date.now();setStudyTimer(drillStart,'⏱ 학습 시간');
+  const RES={quiz:{ok:0,tot:P.quiz.length},arrange:{ok:0,tot:P.arrange.length},compose:{ok:0,tot:P.compose.length},wrong:[],all:[],taskDone:false,taskText:'',startTime:drillStart,finishTime:null};
+  // "조건 영작(Task)" 글쓰기 칸도 다른 글쓰기 화면들처럼 임시저장이 되도록, 제출할 때 쓰는 chapter/point(P.id/P.title)와
+  // 똑같은 값으로 임시저장을 걸어둬요 — 그래야 실제로 제출했을 때 서버가 이 임시저장 내용을 자동으로 지워줘요.
+  const DRAFT_CHAPTER=P.id,DRAFT_POINT=P.title;
+  // 글쓰기(조건 영작) 말고, 개념퀴즈·단어배열·영작 학습 중간 진행 상황도 저장해요. 실제로 입력한 문장 내용까지
+  // 전부 저장하진 않고(그건 더 무거워요), "몇 번까지 풀었고 그중 몇 개를 맞았는지"만 가볍게 저장해서, 새로고침해도
+  // 이미 푼 문제는 다시 안 풀고 이어서 진행할 수 있게 해요.
+  // (예전 버전은 이 진행 상황을 서버에서 불러올 때까지 화면 자체를 안 그리고 기다렸는데, 그동안 로딩이 느려
+  //  보이는 문제가 있었어요. 이제는 화면을 먼저 즉시 그리고, 진행 상황은 뒤에서 조용히 불러와서 필요하면
+  //  그때 가서 이어서 풀 위치로 슬쩍 이동시켜요 — 첫 화면이 다시 예전처럼 바로 나타나요.)
+  const PROGRESS_CHAPTER='진행상황::'+P.id,PROGRESS_POINT=P.title;
+  const progress={quizCorrect:[],arrangeCorrect:[],composeCorrect:[]};
+  const saveProgressNow=()=>saveDraftNow(PROGRESS_CHAPTER,PROGRESS_POINT,progress);
+  // "처음부터 다시 시작" — 이어하기 위치(진행 상황 임시저장)를 비우고, 이 유닛을 퀴즈 첫 문제부터 다시 풀어요.
+  // 이미 제출한 글(제출 기록)은 지우지 않아요.
+  const restartDrill=()=>{
+    if(!confirm('처음부터 다시 풀까요?\n지금까지 푼 위치(이어하기 기록)는 지워지지만, 이미 제출한 글은 그대로 남아요.'))return;
+    saveDraftNow(PROGRESS_CHAPTER,PROGRESS_POINT,{quizCorrect:[],arrangeCorrect:[],composeCorrect:[]});
+    runDrill(P,Object.assign({},opts,{review:false,restart:true}));
+  };
+  const restartBar=(msg)=>{
+    const bar=el('div');bar.style.cssText='background:#fff7ed;color:#9a3412;border-radius:10px;padding:8px 12px;font-size:13px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap';
+    bar.appendChild(el('span',null,msg));
+    const rb=el('button','btn ghost','🔄 처음부터 다시 시작');rb.type='button';rb.style.cssText='padding:5px 12px;font-size:12.5px;background:#fff';
+    rb.onclick=restartDrill;bar.appendChild(rb);
+    return bar;
+  };
+  // 0 설명 (노란 부분을 모두 눌러야 다음으로 이동 가능)
+  let expTotal=0,expClicked=0;
+  slideAdd(b=>{b.appendChild(el('span','badge blue','설명 · '+P.title));
+    b.appendChild(el('h1','title',P.title));
+    const piImgs=renderImages(P.images);if(piImgs)b.appendChild(piImgs);
+    const p=el('div','lead');const note=el('div','notebox',P.explain.note);
+    // ⚠️ parseExplainPartsText가 "텍스트: " 줄은 {t:''}(빈 문자열)로도 만들 수 있는데, 예전엔
+    // `if(seg.t)`만 보고 빈 문자열이면 "텍스트가 아니다"로 오판해서 노란 키워드 박스로 잘못
+    // 그렸어요 — 그러면 seg.k/seg.n이 둘 다 없는(undefined) 빈 노란 박스가 생기고, 눌러도
+    // "undefined — undefined"처럼 설명이 공백으로 보였어요(선생님이 "일부 내용이 노란색인데
+    // 공백"이라고 하신 증상이 이거였어요). 이제 이 세그먼트가 애초에 "텍스트" 줄이었는지를
+    // 먼저 확인하고(속성 t가 있으면 텍스트 줄), 키워드·설명이 둘 다 비어있는 줄은 아예
+    // 건너뛰어서 빈 노란 박스 자체가 생기지 않게 했어요.
+    P.explain.lead.forEach(seg=>{
+      if('t' in seg){ if(seg.t)p.appendChild(document.createTextNode(seg.t)); return; }
+      if(!seg.k&&!seg.n)return;
+      expTotal++;const k=el('span','key',seg.k);
+      k.onclick=()=>{if(!k.classList.contains('clicked')){k.classList.add('clicked');expClicked++;}note.innerHTML='<b>'+seg.k+'</b> — '+seg.n;
+        nextB.disabled=(idx===slides.length-1)||expClicked<expTotal;};
+      p.appendChild(k);
+    });
+    b.appendChild(p);b.appendChild(note);
+    b.appendChild(el('div','enter-tip','노란 부분을 모두 눌러 확인해야 다음으로 넘어갈 수 있어요.'));
+    },{lock:()=>expClicked<expTotal});
+  // 개념 퀴즈 (10, 5지선다, 정답을 고르면 설명이 나오고 직접 다음으로 넘어감)
+  P.quiz.forEach((q,qi)=>{let answered=false,firstWrong=false,firstWrongUser='';
+    slideAdd(b=>{b.appendChild(el('span','badge blue',`개념 확인 ${qi+1} / ${P.quiz.length}`));
+    b.appendChild(el('div','qtext',undl(q.q)));
+    const opts=el('div','opts');const expl=el('div','expl',''+q.e);
+    q.o.forEach((o,oi)=>{const btn=el('button','opt','①②③④⑤'[oi]+' '+o);
+      btn.onclick=()=>{if(answered)return;
+        if(oi===q.a){btn.classList.add('ok');answered=true;expl.classList.add('show');if(!firstWrong)RES.quiz.ok++;
+          else RES.wrong.push({type:'퀴즈',ko:q.q,a:q.o[q.a],user:firstWrongUser});
+          RES.all.push({type:'퀴즈',ko:q.q,a:q.o[q.a],user:firstWrong?firstWrongUser:q.o[q.a],correct:!firstWrong});
+          progress.quizCorrect.push(!firstWrong);saveProgressNow();
+          opts.querySelectorAll('.opt').forEach(x=>x.disabled=true);nextB.disabled=(idx===slides.length-1);
+          tip.textContent='설명을 확인하고 준비되면 다음 버튼(또는 Enter)을 눌러 다음 문제로 넘어가세요.';}
+        else{btn.classList.add('no');btn.disabled=true;if(!firstWrong)firstWrongUser=o;firstWrong=true;}};
+      opts.appendChild(btn);});
+    b.appendChild(opts);b.appendChild(expl);
+    const tip=el('div','enter-tip','정답을 골라야 다음으로 넘어갈 수 있어요.');b.appendChild(tip);
+    b._enterKey=()=>{if(answered&&idx<slides.length-1)deckShow(idx+1);};
+    },{lock:()=>!answered});});
+  // 단어배열 (15) — 직접 입력 (전부 써서 채점을 완료해야 다음으로 이동 가능)
+  P.arrange.forEach((it,ai)=>{
+    const endM=it.a.match(/[.?!]$/);const endPunct=endM?endM[0]:null;
+    const bag=it.a.replace(/[.?!]$/,'').split(/\s+/);if(endPunct)bag.push(endPunct);
+    let scr=bag;if(bag.length>1){scr=shuffle(bag);let t=0;while(scr.join(' ')===bag.join(' ')&&t++<6)scr=shuffle(bag);}
+    let checked=false,correct=false;
+    slideAdd(b=>{b.appendChild(el('span','badge',`단어 배열 ${ai+1} / ${P.arrange.length}`));
+    b.appendChild(el('div','kobox',''+it.ko));
+    const chips=el('div','chips');const chipNodes=scr.map(tok=>{const c=el('span','chip'+(tok===endPunct?' chip-punct':''),tok);chips.appendChild(c);return {tok,node:c,isPunct:tok===endPunct};});b.appendChild(chips);
+    const inp=el('input','in');inp.placeholder='단어를 순서대로 배열해 문장을 쓰세요.';b.appendChild(inp);
+    const fx=el('div','fx');b.appendChild(fx);b.appendChild(el('div','enter-tip','문장을 모두 쓰고 Enter로 채점해야 다음으로 넘어갈 수 있어요 · 채점 후 Enter 한 번 더=다음'));
+    const nrm1=w=>(w||'').toLowerCase().replace(/[.,!?;:"'’]/g,'');
+    let allUsed=false;
+    const updateChips=()=>{const raw=inp.value;const typed=raw.trim().split(/\s+/).filter(Boolean).map(nrm1);const counts={};
+      typed.forEach(w=>{counts[w]=(counts[w]||0)+1;});
+      const endsWithPunct=endPunct?raw.trim().endsWith(endPunct):false;
+      chipNodes.forEach(({tok,node,isPunct})=>{if(isPunct){node.classList.toggle('used',endsWithPunct);return;}
+        const key=nrm1(tok);if(counts[key]>0){node.classList.add('used');counts[key]--;}else node.classList.remove('used');});
+      allUsed=chipNodes.every(c=>c.node.classList.contains('used'));};
+    inp.addEventListener('input',updateChips);
+    const check=()=>{if(!inp.value.trim()){inp.classList.remove('ok','no');fx.className='fx no';fx.textContent='문장을 입력한 후 Enter를 눌러 채점하세요.';return;}
+      if(!allUsed){inp.classList.remove('ok','no');fx.className='fx no';fx.textContent='주어진 단어를 모두 사용해서 문장을 완성한 후 Enter를 눌러 채점하세요.';return;}
+      correct=sameAnswer(inp.value,it.a);inp.classList.remove('ok','no');inp.classList.add(correct?'ok':'no');
+      fx.className='fx '+(correct?'ok':'no');fx.textContent=correct?'정답이에요! (Enter=다음)':'다시 확인해요. 대소문자와 문장부호(마침표 등)까지 정확히 맞아야 해요. (Enter=다음, 오답노트에 담겨요)';checked=true;
+      nextB.disabled=(idx===slides.length-1);
+      if(!it._graded){it._graded=true;if(correct)RES.arrange.ok++;else RES.wrong.push({type:'배열',ko:it.ko,a:it.a,user:inp.value});RES.all.push({type:'배열',ko:it.ko,a:it.a,user:inp.value,correct:correct});progress.arrangeCorrect.push(correct);saveProgressNow();}};
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!checked)check();else if(idx<slides.length-1)deckShow(idx+1);}});
+    b._checkFocus=()=>inp;},{focus:'input',lock:()=>!checked});});
+  // 한글→영작 (15)
+  P.compose.forEach((it,ci)=>{slideAdd(b=>{b.appendChild(el('span','badge',`영작 ${ci+1} / ${P.compose.length}`));
+    b.appendChild(el('div','kobox',''+it.k));
+    if(it.h)b.appendChild(el('div','frame','단어: '+it.h));
+    const inp=el('input','in');inp.placeholder='영어로 문장을 완성하세요.';b.appendChild(inp);
+    const fx=el('div','fx');b.appendChild(fx);b.appendChild(el('div','enter-tip','Enter = 채점 · 채점 후 Enter 한 번 더 = 다음'));
+    let checked=false,correct=false,pending=false;const ansList=[it.a].concat(it.alt||[]);
+    const finalize=()=>{inp.classList.remove('ok','no');inp.classList.add(correct?'ok':'no');
+      fx.className='fx '+(correct?'ok':'no');fx.innerHTML=correct?'정답이에요! (Enter=다음)':('아쉬워요(대소문자·문장부호도 정확해야 해요). 모범답안: <b>'+it.a+'</b> (오답노트에 담겨요)');checked=true;pending=false;
+      if(!it._graded){it._graded=true;if(correct)RES.compose.ok++;else RES.wrong.push({type:'영작',ko:it.k,a:it.a,user:inp.value});RES.all.push({type:'영작',ko:it.k,a:it.a,user:inp.value,correct:correct});progress.composeCorrect.push(correct);saveProgressNow();}};
+    // 글자 그대로(normStrict) 똑같으면 바로 정답 처리하고(빠르고 공짜), 다를 때만(=애매할 때만) AI한테
+    // "표현이 달라도 뜻이 같은지" 한 번 더 물어봐요 — 정확히 같은 답이 아니어도 같은 뜻으로 쓰인 단어면
+    // 맞게 인정해달라는 요청으로 추가했어요.
+    const check=async()=>{
+      if(pending)return;
+      const typed=inp.value;
+      if(ansList.some(x=>sameAnswer(typed,x))){correct=true;finalize();return;}
+      pending=true;fx.className='fx';fx.textContent='채점 중… (표현이 달라도 같은 뜻이면 AI가 확인해줘요)';
+      try{
+        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'checkComposeAnswerAI',studentId:USER.id,korean:it.k,modelAnswer:it.a,studentAnswer:typed})});
+        let data=null;try{data=await res.json();}catch(e){}
+        correct=!!(data&&data.ok!==false&&data.result&&data.result.correct);
+      }catch(e){correct=false;}
+      finalize();
+    };
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!checked)check();else if(idx<slides.length-1)deckShow(idx+1);}});
+  },{focus:'input'});});
+  // 오답 재도전 안내 + 동적 생성
+  const redoAnchor=slideAdd(b=>{b.appendChild(el('span','badge purple','오답 다시 풀기'));
+    b.appendChild(el('h1','title','틀린 문제만 다시!'));
+    b._render=()=>{b.querySelectorAll('.redo-msg').forEach(x=>x.remove());
+      const msg=el('div','redo-msg');
+      if(RES.wrong.length===0)msg.innerHTML='<div class="hint">틀린 문제가 없어요! 아주 잘했어요. 다음으로 넘어가세요.</div>';
+      else msg.innerHTML='<div class="hint">틀린 문제 <b>'+RES.wrong.length+'개</b>를 다시 풀어봐요. 힌트가 단계별로 주어지고, 세 번째부터는 정답을 보고 따라 적어요.</div>';
+      b.appendChild(msg);};
+  },{onEnter(){/* build redo slides once when reaching here */ if(!redoAnchor._built){redoAnchor._built=true;buildRedo(RES);} redoAnchor._box._render&&redoAnchor._box._render();}});
+  // 조건 영작 (task) — 조건 확인이 입력할 때마다 실시간으로 작동
+  slideAdd(b=>{b.appendChild(el('span','badge accent','조건 영작'));b.querySelector('.badge').style.background='var(--accent)';
+    b.appendChild(el('h1','title','조건에 맞게 글쓰기'));
+    const bannerSlot=el('div');b.appendChild(bannerSlot);
+    b.appendChild(el('div','lead',autoFormatPrompt(P.task.prompt)));
+    const dictWrap=el('div','dictwrap');const dictLeft=el('div','dictleft');const right=el('div','dictright');
+    dictLeft.appendChild(buildDictPanel());dictWrap.appendChild(dictLeft);dictWrap.appendChild(right);b.appendChild(dictWrap);
+    const ta=addWordCount(el('textarea','in'));ta.placeholder='여기에 영어로 써요.';right.appendChild(ta);
+    const wcEl=el('div','hint');wcEl.style.cssText='margin:4px 0 2px;font-size:13px';right.appendChild(wcEl);
+    // "조건 영작"은 개별 문법 포인트마다 다른 조건(문법 사용 등) 말고도, Pattern Drill 전체에 공통으로
+    // 적용되는 최소 분량 조건(전체 단어 수·전체 문장 수)이 항상 함께 붙어요 — 선생님이 매번 "과제 조건"에
+    // 분량 조건을 직접 추가하지 않아도 자동으로 붙게요. 기준 숫자는 이 코드에 직접 넣지 않고, 스프레드시트
+    // '설정' 탭의 PATTERN_DRILL_MIN_WORDS·PATTERN_DRILL_MIN_SENTENCES 값을 그대로 읽어와요(DRILL_MIN_WORDS·
+    // DRILL_MIN_SENTENCES는 loadLiveContent()에서 채워져요) — 숫자를 바꾸고 싶으면 코드 수정 없이 그 탭의
+    // 값만 고치면 돼요. 다만 이 조건들도(다른 조건들과 마찬가지로) 화면에 충족 여부만 보여줄 뿐 제출
+    // 자체를 막지는 않아요 — 분량이 부족해도 학생은 언제든 제출할 수 있어요.
+    const drillConds=(P.task.conds||[]).map(cn=>({label:cn.label,test:testWithContractions(cn.test)})).concat([
+      {label:'전체 단어 수 '+DRILL_MIN_WORDS+'단어 이상',test:t=>countWords(t)>=DRILL_MIN_WORDS},
+      {label:'전체 문장 수 '+DRILL_MIN_SENTENCES+'개 이상',test:t=>sc(t)>=DRILL_MIN_SENTENCES}
+    ]);
+    const ul=el('ul','conds');drillConds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});right.appendChild(ul);
+    const fx=el('div','fx');right.appendChild(fx);
+    addAiCondCheckButton(right,ul,()=>ta.value);
+    const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
+    const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
+    const saveMsg=el('span','fx');saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);right.appendChild(saveRow);
+    right.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 판단이 애매한 문법 조건은 "🤖 AI로 조건 확인하기"를 눌러 다시 확인할 수 있어요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요(입력하는 동안 자동으로도 저장돼요).'));
+    const checkConds=()=>{let all=true;ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';if(!ok)all=false;});
+      const wc=countWords(ta.value);wcEl.textContent='현재 '+wc+'단어 / 목표 '+DRILL_MIN_WORDS+'단어';wcEl.style.color=wc>=DRILL_MIN_WORDS?'#2e9e5b':'#8a8f9c';
+      RES.taskDone=all;RES.taskText=ta.value;
+      if(!ta.value.trim()){fx.className='fx';fx.textContent='';}
+      else{fx.className='fx '+(all?'ok':'no');fx.textContent=all?'모든 조건을 만족했어요!':'아직 부족한 조건이 있어요.';}};
+    const doAutosave=debounce(()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,{draft:ta.value});saveMsg.className='fx ok';saveMsg.textContent='자동 저장됨';},2500);
+    ta.addEventListener('input',()=>{checkConds();if(ta.value.trim())doAutosave();});
+    ta.addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});
+    saveBtn.onclick=()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,{draft:ta.value});saveMsg.className='fx ok';saveMsg.textContent='저장했어요! 나중에 이어서 쓸 수 있어요.';};
+    checkConds();
+    (async()=>{
+      const found=await fetchDraft(DRAFT_CHAPTER,DRAFT_POINT);
+      if(found&&found.obj&&found.obj.draft&&!ta.value.trim()){
+        ta.value=found.obj.draft;checkConds();bannerSlot.appendChild(draftBanner(found.savedAt));
+      }
+    })();
+    // 같은 챕터의 다른 유닛으로, 목록 화면을 거치지 않고 바로 넘나들 수 있게 "이전/다음 문제"
+    // 버튼을 붙여요(완료한 유닛을 눌렀을 때 이 화면으로 바로 들어오는 review 모드에서 특히 유용해요).
+    if(opts.chapterPoints&&opts.chapterPoints.length>1&&opts.pointIndex!=null&&opts.pointIndex>=0){
+      const pts=opts.chapterPoints,curI=opts.pointIndex;
+      const prevPt=pts[curI-1],nextPt=pts[curI+1];
+      if(prevPt||nextPt){
+        const navRow=el('div');navRow.style.cssText='margin-top:14px;display:flex;gap:8px;flex-wrap:wrap';
+        if(prevPt){
+          const pb=el('button','btn ghost','◀ 이전 문제: '+prevPt.title);pb.type='button';pb.style.cssText='padding:6px 12px;font-size:12.5px';
+          pb.onclick=()=>{const PP=loadProg();runDrill(prevPt,{review:!!PP[prevPt.id],chapterPoints:pts,pointIndex:curI-1});};
+          navRow.appendChild(pb);
+        }
+        if(nextPt){
+          const nb2=el('button','btn ghost','다음 문제: '+nextPt.title+' ▶');nb2.type='button';nb2.style.cssText='padding:6px 12px;font-size:12.5px';
+          nb2.onclick=()=>{const PP=loadProg();runDrill(nextPt,{review:!!PP[nextPt.id],chapterPoints:pts,pointIndex:curI+1});};
+          navRow.appendChild(nb2);
+        }
+        b.appendChild(navRow);
+      }
+    }
+  },{collect(){},focus:'textarea'});
+  // 레포트 + 제출
+  slideAdd(b=>{buildReport(b,P,RES,()=>{
+    // 제출을 완료하면(다음 번에 이 유닛을 다시 열었을 때 방금 끝낸 이전 회차 진행 상황이 남아있지 않도록)
+    // 진행 상황 임시저장 기록을 비워둬요.
+    saveDraftNow(PROGRESS_CHAPTER,PROGRESS_POINT,{quizCorrect:[],arrangeCorrect:[],composeCorrect:[]});
+  },opts.review);},{onEnter(){if(!RES.finishTime){RES.finishTime=Date.now();}freezeStudyTimer();}});
+  deckStart();
+  if(opts.review&&!opts.restart){
+    // 이미 제출을 마친 유닛을 다시 눌렀을 때예요 — 퀴즈·배열·영작을 처음부터 다시 풀게 하지 않고,
+    // 서버에 저장된 마지막 제출물을 그대로 불러와서 "조건 영작" 글쓰기 화면으로 바로 건너뛰어요.
+    // (redoAnchor 슬라이드는 한 번도 거치지 않으니 buildRedo가 실행되지 않아서, 슬라이드 배열에
+    // 오답 다시풀기 문항이 끼어들지 않아요 — 그래서 badge.purple로 찾은 위치 바로 다음이 항상
+    // "조건 영작" 슬라이드예요.)
+    (async()=>{
+      let sub=null;
+      try{
+        const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+        const data=await res.json();
+        const subs=(data&&data.ok)?(data.submissions||[]):[];
+        const matches=subs.filter(s=>s.chapter===P.id&&s.point===P.title).sort((a,b)=>String(b.datetime||'').localeCompare(String(a.datetime||'')));
+        sub=matches[0]||null;
+      }catch(e){}
+      if(!sub)return; // 서버에서 못 찾으면 그냥 처음부터 푸는 화면(설명 슬라이드)에 남아있어요.
+      const parseFrac=str=>{const m=String(str||'').match(/(\d+)\s*\/\s*(\d+)/);return m?{ok:+m[1],tot:+m[2]}:null;};
+      const qf=parseFrac(sub.quiz),af=parseFrac(sub.arrange),cf=parseFrac(sub.compose);
+      if(qf)RES.quiz=qf;if(af)RES.arrange=af;if(cf)RES.compose=cf;
+      RES.taskDone=sub.task==='완료';RES.taskText=sub.taskText||'';
+      try{RES.all=JSON.parse(sub.wrongReport||'[]');RES.wrong=RES.all.filter(x=>x&&x.correct===false);}catch(e){}
+      const anchorIdx=slides.findIndex(s=>s._box&&s._box.querySelector('.badge.purple'));
+      const taskIdx=anchorIdx>=0?anchorIdx+1:-1;
+      if(taskIdx<0||taskIdx>=slides.length)return;
+      const cur=slides[idx];if(cur)cur.classList.remove('active');
+      idx=taskIdx;const s=slides[idx];s.classList.add('active');
+      prog.style.width=(idx/(slides.length-1||1)*100)+'%';counter.innerHTML=`<b>${idx+1}</b> / ${slides.length}`;
+      prevB.disabled=idx===0;nextB.disabled=(idx===slides.length-1)||(!!s._lock&&s._lock());
+      if(s._onEnter)try{s._onEnter();}catch(e){}
+      if(s._focusSel){const f=s.querySelector(s._focusSel);if(f)setTimeout(()=>f.focus(),60);}
+      if(s._box)s._box.insertBefore(restartBar('이미 끝낸 유닛이에요. 처음부터 다시 풀어보고 싶으면 눌러주세요.'),s._box.children[1]||null);
+      const taskTa=s.querySelector('textarea.in');
+      if(taskTa&&!taskTa.value.trim()&&RES.taskText){taskTa.value=RES.taskText;taskTa.dispatchEvent(new Event('input'));}
+    })();
+    return;
+  }
+  // 이전에 풀다 만 진행 상황이 있으면, 이미 푼 문제는 다시 안 보여주고 이어서 풀 수 있는 위치로 바로 이동해요.
+  // 화면은 이미 위 deckStart()로 즉시 그려졌고, 이 조회는 그 뒤에서 조용히 진행돼요(화면을 막지 않음).
+  (async()=>{
+    if(opts.restart)return; // 처음부터 다시 시작한 경우엔 저장된 진행 상황을 불러오지 않아요.
+    const foundProgress=await fetchDraft(PROGRESS_CHAPTER,PROGRESS_POINT);
+    if(!foundProgress||!foundProgress.obj)return;
+    if(Array.isArray(foundProgress.obj.quizCorrect))progress.quizCorrect=foundProgress.obj.quizCorrect.slice(0,P.quiz.length);
+    if(Array.isArray(foundProgress.obj.arrangeCorrect))progress.arrangeCorrect=foundProgress.obj.arrangeCorrect.slice(0,P.arrange.length);
+    if(Array.isArray(foundProgress.obj.composeCorrect))progress.composeCorrect=foundProgress.obj.composeCorrect.slice(0,P.compose.length);
+    if(!progress.quizCorrect.length&&!progress.arrangeCorrect.length&&!progress.composeCorrect.length)return;
+    RES.quiz.ok=progress.quizCorrect.filter(Boolean).length;
+    RES.arrange.ok=progress.arrangeCorrect.filter(Boolean).length;
+    RES.compose.ok=progress.composeCorrect.filter(Boolean).length;
+    progress.arrangeCorrect.forEach((ok,i)=>{if(P.arrange[i]){P.arrange[i]._graded=true;if(!ok)RES.wrong.push({type:'배열',ko:P.arrange[i].ko,a:P.arrange[i].a,user:''});}});
+    progress.composeCorrect.forEach((ok,i)=>{if(P.compose[i]){P.compose[i]._graded=true;if(!ok)RES.wrong.push({type:'영작',ko:P.compose[i].k,a:P.compose[i].a,user:''});}});
+    // 설명 화면의 "노란 부분 다 눌러야 다음으로" 잠금 때문에 평소 deckShow로는 앞으로 못 넘어가서,
+    // 이 최초 1회 이동만 그 잠금을 건너뛰고 직접 위치를 옮겨요. 이미 학생이 직접 다른 슬라이드로 넘어갔다면
+    // (idx>0) 화면을 되돌리면 오히려 혼란스러우니 건드리지 않아요.
+    const Q=P.quiz.length,A=P.arrange.length,C=P.compose.length;
+    const doneQ=progress.quizCorrect.length,doneA=progress.arrangeCorrect.length,doneC=progress.composeCorrect.length;
+    // 퀴즈·배열·영작을 모두 끝냈으면 "조건 영작(글쓰기)" 슬라이드로 바로 가요. 오답 다시풀기 슬라이드는 거기
+    // 도달해야 만들어지는데 이어하기에선 건너뛰므로, "오답 앵커" 바로 다음이 항상 글쓰기 슬라이드예요.
+    const anchorI=slides.findIndex(s=>s._box&&s._box.querySelector('.badge.purple'));
+    let resumeIdx=anchorI>=0?anchorI+1:1+Q+A+C;
+    if(doneQ<Q)resumeIdx=1+doneQ;
+    else if(doneA<A)resumeIdx=1+Q+doneA;
+    else if(doneC<C)resumeIdx=1+Q+A+doneC;
+    // 예전엔 "idx>0이면(=학생이 이미 설명 슬라이드를 넘겼으면) 이어하기를 포기"했는데, 서버가 느려서(처음 켜질 때
+    // 몇 초 걸려요) 그 사이 학생이 다음으로 넘어가 버리면 이어하기가 통째로 안 되는 게 문제였어요. 이제는 이번
+    // 접속에서 아직 아무 문제도 안 풀었고, 현재 위치가 이어할 위치보다 앞이면 그 위치로 옮겨줘요.
+    if(idx>0&&(RES.all.length>0||idx>=resumeIdx))return;
+    if(resumeIdx>0&&resumeIdx<slides.length){
+      const cur=slides[idx];if(cur)cur.classList.remove('active');
+      idx=Math.max(0,Math.min(slides.length-1,resumeIdx));const s=slides[idx];s.classList.add('active');
+      prog.style.width=(idx/(slides.length-1||1)*100)+'%';counter.innerHTML=`<b>${idx+1}</b> / ${slides.length}`;
+      prevB.disabled=idx===0;nextB.disabled=(idx===slides.length-1)|| !!s._lock&&s._lock();
+      if(s._onEnter)try{s._onEnter();}catch(e){}
+      if(s._focusSel){const f=s.querySelector(s._focusSel);if(f)setTimeout(()=>f.focus(),60);}
+      if(s._box){s._box.insertBefore(draftBanner(foundProgress.savedAt),s._box.children[1]||null);s._box.insertBefore(restartBar('처음부터 다시 풀고 싶으면 눌러주세요.'),s._box.children[1]||null);}
+    }
+  })();
+}
+
+function buildRedo(RES){ // insert redo slides right after the redo anchor (before task)
+  const anchorIdx=slides.findIndex(s=>s._box&&s._box.querySelector('.badge.purple'));
+  let insertAt=anchorIdx+1;
+  RES.wrong.forEach(w=>{const s=el('div','slide');const b=el('div','inner');s.appendChild(b);s._box=b;
+    b.appendChild(el('span','badge purple','오답 다시 · '+w.type));
+    b.appendChild(el('div','kobox',''+w.ko));
+    const inp=el('input','in');inp.placeholder='다시 써보세요.';b.appendChild(inp);
+    const fx=el('div','fx');b.appendChild(fx);const hintbox=el('div','frame');b.appendChild(hintbox);const copyWrap=el('div');b.appendChild(copyWrap);
+    b.appendChild(el('div','enter-tip','Enter = 채점 · 채점 후 Enter = 다음'));
+    let tries=0,solved=false;const target=normStrict(w.a);
+    const stage3=()=>{copyWrap.innerHTML='';const cb=el('div','copybox','따라 적기: '+w.a);copyWrap.appendChild(cb);hintbox.textContent='세 번째예요. 정답을 그대로 따라 적으면 통과!';};
+    const check=()=>{if(solved){if(idx<slides.length-1)deckShow(idx+1);return;}
+      tries++;const ok=sameAnswer(inp.value,w.a);
+      if(ok){solved=true;inp.classList.remove('no');inp.classList.add('ok');fx.className='fx ok';fx.textContent='잘했어요! (Enter=다음)';hintbox.textContent='';}
+      else{inp.classList.add('no');fx.className='fx no';fx.textContent='다시 해봐요.';
+        if(tries===1)hintbox.textContent='힌트: 첫 단어는 "'+w.a.split(' ')[0]+'" 로 시작해요.';
+        else if(tries===2)hintbox.textContent='힌트: '+w.a.split(' ').map((wd,i)=>i<2?wd:wd[0]+'___').join(' ');
+        else stage3();}};
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();check();}});
+    slides.splice(insertAt++,0,s);stage.appendChild(s);});
+}
+
+function calcScore(P,RES){
+  const q=RES.quiz,ar=RES.arrange,co=RES.compose;
+  const total=q.tot+ar.tot+co.tot;const got=q.ok+ar.ok+co.ok;
+  const score=Math.round((got + (RES.taskDone? maxTaskBonus(total):0)) / (total) *100);
+  return {got,total,score:Math.min(100,Math.round(got/total*100))};
+}
+function maxTaskBonus(){return 0;}
+
+function buildReport(b,P,RES,onSubmitted,reviewMode){
+  b.innerHTML='';b.appendChild(el('span','badge green','성적 레포트'));
+  b.appendChild(el('h1','title','오늘의 학습 결과'));
+  b._onShow=()=>{};
+  const rec=createRecorderWidget(); // 재진입해도 녹음 내용이 유지되도록 render() 밖(한 번만)에서 만들어요.
+  const render=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());
+    const wrapR=el('div','rep');
+    const q=RES.quiz,ar=RES.arrange,co=RES.compose;const got=q.ok+ar.ok+co.ok,tot=q.tot+ar.tot+co.tot;
+    const score=Math.round(got/tot*100);const gr=score>=90?'A':score>=80?'B':score>=70?'C':'D';
+    const hero=el('div','scorehero');hero.innerHTML='<div class="big">'+score+'<small>/100</small></div><div class="grade '+gr+'">'+gr+' 등급</div>';wrapR.appendChild(hero);
+    const studyMs=(RES.finishTime||Date.now())-RES.startTime;
+    const rtime=el('div','rrow');rtime.innerHTML='<span class="rl">학습 시간</span><span class="rn">'+fmtDur(studyMs)+'</span>';wrapR.appendChild(rtime);
+    const rows=[['개념 확인 퀴즈',q.ok,q.tot],['단어 배열',ar.ok,ar.tot],['한글 영작',co.ok,co.tot]];
+    rows.forEach(([l,o,t])=>{const r=el('div','rrow');r.innerHTML='<span class="rl">'+l+'</span><span class="rn">'+o+' / '+t+'</span>';wrapR.appendChild(r);});
+    const rt=el('div','rrow');rt.innerHTML='<span class="rl">조건 영작</span><span class="rn">'+(RES.taskDone?'완료':'미완료')+'</span>';wrapR.appendChild(rt);
+    const rw=el('div','rrow');rw.innerHTML='<span class="rl">오답 다시 풀기</span><span class="rn">'+RES.wrong.length+'문항</span>';wrapR.appendChild(rw);
+    b.appendChild(wrapR);
+    b.appendChild(rec.el);
+    // submit
+    const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';
+    const sub=el('button','btn green',reviewMode?'✏️ 수정 완료':'선생님께 제출');const dl=el('button','btn ghost','결과 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
+    const msg=el('div','rep hint',reviewMode?'수정한 내용으로 다시 저장돼요 — 이전 AI 첨삭은 지워지고, 새 내용으로 새 첨삭이 만들어져요.':'제출하면 관리자(선생님)가 진도와 점수를 확인할 수 있어요.');b.appendChild(msg);
+    const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());
+      const lv=LEVELS.find(l=>l.id===curLevel);
+      const studyTimeStr=fmtDur((RES.finishTime||Date.now())-RES.startTime);
+      const prog=`퀴즈 ${q.ok}/${q.tot} · 배열 ${ar.ok}/${ar.tot} · 영작 ${co.ok}/${co.tot} · 오답 ${RES.wrong.length} · 조건영작 ${RES.taskDone?'완료':'미완료'} · 학습시간 ${studyTimeStr}`;
+      const payload={book:lv.book,chapter:P.id,point:P.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId(P.id,P.title),datetime:dt,
+        quiz:q.ok+'/'+q.tot,arrange:ar.ok+'/'+ar.tot,compose:co.ok+'/'+co.tot,task:RES.taskDone?'완료':'미완료',
+        total:got+'/'+tot,score:score,grade:gr,progress:prog,taskText:RES.taskText||'',studyTime:studyTimeStr,
+        wrongReport:JSON.stringify(RES.all||[])};
+      const txt=['English Writing Lab · Pattern Drill',lv.book,'Point: '+P.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'학습 시간: '+studyTimeStr,'',
+        '개념퀴즈 '+q.ok+'/'+q.tot,'단어배열 '+ar.ok+'/'+ar.tot,'한글영작 '+co.ok+'/'+co.tot,'조건영작 '+(RES.taskDone?'완료':'미완료'),
+        '총점 '+score+'/100 ('+gr+')','','[조건영작]',RES.taskText||'(작성 없음)'].join('\n');
+      return{payload,txt};};
+    dl.onclick=()=>{const {txt}=build();const blob=new Blob(['\ufeff'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='결과_'+USER.name+'_'+P.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
+    sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent=reviewMode?'수정 중…':'제출 중…';let sent=false;
+      const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
+      if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;triggerAiFeedbackNow(payload.subId,payload.academy);}catch(e){}}
+      if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_'+USER.name+'_'+P.id+'.json';document.body.appendChild(a);a.click();a.remove();}
+      saveDone(P.id,payload.progress);sub.disabled=false;sub.textContent=sent?(reviewMode?'수정 완료!':'제출 완료!'):'제출 완료 (파일 저장됨)';
+      msg.innerHTML=sent?'관리자에게 전송되었어요. 홈에서 진도가 갱신돼요.':'서버 주소가 아직 없어 파일로 저장했어요. 이 파일을 선생님께 내면 됩니다. (진도는 저장됨)';
+      if(onSubmitted)try{onSubmitted();}catch(e){}
+      const hb=el('button','btn blue','← 홈으로');hb.style.marginTop='10px';hb.onclick=()=>{nav.classList.remove('on');viewHome();};b.appendChild(hb);};
+  };
+  b._onEnterReport=render;render();
+}
+
+/* ================= HAMBURGER PARAGRAPH ================= */
+const HBLAYERS=[
+ {key:'topic',cls:'hb-buntop',emoji:'🍞',role:'주제문 (Topic Sentence)',pv:'ts',kind:'single'},
+ {key:'s1',cls:'hb-tomato',emoji:'🍅',role:'뒷받침 1 (Supporting #1)',pv:'ss',kind:'idea'},
+ {key:'s2',cls:'hb-lettuce',emoji:'🥬',role:'뒷받침 2 (Supporting #2)',pv:'ss',kind:'idea'},
+ {key:'s3',cls:'hb-patty',emoji:'🥩',role:'뒷받침 3 (Supporting #3)',pv:'ss',kind:'idea'},
+ {key:'concl',cls:'hb-bunbot',emoji:'🍞',role:'마무리 (Concluding Sentence)',pv:'cs',kind:'single'}
+];
+const HBDESC={topic:'글의 주제를 한 문장으로 소개해요. (예: There are many things I can do.)',
+ s1:'속재료(뒷받침)는 두 문장이 한 쌍이에요! ① 소개 문장으로 생각 하나를 말하고 → ② 뒷받침 설명(이유·예시)을 한 문장 더 붙여요. 예: First, I can ride a bike. It is because I practice a lot.',
+ s2:'또 다른 생각도 「① 소개 문장 → ② 뒷받침 설명」 두 문장으로 써요.',
+ s3:'세 번째 생각도 「① 소개 문장 → ② 뒷받침 설명」 두 문장으로 써요.',
+ concl:'주제로 돌아가 느낌·다짐으로 마무리해요.'};
+const HBROLE={ts:'주제문',ss:'뒷받침',cs:'마무리'};
+const HBCONN=[
+ {en:'First',ko:['첫째','먼저','첫번째','처음']},
+ {en:'Second',ko:['둘째','두번째']},
+ {en:'Also',ko:['또한','게다가','역시','또']},
+ {en:'It is because',ko:['왜냐하면','때문','이유는']},
+ {en:'For example',ko:['예를들어','예를들면','예컨대']},
+ {en:'However',ko:['그러나','하지만','그렇지만']},
+ {en:'Finally',ko:['마지막으로','끝으로','마침내']},
+ {en:'In conclusion',ko:['결론적으로','결론적으로말하면','결론적']}
+];
+/* 다양한 부연설명(뒷받침 설명) 표현 — 매 에세이마다 안내 */
+const DETAILEXPR=[
+ {en:'It is because ~',ko:'왜냐하면 ~ 때문이다'},{en:'This is because ~',ko:'이것은 ~ 때문이다'},
+ {en:'The reason is that ~',ko:'그 이유는 ~이다'},{en:'For example, ~',ko:'예를 들어, ~'},
+ {en:'For instance, ~',ko:'예를 들면, ~'},{en:'In other words, ~',ko:'다시 말해, ~'},
+ {en:'In fact, ~',ko:'사실은, ~'},{en:'That is why ~',ko:'그래서 ~이다'},
+ {en:'As a result, ~',ko:'그 결과, ~'},{en:'This helps me ~',ko:'이것은 내가 ~하는 데 도움이 된다'},
+ {en:'Thanks to this, ~',ko:'이 덕분에, ~'},{en:'What I mean is ~',ko:'내 말은 ~라는 것이다'}
+];
+/* 글쓰기 표현 은행 (의견·주장 글 5단계) */
+const EXPRBANK=[
+ {cat:'① 나의 주장·서론 시작하기',items:[
+   {en:'In my opinion, ~',ko:'제 생각에는 ~입니다'},
+   {en:'I strongly believe that ~',ko:'저는 ~라고 강력히 믿습니다/주장합니다',ex:'I strongly believe that middle school students should not wear school uniforms.'},
+   {en:'It is clear that ~',ko:'~라는 점은 명백합니다'},
+   {en:'Recently, there has been a debate about ~',ko:'최근 ~에 대한 논쟁이 있습니다',ex:'Recently, there has been a debate about using smartphones in class.'}]},
+ {cat:'② 근거 나열·내용 추가 (본문)',items:[
+   {en:'First of all, / To begin with,',ko:'첫째로, 우선',ex:'First of all, studying abroad helps students experience new cultures.'},
+   {en:'Secondly, / In addition,',ko:'둘째로, 게다가'},
+   {en:'Furthermore, / Moreover,',ko:'더군다나, 게다가 (격식)',ex:'Furthermore, exercise improves memory and focus.'},
+   {en:'Most importantly,',ko:'가장 중요하게는'}]},
+ {cat:'③ 예시·부연설명 덧붙이기',items:[
+   {en:'For example, / For instance,',ko:'예를 들어'},
+   {en:'In other words, ~',ko:'다시 말해서, 즉',ex:'He is a trustworthy person. In other words, you can rely on him.'},
+   {en:'According to ~',ko:'~에 따르면',ex:'According to recent research, sleep is critical for brain growth.'},
+   {en:'To be more specific, ~',ko:'더 구체적으로 말하자면'}]},
+ {cat:'④ 반대 의견 언급·반박 (고득점 팁)',items:[
+   {en:'Some people may argue that ~',ko:'혹자는 ~라고 주장할지도 모릅니다'},
+   {en:'On the other hand, ~',ko:'반면에',ex:'On the other hand, playing games can help relieve stress.'},
+   {en:'However, I think ~',ko:'하지만 제 생각은 ~입니다'},
+   {en:'Even though [A], [B]',ko:'[A]에도 불구하고, [B]하다',ex:'Even though AI is helpful, human creativity is still essential.'}]},
+ {cat:'⑤ 결론·요약 (마무리)',items:[
+   {en:'In conclusion, ~',ko:'결론적으로',ex:'In conclusion, protecting the environment starts with small daily actions.'},
+   {en:'To sum up, ~',ko:'요약하자면'},
+   {en:'For these reasons, ~',ko:'이러한 이유들로 인해',ex:'For these reasons, I agree with the new school rule.'},
+   {en:'Therefore, we should ~',ko:'그러므로 우리는 ~해야 합니다'}]}
+];
+/* 샘플 문장 → 햄버거 층 매핑(모든 샘플 공통 10문장 순서) */
+const LAYERSEQ=['topic','s1','s1','s2','s2','s3','s3','s3','s3','concl'];
+/* 주제별 한글 로직 흐름(글 내용에 맞춤) */
+const HBFLOW={
+ 'PW-can':{topic:'주제 소개 — 내가 할 수 있는 것이 많다고 밝힘',s1:'능력 ① 자전거 → 매일 연습했기 때문(이유)',s2:'능력 ② 볶음밥 요리 → 가족에게 자주 만들어 줌(예시)',s3:'능력 ③ 배드민턴(아빠가 가르쳐 줌) → 아직 수영은 못함',concl:'마무리 — 새로운 것을 계속 배우고 싶다는 다짐'},
+ 'PW-perfect':{topic:'주제 소개 — 특별한 경험이 많았다고 밝힘',s1:'경험 ① 제주도 방문 → 가족이 여행을 좋아해서(이유)',s2:'경험 ② 스쿠버 다이빙 → 산호초 탐험(예시)',s3:'경험 ③ 외국인 친구(영어 연습) → 2년간 연락·용기 배움',concl:'마무리 — 더 많은 모험을 하길 바람'},
+ 'PW-if':{topic:'주제 소개 — 초능력이 있다면 삶이 달라질 것',s1:'하고 싶은 일 ① 날기 → 여행·문화 경험을 좋아해서',s2:'하고 싶은 일 ② 치유 → 세상을 좋게 만들고 싶어서',s3:'하고 싶은 일 ③ 시간 멈추기(공부) → 좋은 일에만 사용',concl:'마무리 — 언젠가 초능력을 갖고 싶다는 소망'}
+};
+const HBCONNRE=/\b(first of all|to begin with|first|secondly|second|third|also|in addition|furthermore|moreover|most importantly|for example|for instance|in other words|on the other hand|even though|however|finally|in conclusion|to sum up|for these reasons|therefore|and|but)\b/i;
+const HBDETAILRE=/(because|for example|for instance|in other words|in fact|that is why|this is why|as a result|the reason|thanks to|according to|to be more specific|most importantly)/i;
+const HBCONCLRE=/(in conclusion|to sum up|in short|all in all|for these reasons|therefore|overall|i hope|i wish|i want|in the future|i am proud|i really love|i truly)/i;
+
+function gradeHb(text,topic){const t=(text||'').trim();const parts=t.split(/[.?!]+/).map(x=>x.trim()).filter(Boolean);const n=parts.length;const R={};
+  let content=n>=10?25:n>=8?21:n>=6?16:n>=4?11:n>=2?6:2;R.content={score:content,max:25,label:'분량 (Content)',fb:n>=10?('문장 '+n+'개 — 충분해요!'):('문장 '+n+'개 — 10문장 이상이면 만점!')};
+  const hasTopic=n>=3;const hasSupport=n>=6;const hasConcl=HBCONCLRE.test(t);
+  let org=Math.round((hasTopic?9:0)+(hasSupport?8:Math.min(8,n)|0)+(hasConcl?8:0));if(org>25)org=25;R.org={score:org,max:25,label:'구성 (Hamburger 구조)',fb:[hasTopic?'주제문 ✓':'주제문',hasSupport?'뒷받침(소개+설명) ✓':'뒷받침 더',hasConcl?'마무리 ✓':'마무리 문장'].join(' · ')};
+  const conns=['first of all','to begin with','first','secondly','second','third','also','in addition','furthermore','moreover','most importantly','for example','for instance','in other words','on the other hand','even though','however','finally','in conclusion','to sum up','for these reasons','therefore','and','but'];
+  const used=conns.filter(c=>new RegExp('\\b'+c.replace(/ /g,'\\s+')+'\\b','i').test(t));const uc=used.length;let coh=uc>=4?20:uc===3?17:uc===2?12:uc===1?7:0;R.coh={score:coh,max:20,label:'연결어 (Cohesion)',fb:uc>0?('연결어 '+uc+'종류: '+used.slice(0,5).join(', ')):'연결어(First/Also/However…)를 써보세요.'};
+  const capOK=parts.length?parts.filter(p=>/^[A-Z"']/.test(p)).length/parts.length:0;const endOK=t.length?(t.match(/[.?!]/g)||[]).length>=Math.max(1,n-1):false;const iOK=!/(^|[^A-Za-z])i([^A-Za-z]|$)/.test(t);
+  let lang=Math.round(capOK*8)+(endOK?6:0)+(iOK?6:0);if(lang>20)lang=20;R.lang={score:lang,max:20,label:'언어 (Language)',fb:[capOK>=0.99?'대문자 ✓':'첫 글자 대문자!',endOK?'마침표 ✓':'마침표',iOK?'I 대문자 ✓':"'I' 대문자!"].join(' · ')};
+  const gOK=new RegExp(topic.grammarTest,'i').test(t);R.task={score:gOK?10:0,max:10,label:'조건 ('+topic.grammarLabel+')',fb:gOK?(topic.grammarLabel+' ✓'):(topic.grammarLabel+' 필요')};
+  const total=content+org+coh+lang+R.task.score;const grade=total>=90?'A':total>=80?'B':total>=70?'C':'D';const band=total>=90?'아주 훌륭해요!':total>=80?'잘했어요!':total>=70?'좋아요, 조금만 더!':'조건을 채워 다시 다듬어봐요!';
+  return {R,total,grade,band,n};}
+
+function hbIo(inp){const d=el('div','hb-io');d.appendChild(inp);return d;}
+function hbSub(txt){const d=el('div','hbd');d.style.fontWeight='800';d.style.marginTop='9px';d.textContent=txt;return d;}
+function exprRow(e){const r=el('div','expr');r.innerHTML='<span class="en">'+e.en+'</span><span class="ko">'+e.ko+'</span>';return r;}
+function buildExprBankBody(box,topic){
+  const t1=el('div','fl','주제 표현 ('+topic.expressions.length+'가지)');t1.style.marginTop='6px';box.appendChild(t1);
+  topic.expressions.forEach(e=>box.appendChild(exprRow(e)));
+  const bh=el('div','fl','글쓰기 표현 은행 — 의견·주장 글에 두루 쓰는 표현');bh.style.cssText='margin-top:18px;font-size:16px';box.appendChild(bh);
+  box.appendChild(el('div','hint','서론 → 근거 → 예시 → 반박 → 결론 순서로 골라 쓰면 논리적인 글이 돼요.'));
+  EXPRBANK.forEach(sec=>{const hsec=el('div','fl',sec.cat);hsec.style.cssText='margin-top:12px;color:var(--blue)';box.appendChild(hsec);
+    sec.items.forEach(it=>{box.appendChild(exprRow(it));if(it.ex)box.appendChild(el('div','expr-ex','ex) '+it.ex));});});
+}
+function closeExprModal(){const m=document.getElementById('exprModal');if(m)m.remove();document.removeEventListener('keydown',exprModalEsc);}
+function exprModalEsc(e){if(e.key==='Escape')closeExprModal();}
+function openExprModal(topic){
+  closeExprModal();
+  const overlay=el('div','modal-overlay');overlay.id='exprModal';
+  overlay.addEventListener('mousedown',e=>{if(e.target===overlay)closeExprModal();});
+  const box=el('div','modal-box');
+  const head=el('div','modal-head');
+  head.appendChild(el('div','modal-title','글쓰기 표현 은행 — '+topic.title));
+  const xbtn=el('button','modal-x','✕');xbtn.type='button';xbtn.onclick=closeExprModal;
+  head.appendChild(xbtn);box.appendChild(head);
+  const body=el('div','modal-body');buildExprBankBody(body,topic);box.appendChild(body);
+  overlay.appendChild(box);document.body.appendChild(overlay);
+  document.addEventListener('keydown',exprModalEsc);
+}
+/* 표현 은행 모달과 같은 팝업 틀인데, 제목·내용을 자유롭게 넣을 수 있는 범용 버전이에요(예: 수행평가의
+   "글의 뼈대 잡기"를 글쓰기 화면에서도 버튼 눌러 다시 열어볼 수 있게 할 때 씀). */
+function closeGenericModal(){const m=document.getElementById('genModal');if(m)m.remove();document.removeEventListener('keydown',genericModalEsc);}
+function genericModalEsc(e){if(e.key==='Escape')closeGenericModal();}
+function openGenericModal(title,buildBody){
+  closeGenericModal();
+  const overlay=el('div','modal-overlay');overlay.id='genModal';
+  overlay.addEventListener('mousedown',e=>{if(e.target===overlay)closeGenericModal();});
+  const box=el('div','modal-box');
+  const head=el('div','modal-head');
+  head.appendChild(el('div','modal-title',title));
+  const xbtn=el('button','modal-x','✕');xbtn.type='button';xbtn.onclick=closeGenericModal;
+  head.appendChild(xbtn);box.appendChild(head);
+  const body=el('div','modal-body');buildBody(body);box.appendChild(body);
+  overlay.appendChild(box);document.body.appendChild(overlay);
+  document.addEventListener('keydown',genericModalEsc);
+}
+
+function runParagraph(topic){setWide(true);deckInit();
+  const paraStart=Date.now();let brainstormStart=null,writeEnd=null;setStudyTimer(paraStart,'⏱ 글감 학습');
+  const ST={brain:{},draft:'',final:'',proof:[],score:null};
+  const DRAFT_CHAPTER='Paragraph Writing',DRAFT_POINT=topic.title;
+  const doAutosavePara=debounce(()=>{if(ST.draft||ST.final||Object.keys(ST.brain).length)saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);},1500);
+  let brainInputsRef=null,draftTaRef=null,draftSaveMsgRef=null,finalTaRef=null,finalSaveMsgRef=null;
+  const gtest=new RegExp(topic.grammarTest,'i');
+  const flow=topic.flow||HBFLOW[topic.id]||{};
+  // 1) 샘플 보기 (좌: 글 / 우: 햄버거 구조 + 한글 로직 흐름)
+  slideAdd(b=>{b.appendChild(el('span','badge purple','STEP 1 · 샘플 보기'));
+    b.appendChild(el('h1','title','완성된 글 먼저 보기 — '+topic.title));
+    const pwImgs=renderImages(topic.images);if(pwImgs)b.appendChild(pwImgs);
+    b.appendChild(el('div','hint','이건 <b>예시</b>예요. <b>똑같이 베끼면 안 돼요!</b> 왼쪽 글을 누르면 뜻이 보이고, 오른쪽 <b>햄버거 구조 + 한글 흐름</b>에서 그 문장이 어느 층인지 반짝여요.'));
+    const wrap=el('div','writer');const left=el('div','wleft');const right=el('div','wright');
+    left.appendChild(el('div','legend','<span class="lg ts">주제문</span><span class="lg ss">뒷받침</span><span class="lg cs">마무리</span>'));
+    const para=el('div','para');const rb=el('div','rolebox','문장을 눌러보세요.');
+    // 오른쪽 햄버거 + 흐름
+    right.appendChild(el('div','fl','🍔 햄버거 구조 + 한글 로직 흐름'));
+    const hb=el('div','hb');const layerNodes={};
+    HBLAYERS.forEach((L,li)=>{const layer=el('div','hb-layer '+L.cls);
+      layer.innerHTML='<div class="hbr">'+L.emoji+' '+L.role+'</div><div class="hbd">'+(flow[L.key]||'')+'</div>';
+      layerNodes[L.key]=layer;hb.appendChild(layer);
+      if(li<HBLAYERS.length-1)hb.appendChild(el('div','hb-flow','↓'));});
+    right.appendChild(hb);
+    topic.sample.forEach((m,i)=>{const sp=el('span','sent',m.en+' ');const lk=m.layer||LAYERSEQ[i]||{ts:'topic',ss:'s1',cs:'concl'}[m.role];
+      sp.onclick=()=>{sp.classList.add(m.role);rb.innerHTML='<b>'+HBROLE[m.role]+'</b> · '+m.ko;
+        Object.values(layerNodes).forEach(n=>n.classList.remove('hl'));if(layerNodes[lk])layerNodes[lk].classList.add('hl');};
+      para.appendChild(sp);});
+    left.appendChild(para);left.appendChild(rb);
+    wrap.appendChild(left);wrap.appendChild(right);b.appendChild(wrap);},{wide:true});
+  // 2) 햄버거 구조
+  slideAdd(b=>{b.appendChild(el('span','badge purple','STEP 2 · 햄버거 구조'));
+    b.appendChild(el('h1','title','Hamburger Paragraph 구조 🍔'));
+    b.appendChild(el('div','hint','한 문단은 햄버거처럼 쌓아요! 각 층을 눌러 역할을 확인해요.'));
+    const hb=el('div','hb');const note=el('div','notebox','햄버거 각 층을 눌러보세요.');
+    HBLAYERS.forEach(L=>{const layer=el('div','hb-layer hb-clk '+L.cls);layer.innerHTML='<div class="hbr">'+L.emoji+' '+L.role+(L.kind==='idea'?' <span style="font-weight:700;font-size:12px">— 소개 + 설명</span>':'')+'</div>';
+      layer.onclick=()=>{if(!layer.querySelector('.hbd'))layer.appendChild(el('div','hbd',HBDESC[L.key]));note.innerHTML='<b>'+L.role+'</b> — '+HBDESC[L.key];};hb.appendChild(layer);});
+    b.appendChild(hb);b.appendChild(note);
+    const tip=el('div','notebox');tip.style.cssText='margin-top:14px;background:var(--accent-soft);border-left-color:var(--accent)';
+    tip.innerHTML='<b>핵심 패턴</b> — 각 뒷받침(속재료)은 <b>「① 소개 문장 → ② 뒷받침 설명」</b> 두 문장이 한 쌍! 설명에는 <b>It is because ~</b>, <b>For example ~</b>, <b>As a result ~</b> 같은 다양한 표현을 써요.';
+    b.appendChild(tip);});
+  // 3) 연결어 + 뜻 적기 (랜덤 순서)
+  slideAdd(b=>{b.appendChild(el('span','badge purple','STEP 3 · 연결어'));
+    b.appendChild(el('h1','title','연결어(Connectors) 익히기'));
+    b.appendChild(el('div','hint','문장을 자연스럽게 이어주는 말이에요. 각 연결어의 <b>뜻을 적고</b> 확인해요.'));
+    shuffle(HBCONN).forEach(c=>{const row=el('div','conn-row');row.appendChild(el('span','ce',c.en));
+      const inp=el('input','in');inp.placeholder='뜻을 적어보세요';const btn=el('button','btn ghost','확인');btn.style.padding='9px 14px';const fx=el('span','fx');fx.style.minWidth='90px';
+      const chk=()=>{const v=normKo(inp.value);const ok=!!v&&c.ko.some(k=>v.includes(normKo(k)));inp.classList.remove('ok','no');inp.classList.add(ok?'ok':'no');fx.className='fx '+(ok?'ok':'no');fx.textContent=ok?'맞아요':('뜻: '+c.ko[0]);};
+      btn.onclick=chk;inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.stopPropagation();chk();}});
+      row.appendChild(inp);row.appendChild(btn);row.appendChild(fx);b.appendChild(row);});});
+  // 4) 유용한 표현 + 글쓰기 표현 은행
+  slideAdd(b=>{b.appendChild(el('span','badge purple','STEP 4 · 유용한 표현'));
+    b.appendChild(el('h1','title','이 주제 표현 + 글쓰기 표현 은행'));
+    b.appendChild(el('div','hint','글을 쓸 때 아래 표현을 골라 활용해요. (~ 자리에 내용을 넣어요)'));
+    buildExprBankBody(b,topic);});
+  // 5) 브레인스토밍 (마인드맵)
+  slideAdd(b=>{b.appendChild(el('span','badge','STEP 5 · 브레인스토밍'));
+    b.appendChild(el('h1','title','생각 지도 만들기 (마인드맵)'));
+    b.appendChild(makeDictBtn());
+    const map=el('div','mindmap');map.style.marginTop='22px';const inputs={};brainInputsRef=inputs;
+    const byKey=k=>HBLAYERS.find(L=>L.key===k);
+    const mkInputs=(node,L)=>{const store={};
+      if(L.kind==='single'){const ko=el('input','in');ko.placeholder='한국어';const en=el('input','in');en.placeholder='영어';node.appendChild(hbIo(ko));node.appendChild(hbIo(en));store.ko=ko;store.en=en;}
+      else{node.appendChild(el('div','mm-sub','① 소개 문장'));const ik=el('input','in');ik.placeholder='소개';const ie=el('input','in');ie.placeholder='First, I ...';node.appendChild(hbIo(ik));node.appendChild(hbIo(ie));
+        node.appendChild(el('div','mm-sub','② 설명 (이유·예시)'));const dk=el('input','in');dk.placeholder='이유·예시';const de=el('input','in');de.placeholder='It is because ...';node.appendChild(hbIo(dk));node.appendChild(hbIo(de));
+        store.ideaKo=ik;store.ideaEn=ie;store.detailKo=dk;store.detailEn=de;}
+      inputs[L.key]=store;};
+    const mkNode=(k,posCls,arrowCh,arrowCls,colorCls)=>{const L=byKey(k);const node=el('div','mm-node '+colorCls+' '+posCls);
+      node.appendChild(el('div','mm-h',L.emoji+' '+L.role));node.appendChild(el('div','mm-q',topic.organizer[k]||''));
+      if(arrowCh)node.appendChild(el('div','mm-arrow '+arrowCls,arrowCh));mkInputs(node,L);return node;};
+    map.appendChild(mkNode('s1','mm-tl','↘','br','tomato'));
+    map.appendChild(mkNode('s2','mm-tr','↙','bl','lettuce'));
+    const c=el('div','mm-center');const cbox=el('div','mm-oval');
+    cbox.appendChild(el('div','mm-t','주제문 (Topic)'));cbox.appendChild(el('div','mm-cq',topic.organizer.topic||''));
+    const cko=el('input','in');cko.placeholder='주제';const cen=el('input','in');cen.placeholder='topic';cbox.appendChild(hbIo(cko));cbox.appendChild(hbIo(cen));inputs.topic={ko:cko,en:cen};
+    c.appendChild(cbox);map.appendChild(c);
+    map.appendChild(mkNode('s3','mm-bl','↗','tr','patty'));
+    map.appendChild(mkNode('concl','mm-br','↖','tl','bun'));
+    b.appendChild(map);
+    b._save=()=>{Object.keys(inputs).forEach(k=>{const s=inputs[k],o={};Object.keys(s).forEach(f=>o[f]=s[f].value);ST.brain[k]=o;});};},{wide:true});
+  slides[slides.length-1]._collect=function(){this._box._save&&this._box._save();doAutosavePara();};
+  slides[slides.length-1]._onEnter=function(){if(!brainstormStart){brainstormStart=Date.now();setStudyTimer(brainstormStart,'⏱ 글쓰기 시간');}};
+  // 6) 초안 쓰기
+  slideAdd(b=>{b.appendChild(el('span','badge','STEP 6 · 초안 쓰기 (Draft)'));
+    b.appendChild(el('h1','title','브레인스토밍을 보며 한 문단으로!'));
+    b.appendChild(el('div','hint','오른쪽 <b>내 아이디어</b>를 참고해서, 각 뒷받침을 <b>소개 → 설명</b> 순으로 이어 <b>10문장 이상</b>의 문단을 완성해요.'));
+    const btnRow5=el('div');btnRow5.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px';
+    const bankBtn=el('button','btn ghost','표현 은행 보기');bankBtn.type='button';bankBtn.onclick=()=>openExprModal(topic);btnRow5.appendChild(bankBtn);
+    b.appendChild(btnRow5);
+    const bannerSlot=el('div');b.appendChild(bannerSlot);
+    const wrap=el('div','writer');const left=el('div','wleft');const right=el('div','wright');
+    // 이 화면은 이미 왼쪽(글쓰기)·오른쪽(브레인스토밍 참고자료) 2단이라, 사전은 버튼으로 따로 열지
+    // 않고 왼쪽 칸 맨 위에 기본으로 붙여요(Re-Writing 제외 요청에 따라 다른 글쓰기 화면들도 동일).
+    left.appendChild(buildDictPanel());
+    const ta=addWordCount(el('textarea','in'));ta.style.minHeight='260px';ta.placeholder=topic.sample[0].en+' First, ... It is because ...';left.appendChild(ta);
+    draftTaRef=ta;
+    const counter=el('div','hint');left.appendChild(counter);
+    const btn=el('button','btn','조건 확인');btn.style.marginTop='8px';left.appendChild(btn);
+    const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
+    const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
+    const saveMsg=el('span','fx');draftSaveMsgRef=saveMsg;saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);left.appendChild(saveRow);
+    left.appendChild(el('div','enter-tip','시간 안에 다 못 쓰면 "임시 저장"을 눌러두고, 나중에 다시 로그인해서 이어서 쓸 수 있어요.'));
+    const PARA_MIN_WORDS=200;
+    const conds=[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'전체 '+PARA_MIN_WORDS+'단어 이상',test:t=>countWords(t)>=PARA_MIN_WORDS},{label:'연결어(First/Second/Also/However…) 사용',test:t=>HBCONNRE.test(t)},{label:'부연설명 표현(because / For example / As a result 등) 사용',test:t=>HBDETAILRE.test(t)},{label:topic.grammarLabel,test:t=>gtest.test(t)},{label:'마무리 표현(In conclusion / I hope / I wish…)',test:t=>HBCONCLRE.test(t)}];
+    const ul=el('ul','conds');conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});left.appendChild(ul);
+    // ⚠️ 다른 세 글쓰기 화면(조건 영작/요약문/주제 글쓰기)은 입력할 때마다(input 이벤트) 실시간으로
+    // 조건을 확인하는데, 이 문단 쓰기(Paragraph Writing) 화면만 "조건 확인" 버튼을 눌러야만
+    // 체크되던 버그가 있었어요. 그래서 다른 화면들과 똑같이 checkConds 함수를 만들어서
+    // input 이벤트에도 연결해요 — 버튼은 그대로 두고 눌러도 같은 함수가 실행돼요.
+    const checkConds=()=>{ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';});ST.draft=ta.value;};
+    btn.onclick=checkConds;
+    const ref=el('div','ref');right.appendChild(ref);
+    const pv=el('div','preview');pv.style.marginTop='12px';pv.appendChild(el('h3',null,'실시간 글'));const pvb=el('div','pv-body');pv.appendChild(pvb);const meta=el('div','pv-meta');const chS=el('span','mchip','0문장');const chW=el('span','mchip','0단어 / '+PARA_MIN_WORDS+'단어');meta.appendChild(chS);meta.appendChild(chW);pv.appendChild(meta);right.appendChild(pv);
+    const line=(emoji,en,ko,sub)=>{const d=el('div','rline');d.innerHTML='<div class="re">'+(sub?'&nbsp;&nbsp;↳ ':emoji+' ')+(en||'—')+'</div>'+(ko?'<div class="rk">'+(sub?'&nbsp;&nbsp;&nbsp;&nbsp;':'')+ko+'</div>':'');return d;};
+    const renderRef=()=>{ref.innerHTML='<h4>내 브레인스토밍 아이디어</h4>';let any=false;
+      HBLAYERS.forEach(L=>{const bl=ST.brain[L.key]||{};
+        if(L.kind==='single'){const en=(bl.en||'').trim(),ko=(bl.ko||'').trim();if(en||ko){any=true;ref.appendChild(line(L.emoji,en,ko,false));}}
+        else{const ie=(bl.ideaEn||'').trim(),ik=(bl.ideaKo||'').trim(),de=(bl.detailEn||'').trim(),dk=(bl.detailKo||'').trim();
+          if(ie||ik){any=true;ref.appendChild(line(L.emoji,ie,ik,false));}if(de||dk){any=true;ref.appendChild(line(L.emoji,de,dk,true));}}});
+      if(!any)ref.appendChild(el('div','rk','STEP 5에서 아이디어를 적으면 여기에 보여요.'));};
+    const renderPv=()=>{const t=ta.value.trim();pvb.textContent=t||'…';const ns=sc(t);const nw=countWords(t);
+      chS.textContent=ns+'문장';chS.className='mchip'+(ns>=10?' good':'');
+      chW.textContent=nw+'단어 / '+PARA_MIN_WORDS+'단어';chW.className='mchip'+(nw>=PARA_MIN_WORDS?' good':'');
+      counter.textContent='현재 '+ns+'문장 · '+nw+'단어 (목표 '+PARA_MIN_WORDS+'단어)';};
+    ta.addEventListener('input',()=>{renderPv();checkConds();if(ta.value.trim())doAutosavePara();});ta.addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});
+    saveBtn.onclick=()=>{ST.draft=ta.value;saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='저장했어요! 나중에 이어서 쓸 수 있어요.';};
+    b._render=()=>{renderRef();renderPv();checkConds();};b._save=()=>{ST.draft=ta.value;};
+    wrap.appendChild(left);wrap.appendChild(right);b.appendChild(wrap);
+    b._draftBannerSlot=bannerSlot;},{wide:true,focus:'textarea'});
+  slides[slides.length-1]._onEnter=function(){this._box._render&&this._box._render();};
+  slides[slides.length-1]._collect=function(){this._box._save&&this._box._save();doAutosavePara();};
+  // 7) 교정
+  slideAdd(b=>{b.appendChild(el('span','badge','STEP 7 · Proofread (교정)'));b.appendChild(el('h1','title','스스로 점검하고 완성본 쓰기'));
+    b.appendChild(el('div','hint','아래 4가지를 확인하며 고쳐요. 자동 점검도 참고!'));
+    const checks=[['시제 일치 (Tense)','시제가 자연스럽게 이어지나요?'],['주어–동사 수 일치','He/She 뒤 동사, is/are 확인'],['관사·복수형','a/an/the, -s 확인'],['문장부호·대문자','첫 글자 대문자, 끝에 마침표(.)']];
+    checks.forEach((c,i)=>{const ch=el('div','check','<span class="cb"></span><span>'+c[0]+'<small>'+c[1]+'</small></span>');ch.onclick=()=>{ch.classList.toggle('on');const on=ch.classList.contains('on');ch.querySelector('.cb').textContent=on?'✓':'';ST.proof=ST.proof||[];if(on&&!ST.proof.includes(i))ST.proof.push(i);if(!on)ST.proof=ST.proof.filter(x=>x!==i);};b.appendChild(ch);});
+    const flags=el('div');flags.style.marginTop='10px';b.appendChild(flags);const fbtn=el('button','btn ghost','자동 점검');fbtn.style.marginTop='10px';b.appendChild(fbtn);
+    const dictWrap=el('div','dictwrap');const dictLeft=el('div','dictleft');const finalRight=el('div','dictright');
+    dictLeft.appendChild(buildDictPanel());dictWrap.appendChild(dictLeft);dictWrap.appendChild(finalRight);b.appendChild(dictWrap);
+    finalRight.appendChild(el('div','fl','완성본 (고친 글)'));const ta=addWordCount(el('textarea','in'));ta.placeholder='교정한 완성본을 여기에 써요.';finalRight.appendChild(ta);
+    finalTaRef=ta;
+    const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
+    const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
+    const saveMsg=el('span','fx');finalSaveMsgRef=saveMsg;saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);finalRight.appendChild(saveRow);
+    const autoflag=()=>{const t=(ta.value.trim()||ST.draft||'');flags.innerHTML='';const issues=[];const parts=t.split(/(?<=[.?!])\s+/).map(x=>x.trim()).filter(Boolean);
+      parts.forEach(p=>{if(p&&/^[a-z]/.test(p))issues.push('첫 글자 대문자로: “'+p.slice(0,22)+'…”');});
+      if(/(^|[^A-Za-z])i([^A-Za-z]|$)/.test(t))issues.push("'i' 는 항상 대문자 I 로!");
+      const noEnd=parts.filter(p=>!/[.?!]$/.test(p)).length;if(noEnd>0)issues.push('마침표(.)가 빠진 문장이 있어요.');
+      if(!issues.length)flags.appendChild(el('div','flag none','자동 점검 통과!'));else issues.slice(0,5).forEach(m=>flags.appendChild(el('div','flag',m)));};
+    fbtn.onclick=autoflag;
+    ta.addEventListener('input',()=>{if(ta.value.trim())doAutosavePara();});
+    ta.addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});
+    saveBtn.onclick=()=>{ST.final=ta.value.trim()||ST.draft;saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='저장했어요! 나중에 이어서 쓸 수 있어요.';};
+    b._ta=ta;b._fill=()=>{if(!ta.value.trim()&&ST.draft)ta.value=ST.draft;};b._save=()=>{ST.final=ta.value.trim()||ST.draft;};},{focus:'textarea'});
+  slides[slides.length-1]._onEnter=function(){this._box._fill&&this._box._fill();};
+  slides[slides.length-1]._collect=function(){this._box._save&&this._box._save();doAutosavePara();};
+  // 8) 점수 + 제출
+  slideAdd(b=>{b.appendChild(el('span','badge green','STEP 8 · Score & Submit'));b.appendChild(el('h1','title','자동 채점 결과'));
+    // ⚠️ 원래는 여기(Paragraph Writing = "글쓰기")에도 녹음 위젯이 있었는데, 선생님 요청으로
+    // 뺐어요(Re-Writing 화면에만 녹음이 있으면 돼요). rec.el을 안 붙이니 화면엔 안 보이지만,
+    // getAudio()는 항상 null을 주는 안전한 더미로 남겨둬서 아래 제출 코드는 그대로 둘 수 있어요.
+    const rec={el:null,getAudio:async()=>null};
+    b._paint=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());const text=ST.final||ST.draft||'';const g=gradeHb(text,topic);ST.score=g;
+      const hero=el('div','rep scorehero');hero.innerHTML='<div class="big">'+g.total+'<small>/100</small></div><div class="grade '+g.grade+'">'+g.grade+' 등급</div><div class="hint">'+g.band+'</div>';b.appendChild(hero);
+      const prepMs=(brainstormStart||writeEnd||Date.now())-paraStart;const writeMs=(writeEnd||Date.now())-(brainstormStart||writeEnd||Date.now());
+      const timeRows=el('div','rep');
+      const rt1=el('div','rrow');rt1.innerHTML='<span class="rl">글감 학습 시간 (샘플~표현)</span><span class="rn">'+fmtDur(prepMs)+'</span>';timeRows.appendChild(rt1);
+      const rt2=el('div','rrow');rt2.innerHTML='<span class="rl">브레인스토밍~글쓰기 시간</span><span class="rn">'+fmtDur(writeMs)+'</span>';timeRows.appendChild(rt2);
+      b.appendChild(timeRows);
+      const rows=el('div','rep');Object.values(g.R).forEach(r=>{const rr=el('div','rrow');rr.innerHTML='<span class="rl">'+r.label+'</span><span class="rn">'+r.score+' / '+r.max+'</span>';const bar=el('div','bar');const sp=el('span');sp.style.width=(r.score/r.max*100)+'%';bar.appendChild(sp);rr.appendChild(bar);rr.appendChild(el('div','rfb',r.fb));rows.appendChild(rr);});b.appendChild(rows);
+      const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','글 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
+      const msg=el('div','rep hint','제출하면 관리자(선생님)가 글과 점수를 확인할 수 있어요.');b.appendChild(msg);
+      const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];
+        const breakdown=Object.values(g.R).map(r=>r.label+' '+r.score+'/'+r.max).join(' · ');
+        const prepStr=fmtDur(prepMs),writeStr=fmtDur(writeMs);
+        const payload={book:lv.book,chapter:'Paragraph Writing',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Paragraph Writing',topic.title),datetime:dt,quiz:'',arrange:'',compose:'',task:'Paragraph 제출',final:ST.final||ST.draft,total:g.total+'/100',score:g.total,grade:g.grade,rubric:breakdown,prepTime:prepStr,writeTime:writeStr,progress:'Paragraph '+topic.title+' 완료 · '+g.total+'점('+g.grade+') · 글감학습 '+prepStr+' · 글쓰기 '+writeStr};
+        const txt=['English Writing Lab · Paragraph Writing (Hamburger)','주제: '+topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'글감 학습 시간: '+prepStr,'브레인스토밍~글쓰기 시간: '+writeStr,'','[완성본]',ST.final||ST.draft||'(작성 없음)','','── 자동 채점 ──','총점 '+g.total+'/100 ('+g.grade+')',breakdown].join('\n');return{payload,txt};};
+      dl.onclick=()=>{const {txt}=build();const blob=new Blob(['\ufeff'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='글_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
+      sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
+        const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
+        if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;triggerAiFeedbackNow(payload.subId,payload.academy);}catch(e){}}
+        if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_글_'+USER.name+'_'+topic.id+'.json';document.body.appendChild(a);a.click();a.remove();}
+        saveDone('PARA-'+topic.id,payload.progress);sub.disabled=false;sub.textContent=sent?'제출 완료!':'제출 완료 (파일 저장됨)';msg.innerHTML=sent?'관리자에게 전송되었어요.':'서버 주소가 없어 파일로 저장했어요. 선생님께 내면 됩니다.';
+        const hb=el('button','btn blue','← 홈으로');hb.style.marginTop='10px';hb.onclick=()=>{nav.classList.remove('on');viewHome();};b.appendChild(hb);};};});
+  slides[slides.length-1]._onEnter=function(){if(!writeEnd)writeEnd=Date.now();freezeStudyTimer();this._box._paint&&this._box._paint();};
+  (async()=>{
+    const found=await fetchDraft(DRAFT_CHAPTER,DRAFT_POINT);
+    if(found&&found.obj){
+      const o=found.obj;
+      if(o.brain)ST.brain=o.brain;
+      if(o.draft)ST.draft=o.draft;
+      if(o.final)ST.final=o.final;
+      if(o.proof)ST.proof=o.proof;
+      if(brainInputsRef&&ST.brain){Object.keys(brainInputsRef).forEach(k=>{const s=brainInputsRef[k],saved=ST.brain[k];if(!saved)return;Object.keys(s).forEach(f=>{if(saved[f]!=null)s[f].value=saved[f];});});}
+      if(draftTaRef&&ST.draft&&!draftTaRef.value.trim()){draftTaRef.value=ST.draft;draftTaRef.dispatchEvent(new Event('input'));}
+      if(finalTaRef&&ST.final&&!finalTaRef.value.trim())finalTaRef.value=ST.final;
+      if(slides[0]&&slides[0]._box)slides[0]._box.insertBefore(draftBanner(found.savedAt),slides[0]._box.firstChild);
+    }
+  })();
+  deckStart();
+}
+
+/* ================= ARTICLE (기사 요약) 학습 흐름 ================= */
+function runArticle(topic){setWide(true);deckInit();
+  const articleStart=Date.now();setStudyTimer(articleStart,'⏱ 학습 시간');
+  const ST={draft:''};
+  // 1) 기사 읽기
+  slideAdd(b=>{b.appendChild(el('span','badge blue','Article · 읽기'));b.appendChild(el('h1','title',topic.title));
+    if(topic.source)b.appendChild(el('div','hint',topic.source));
+    const arImgs=renderImages(topic.images);if(arImgs)b.appendChild(arImgs);
+    const body=el('div','lead');body.style.cssText='white-space:pre-line;line-height:1.85;margin-top:10px';body.textContent=topic.body;b.appendChild(body);
+  },{wide:true,wideMax:'1300px'});
+  // 2) 어휘 (있을 때만) — 카드를 누르면 발음을 들을 수 있어요.
+  if(topic.vocab&&topic.vocab.length){
+    slideAdd(b=>{b.appendChild(el('span','badge blue','Article · 어휘'));b.appendChild(el('h1','title','핵심 단어'));
+      b.appendChild(el('div','hint','카드를 누르면 발음을 들을 수 있어요.'));
+      const grid=el('div');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:14px';
+      topic.vocab.forEach(v=>{
+        const card=el('button');card.type='button';
+        card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:16px 14px;background:#fff;cursor:pointer;text-align:center;font-family:var(--sans)';
+        card.innerHTML='<div style="font-size:16px;font-weight:800">🔊 '+escH(v.en)+'</div><div style="margin-top:6px;color:#6b7684;font-size:13.5px">'+escH(v.ko)+'</div>';
+        card.onclick=()=>speakWord(v.en);
+        grid.appendChild(card);
+      });
+      b.appendChild(grid);
+    },{wide:true,wideMax:'1300px'});
+  }
+  // 3) 요약문 작성 (실시간 조건 확인 + 왼쪽에 기사 본문을 같이 보여줘요) — 기사 문장을 3단어 이상 그대로 베끼면
+  //    알려주는 조건도 함께 검사해요(붙여넣기는 이미 사이트 전체에서 막혀 있지만, 직접 옮겨 적는 것까지 잡아내기 위해서예요).
+  let taskDone=false,taskText='';
+  const DRAFT_CHAPTER='Article Reading',DRAFT_POINT=topic.title;
+  const ARTICLE_MIN_COPY_WORDS=5;
+  // 기사의 핵심 단어(vocab)는 요약에 반드시 써야 하는 단어라서, 베끼기 검사에서는 아예 빼고 계산해요
+  // (핵심 단어가 우연히 본문과 겹쳐도 베끼기로 잡히지 않도록).
+  const ARTICLE_COPY_EXCLUDE=new Set();
+  (topic.vocab||[]).forEach(v=>{norm(v.en||'').split(' ').filter(Boolean).forEach(w=>ARTICLE_COPY_EXCLUDE.add(w));});
+  const allConds=(topic.conds||[]).concat([{
+    label:'기사 문장을 '+ARTICLE_MIN_COPY_WORDS+'단어 이상 이어서 그대로 베끼지 않기',
+    test:t=>!findCopiedRun(topic.body||'',t,ARTICLE_MIN_COPY_WORDS,ARTICLE_COPY_EXCLUDE)
+  }]);
+  slideAdd(b=>{b.appendChild(el('span','badge accent','Article · 요약 쓰기'));b.appendChild(el('h1','title','기사를 영어로 요약해요'));
+    const cols=el('div');cols.style.cssText='display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:10px';
+    const leftCol=el('div');leftCol.style.cssText='flex:1 1 320px;min-width:0;max-height:72vh;overflow-y:auto;background:#f7f7fb;border-radius:12px;padding:16px';
+    leftCol.appendChild(el('div',null,'<b>📰 기사 본문</b>'));
+    if(topic.source)leftCol.appendChild(el('div','hint',topic.source));
+    const bodyRef=el('div');bodyRef.style.cssText='white-space:pre-line;line-height:1.8;margin-top:8px;font-size:14.5px';bodyRef.textContent=topic.body;leftCol.appendChild(bodyRef);
+    // 왼쪽 칸은 이미 기사 본문 자리라서, 사전은 버튼으로 따로 열지 않고 그 아래에 기본으로 붙여요.
+    const dictHolder=el('div');dictHolder.style.marginTop='16px';dictHolder.appendChild(buildDictPanel());leftCol.appendChild(dictHolder);
+    const rightCol=el('div');rightCol.style.cssText='flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:10px';
+    cols.appendChild(leftCol);cols.appendChild(rightCol);
+    b.appendChild(cols);
+    rightCol.appendChild(el('div','lead',autoFormatPrompt(topic.prompt)));
+    const bannerSlot=el('div');rightCol.appendChild(bannerSlot);
+    const ta=addWordCount(el('textarea','in'));ta.placeholder='여기에 영어로 요약을 써요.';rightCol.appendChild(ta);
+    const copyWarn=el('div','fx no');copyWarn.style.cssText='display:none';rightCol.appendChild(copyWarn);
+    const ul=el('ul','conds');allConds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});rightCol.appendChild(ul);
+    const fx=el('div','fx');rightCol.appendChild(fx);
+    addAiCondCheckButton(rightCol,ul,()=>ta.value);
+    const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
+    const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
+    const saveMsg=el('span','fx');saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);rightCol.appendChild(saveRow);
+    rightCol.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 판단이 애매한 문법 조건은 "🤖 AI로 조건 확인하기"를 눌러 다시 확인할 수 있어요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요.'));
+    const checkConds=()=>{let all=true;ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';if(!ok)all=false;});
+      taskDone=all;taskText=ta.value;ST.draft=ta.value;
+      const copied=findCopiedRun(topic.body||'',ta.value,ARTICLE_MIN_COPY_WORDS,ARTICLE_COPY_EXCLUDE);
+      if(copied){copyWarn.style.display='block';copyWarn.textContent='⚠️ 기사 문장을 그대로 옮겨 적은 부분이 있어요: "'+copied+'" — 자신의 표현으로 바꿔서 써보세요.';}
+      else copyWarn.style.display='none';
+      if(!ta.value.trim()){fx.className='fx';fx.textContent='';}
+      else{fx.className='fx '+(all?'ok':'no');fx.textContent=all?'모든 조건을 만족했어요!':'아직 부족한 조건이 있어요.';}};
+    const doAutosave=debounce(()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='자동 저장됨';},2500);
+    ta.addEventListener('input',()=>{checkConds();if(ta.value.trim())doAutosave();});
+    ta.addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});
+    saveBtn.onclick=()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='저장했어요! 나중에 이어서 쓸 수 있어요.';};
+    ta.value=ST.draft;checkConds();
+    (async()=>{
+      const found=await fetchDraft(DRAFT_CHAPTER,DRAFT_POINT);
+      if(found&&found.obj&&found.obj.draft&&!ta.value.trim()){
+        ST.draft=found.obj.draft;taskText=ST.draft;ta.value=ST.draft;checkConds();
+        bannerSlot.appendChild(draftBanner(found.savedAt));
+      }
+    })();
+  },{wide:true,wideMax:'1440px',focus:'textarea'});
+  // 4) 점수 + 제출
+  slideAdd(b=>{b.appendChild(el('span','badge green','Article · 채점 결과'));b.appendChild(el('h1','title','자동 채점 결과'));
+    b._onShow=()=>{};
+    const rec=createRecorderWidget(); // 재진입해도 녹음 내용이 유지되도록 render() 밖(한 번만)에서 만들어요.
+    const render=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());
+      const totalConds=allConds.length,okConds=allConds.filter(c=>c.test(taskText)).length;
+      const score=totalConds?Math.round(okConds/totalConds*100):0;const gr=score>=90?'A':score>=80?'B':score>=70?'C':'D';
+      const wrapR=el('div','rep');
+      const hero=el('div','scorehero');hero.innerHTML='<div class="big">'+score+'<small>/100</small></div><div class="grade '+gr+'">'+gr+' 등급</div>';wrapR.appendChild(hero);
+      const studyMs=Date.now()-articleStart;
+      const rtime=el('div','rrow');rtime.innerHTML='<span class="rl">학습 시간</span><span class="rn">'+fmtDur(studyMs)+'</span>';wrapR.appendChild(rtime);
+      const rc=el('div','rrow');rc.innerHTML='<span class="rl">조건 충족</span><span class="rn">'+okConds+' / '+totalConds+'</span>';wrapR.appendChild(rc);
+      b.appendChild(wrapR);
+      b.appendChild(rec.el);
+      const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';
+      const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','요약 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
+      const msg=el('div','rep hint','제출하면 관리자(선생님)가 글을 읽고 첨삭을 남길 수 있어요.');b.appendChild(msg);
+      const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());
+        const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];
+        const studyTimeStr=fmtDur(studyMs);
+        const prog=`기사요약 조건 ${okConds}/${totalConds} · 학습시간 ${studyTimeStr}`;
+        const payload={book:lv.book,chapter:'Article Reading',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Article Reading',topic.title),datetime:dt,
+          quiz:'',arrange:'',compose:'',task:okConds+'/'+totalConds,final:taskText,total:okConds+'/'+totalConds,score:score,grade:gr,progress:prog,studyTime:studyTimeStr};
+        const txt=['English Writing Lab · Article Reading',topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'학습 시간: '+studyTimeStr,'',
+          '[요약문]',taskText||'(작성 없음)','','총점 '+score+'/100 ('+gr+') · 조건 '+okConds+'/'+totalConds].join('\n');
+        return{payload,txt};};
+      dl.onclick=()=>{const {txt}=build();const blob=new Blob(['﻿'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='기사요약_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
+      sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
+        const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
+        if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;triggerAiFeedbackNow(payload.subId,payload.academy);}catch(e){}}
+        if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_기사요약_'+USER.name+'_'+topic.id+'.json';document.body.appendChild(a);a.click();a.remove();}
+        saveDone('ART-'+topic.id,payload.progress);sub.disabled=false;sub.textContent=sent?'제출 완료!':'제출 완료 (파일 저장됨)';
+        msg.innerHTML=sent?'관리자에게 전송되었어요.':'서버 주소가 없어 파일로 저장했어요. 선생님께 내면 됩니다.';
+        const hb=el('button','btn blue','← 홈으로');hb.style.marginTop='10px';hb.onclick=()=>{nav.classList.remove('on');viewHome();};b.appendChild(hb);};
+    };
+    b._onEnterReport=render;render();
+  });
+  slides[slides.length-1]._onEnter=function(){freezeStudyTimer();this._box._onEnterReport&&this._box._onEnterReport();};
+  deckStart();
+}
+
+/* ================= EXAM (수행평가 대비 연습) ================= */
+function runExam(topic){deckInit();
+  const examStart=Date.now();setStudyTimer(examStart,'⏱ 학습 시간');
+  const ST={draft:''};
+  // 1) 주제·조건 확인 후 글쓰기 (실시간 조건 확인)
+  let taskDone=false,taskText='';
+  const DRAFT_CHAPTER='Performance Assessment',DRAFT_POINT=topic.title;
+  // 자서전 쓰기처럼 브레인스토밍·단계별 뼈대 잡기·문법 연습을 채워둔 수행평가라면, 실제 글쓰기 화면
+  // 전에 참고용 슬라이드를 순서대로(마인드맵 → 뼈대 잡기 → 문법 연습) 먼저 보여줘요. 셋 다 비워둔
+  // (예전 방식) 수행평가는 슬라이드 자체가 안 생기고 예전처럼 바로 글쓰기 화면으로 시작해요.
+  const mindmapItems=parseMindmapText(topic.mindmapText);
+  const tableItems=parseTableText(topic.tableText);
+  const hasSide=mindmapItems.length>0||tableItems.length>0;
+  const frameItems=parseFrameText(topic.frameText);
+  const grammarItems=parseGrammarSwapText(topic.grammarSwapText);
+  // 마인드맵 가지가 여러 개일 때는 칸이 너무 좁아 보이지 않도록, 이 수행평가 화면 전체를 좀 더 넓게 써요
+  // (Paragraph Writing이 좌우 분할 화면에서 쓰는 것과 같은 넓은 화면 모드예요).
+  setWide(hasSide);
+  // 마인드맵에 적은 내용은 이후 실제 글쓰기 화면 오른쪽 참고 패널에 그대로 보여줘요(Paragraph Writing의
+  // 좌우 분할 글쓰기 방식과 같아요) — 그래서 각 가지의 값을 mmNotes에 실시간으로 저장해둬요.
+  const mmNotes={};
+  // 문법 연습 슬라이드에서 학생이 "기본 문장을 이 문법으로 바꿔 써본" 연습 답도, 나중에 선생님이 보는
+  // 리포트에서 "중간에 이런 문제를 풀었구나"를 알 수 있도록 함께 기록해둬요(문법명 → 연습 답).
+  const gpNotes={};
+  grammarItems.forEach(g=>{gpNotes[g.name]='';});
+  mindmapItems.forEach(m=>{mmNotes[m.name]='';});
+  // 표 작성 칸 — 표 제목마다 {cols, rows:[[셀...]]}로 모아둬요(제출할 때 tableNotes로 같이 저장해요).
+  const tblNotes={};
+  tableItems.forEach(t=>{tblNotes[t.title]={cols:t.cols.slice(),rows:Array.from({length:t.rows},()=>t.cols.map(()=>''))};});
+  // ---- 이어쓰기: 쓰던 것(임시저장)이나 이미 낸 제출물이 있으면 마인드맵·표·문법 연습·최종 글을 다시 불러와요 ----
+  ST.mm=mmNotes;ST.tbl=tblNotes;ST.gp=gpNotes; // 임시저장(saveDraftNow(ST))에 중간 과정도 같이 담겨요
+  const resumeRefs={mm:{},gp:{},tbl:{}};
+  let resumeLoaded=false;
+  const notesSave=debounce(()=>{if(!resumeLoaded||TEACHER_PREVIEW)return;saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);},2500);
+  const applyResume=o=>{
+    if(!o)return;
+    if(o.mm&&typeof o.mm==='object')Object.keys(mmNotes).forEach(k=>{if(typeof o.mm[k]==='string'&&o.mm[k]){mmNotes[k]=o.mm[k];if(resumeRefs.mm[k])resumeRefs.mm[k].value=o.mm[k];}});
+    if(o.gp&&typeof o.gp==='object')Object.keys(gpNotes).forEach(k=>{if(typeof o.gp[k]==='string'&&o.gp[k]){gpNotes[k]=o.gp[k];if(resumeRefs.gp[k])resumeRefs.gp[k].value=o.gp[k];}});
+    if(o.tbl&&typeof o.tbl==='object')Object.keys(tblNotes).forEach(title=>{
+      const src=o.tbl[title];if(!src||!Array.isArray(src.rows))return;
+      const d=tblNotes[title];
+      const rows=src.rows.slice(0,12).map(r=>d.cols.map((_,ci)=>String((r&&r[ci])||'')));
+      if(!rows.some(r=>r.some(c=>c.trim())))return;
+      d.rows.length=0;rows.forEach(r=>d.rows.push(r));
+      if(resumeRefs.tbl[title])resumeRefs.tbl[title]();
+    });
+  };
+  const resumeP=(async()=>{
+    const out={text:'',savedAt:'',from:'',datetime:''};
+    try{
+      const found=await fetchDraft(DRAFT_CHAPTER,DRAFT_POINT);
+      const d=found&&found.obj;
+      if(d&&(String(d.draft||'').trim()||d.mm||d.tbl||d.gp)){
+        applyResume({mm:d.mm,tbl:d.tbl,gp:d.gp});
+        out.text=String(d.draft||'');out.savedAt=found.savedAt||'';out.from='draft';
+      }else if(!TEACHER_PREVIEW&&USER.id){
+        // 제출하면 서버가 임시저장을 지우기 때문에, 이미 낸 수행평가를 다시 열면 전부 비어 있었어요. 마지막 제출물에서 불러와요.
+        const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+        const data=await res.json();
+        let last=null;
+        ((data&&data.ok&&data.submissions)||[]).forEach(x=>{
+          if(String(x.chapter||'')!==DRAFT_CHAPTER||String(x.point||'')!==DRAFT_POINT)return;
+          if(!last||String(x.datetime||'')>String(last.datetime||''))last=x;
+        });
+        if(last){
+          const j=v=>{try{return v?JSON.parse(v):null;}catch(e){return null;}};
+          applyResume({mm:j(last.mindmapNotes),tbl:j(last.tableNotes),gp:j(last.grammarPractice)});
+          out.text=String(last.final||last.text||'');out.from='sub';out.datetime=last.datetime||'';
+        }
+      }
+    }catch(e){}
+    resumeLoaded=true;
+    return out;
+  })();
+  if(tableItems.length){
+    slideAdd(b=>{
+      b.appendChild(el('span','badge accent','수행평가 대비 · 표 작성'));
+      b.appendChild(el('h1','title','📋 표로 정리하기'));
+      b.appendChild(el('div','hint','과제지의 표처럼 칸마다 생각을 정리해보세요. 여기 적은 내용은 채점되지 않지만, 다음 글쓰기 화면 오른쪽에서 계속 참고할 수 있고 선생님이 제출한 글과 함께 볼 수 있어요.'));
+      tableItems.forEach(t=>{
+        const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-top:12px;background:#faf9fb;overflow-x:auto';
+        card.appendChild(el('div','fl',escH(t.title)));
+        if(t.guide){const g=el('div');g.style.cssText='margin-top:4px;font-size:13px;color:#6b7684';g.textContent=t.guide;card.appendChild(g);}
+        const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;margin-top:8px;font-size:13.5px;min-width:480px';
+        const head=el('tr');
+        t.cols.forEach(c=>{const th=el('th',null,escH(c));th.style.cssText='border:1px solid rgba(0,0,0,.12);background:#eef0ff;padding:6px 8px;text-align:left;font-weight:700';head.appendChild(th);});
+        tbl.appendChild(head);
+        if(t.example.length){
+          const ex=el('tr');
+          t.cols.forEach((c,ci)=>{const td=el('td',null,escH(ci===0&&t.example[0]?'예) '+t.example[0]:(t.example[ci]||'')));td.style.cssText='border:1px solid rgba(0,0,0,.12);padding:6px 8px;color:#8b95a1;background:#f6f6f8';ex.appendChild(td);});
+          tbl.appendChild(ex);
+        }
+        const data=tblNotes[t.title];
+        const addRow=(ri)=>{
+          const tr=el('tr');tr.className='dr';
+          t.cols.forEach((c,ci)=>{
+            const td=el('td');td.style.cssText='border:1px solid rgba(0,0,0,.12);padding:2px';
+            const ta=el('textarea','in');ta.rows=2;ta.style.cssText='width:100%;min-height:44px;border:none;font-size:13.5px;resize:vertical;background:transparent';
+            ta.value=(data.rows[ri]&&data.rows[ri][ci])||'';
+            ta.addEventListener('input',()=>{data.rows[ri][ci]=ta.value;notesSave();});
+            td.appendChild(ta);tr.appendChild(td);
+          });
+          tbl.appendChild(tr);
+        };
+        data.rows.forEach((_,ri)=>addRow(ri));
+        resumeRefs.tbl[t.title]=()=>{tbl.querySelectorAll('tr.dr').forEach(r=>r.remove());data.rows.forEach((_,ri)=>addRow(ri));};
+        card.appendChild(tbl);
+        const addBtn=el('button','btn ghost','+ 행 추가');addBtn.type='button';addBtn.style.cssText='margin-top:8px;padding:5px 12px;font-size:12.5px';
+        addBtn.onclick=()=>{if(data.rows.length>=12)return;data.rows.push(t.cols.map(()=>''));addRow(data.rows.length-1);};
+        card.appendChild(addBtn);
+        b.appendChild(card);
+      });
+    },{wide:true,wideMax:'1200px'});
+  }
+  if(mindmapItems.length){
+    slideAdd(b=>{
+      b.appendChild(el('span','badge accent','수행평가 대비 · 브레인스토밍'));
+      b.appendChild(el('h1','title','🧠 생각 정리하기 (마인드맵)'));
+      b.appendChild(el('div','hint','가운데 주제에서 뻗어나온 가지마다 떠오르는 생각을 자유롭게 적어보세요. 여기 적은 내용은 채점되지 않지만, 다음 글쓰기 화면 오른쪽에서 계속 참고할 수 있어요.'));
+      const map=el('div','exmmap');
+      map.appendChild(el('div','exmmap-center',escH(topic.title||'')));
+      map.appendChild(el('div','exmmap-stem'));
+      const branches=el('div','exmmap-branches');
+      mindmapItems.forEach(m=>{
+        const branch=el('div','exmmap-branch');
+        branch.appendChild(el('div','exmmap-branch-label',escH(m.name)));
+        if(m.guide)branch.appendChild(el('div','exmmap-guide',escH(m.guide)));
+        const ta=el('textarea','in');ta.placeholder='생각나는 것을 적어보세요 (여기 적은 내용이 글쓰기 화면 오른쪽에 보여요)';
+        ta.value=mmNotes[m.name]||'';
+        resumeRefs.mm[m.name]=ta;
+        ta.addEventListener('input',()=>{mmNotes[m.name]=ta.value;notesSave();});
+        branch.appendChild(ta);
+        branches.appendChild(branch);
+      });
+      map.appendChild(branches);
+      b.appendChild(map);
+    },{wide:true,wideMax:'1200px'});
+  }
+  // 프레임(글의 뼈대 잡기) 카드를 그리는 로직이에요 — 뼈대 잡기 슬라이드와, 글쓰기 화면에서 다시
+  // 팝업으로 열어볼 때(아래 "✏️ 글의 뼈대 잡기 보기" 버튼) 둘 다에서 똑같이 써요.
+  const buildFrameCardsInto=(container)=>{
+    frameItems.forEach(f=>{
+      const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-top:12px;background:#faf9fb';
+      card.appendChild(el('div','fl',f.name));
+      if(f.starters.length){
+        const starterBox=el('div');starterBox.style.cssText='margin-top:6px;font-size:14px;line-height:1.8';
+        starterBox.innerHTML=f.starters.map(s=>'• '+escH(s)).join('<br>');
+        card.appendChild(starterBox);
+      }
+      if(f.sample){
+        const sampleBox=el('div');sampleBox.style.cssText='margin-top:8px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;color:#374151';
+        sampleBox.innerHTML='<b>👩‍🏫 선생님 예시문</b><br>'+escH(f.sample);
+        card.appendChild(sampleBox);
+      }
+      container.appendChild(card);
+    });
+  };
+  if(frameItems.length){
+    slideAdd(b=>{
+      b.appendChild(el('span','badge accent','수행평가 대비 · 글의 뼈대 잡기'));
+      b.appendChild(el('h1','title','✏️ 글의 뼈대 잡기'));
+      b.appendChild(el('div','hint','문장 시작 단서(Sentence Starter)를 참고해서, 실제 글을 쓸 때 어떤 흐름으로 이어갈지 미리 생각해보세요. 예시 문장처럼 자연스럽게 이어 쓰면 훨씬 쉬워져요. 이 내용은 실제 글쓰기 화면에서도 "✏️ 글의 뼈대 잡기 보기" 버튼을 눌러 다시 볼 수 있어요.'));
+      buildFrameCardsInto(b);
+    });
+  }
+  if(grammarItems.length){
+    slideAdd(b=>{
+      b.appendChild(el('span','badge accent','수행평가 대비 · 오늘의 문법 연습'));
+      b.appendChild(el('h1','title','🔧 오늘의 문법 연습'));
+      b.appendChild(el('div','hint','오늘 필요한 문법을 미리 연습해보고, 실제 글을 쓸 때 자유롭게 적용해보세요. 채점되지는 않지만, 여기 써본 내용은 나중에 선생님이 보는 리포트에 "중간에 연습한 문제"로 함께 남아요.'));
+      grammarItems.forEach((g,gi)=>{
+        const card=el('div');card.style.cssText='border:1px solid rgba(0,0,0,.08);border-radius:12px;padding:12px 14px;margin-top:12px;background:#faf9fb';
+        card.appendChild(el('div','fl',g.name));
+        if(g.explain){const ex=el('div');ex.style.cssText='margin-top:4px;font-size:13px;color:#6b7684';ex.textContent=g.explain;card.appendChild(ex);}
+        if(g.examples&&g.examples.length){
+          const exm=el('div');exm.style.cssText='margin-top:6px;background:#eef0ff;border-radius:8px;padding:8px 10px;font-size:13px;color:#374151';
+          exm.innerHTML='<b>예시 문장</b>'+g.examples.map(ex=>'<div style="margin-top:6px">'+escH(ex.en)+(ex.kr?'<div style="margin-top:2px;color:#6b7684;font-size:12px">☞ '+escH(ex.kr)+'</div>':'')+'</div>').join('');
+          card.appendChild(exm);
+        }
+        // "나의 문장" 적는 칸 — 기본 문장을 바꿔 쓰게 하는 게 아니라, 이 문법을 활용해서 학생이
+        // 자유롭게 자기만의 문장을 만들어보는 칸이에요(모든 문법 항목에 항상 나와요).
+        card.appendChild(el('div','fl','나의 문장'));
+        const practiceTa=el('textarea','in');
+        practiceTa.placeholder='이 문법을 활용해서 나만의 문장을 만들어보세요';
+        practiceTa.style.cssText='min-height:50px;font-size:13px;margin-top:4px';
+        practiceTa.value=gpNotes[g.name]||'';
+        resumeRefs.gp[g.name]=practiceTa;practiceTa.addEventListener('input',()=>{gpNotes[g.name]=practiceTa.value;notesSave();});
+        card.appendChild(practiceTa);
+        b.appendChild(card);
+      });
+    });
+  }
+  let writingSlideRefresh=null;
+  slideAdd(b=>{
+    const hasMap=hasSide;
+    const wrap=hasMap?el('div','writer'):b;
+    const left=hasMap?el('div','wleft'):b;
+    if(hasMap){wrap.appendChild(left);}
+    left.appendChild(el('span','badge accent','수행평가 대비 · 글쓰기'));left.appendChild(el('h1','title',topic.title));
+    const exImgs=renderImages(topic.images);if(exImgs)left.appendChild(exImgs);
+    left.appendChild(el('div','lead',autoFormatPrompt(topic.prompt)));
+    if(topic.evalCriteria){
+      const evalBox=el('div');evalBox.style.cssText='background:#f4f5ff;border-radius:12px;padding:12px 14px;margin-top:10px;font-size:14px;line-height:1.7';
+      evalBox.innerHTML='<b>📋 평가 영역</b>'+renderEvalAreas(topic.evalCriteria);
+      left.appendChild(evalBox);
+    }
+    left.appendChild(buildDictPanel());
+    if(frameItems.length){
+      const toolBtnRow=el('div');toolBtnRow.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
+      const frameBtn=el('button','btn ghost','✏️ 글의 뼈대 잡기 보기');frameBtn.type='button';
+      frameBtn.onclick=()=>openGenericModal('✏️ 글의 뼈대 잡기 — '+(topic.title||''),body=>buildFrameCardsInto(body));
+      toolBtnRow.appendChild(frameBtn);
+      left.appendChild(toolBtnRow);
+    }
+    const bannerSlot=el('div');left.appendChild(bannerSlot);
+    const ta=addWordCount(el('textarea','in'));ta.placeholder='여기에 영어로 써요.';left.appendChild(ta);
+    const ul=el('ul','conds');topic.conds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});left.appendChild(ul);
+    const fx=el('div','fx');left.appendChild(fx);
+    addAiCondCheckButton(left,ul,()=>ta.value);
+    const saveRow=el('div');saveRow.style.cssText='margin-top:8px;display:flex;align-items:center;gap:8px';
+    const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
+    const saveMsg=el('span','fx');saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);left.appendChild(saveRow);
+    left.appendChild(el('div','enter-tip','조건 충족 여부가 입력하는 동안 실시간으로 확인돼요. 판단이 애매한 문법 조건은 "🤖 AI로 조건 확인하기"를 눌러 다시 확인할 수 있어요. 시간 안에 다 못 쓰면 "임시 저장"을 눌러두고 나중에 이어서 쓸 수 있어요.'));
+    const checkConds=()=>{let all=true;ul.querySelectorAll('li').forEach(li=>{const ok=li._c.test(ta.value);li.className=ok?'pass':'fail';li.querySelector('.mk').textContent=ok?'✓':'✕';if(!ok)all=false;});
+      taskDone=all;taskText=ta.value;ST.draft=ta.value;
+      if(!ta.value.trim()){fx.className='fx';fx.textContent='';}
+      else{fx.className='fx '+(all?'ok':'no');fx.textContent=all?'모든 조건을 만족했어요!':'아직 부족한 조건이 있어요.';}};
+    const doAutosave=debounce(()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='자동 저장됨';},2500);
+    ta.addEventListener('input',()=>{checkConds();if(ta.value.trim())doAutosave();});
+    ta.addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});
+    saveBtn.onclick=()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='저장했어요! 나중에 이어서 쓸 수 있어요.';};
+    ta.value=ST.draft;checkConds();
+    (async()=>{
+      const rs=await resumeP;
+      if(rs.text.trim()&&!ta.value.trim()){
+        ST.draft=rs.text;taskText=ST.draft;ta.value=ST.draft;checkConds();
+        if(rs.from==='draft'){bannerSlot.appendChild(draftBanner(rs.savedAt));}
+        else{
+          const nb=el('div');nb.style.cssText='background:#eef0ff;color:#4338ca;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:10px';
+          nb.textContent='✅ 이미 제출한 글이에요'+(rs.datetime?' ('+String(rs.datetime).slice(0,16)+')':'')+'. 더 고치고 싶으면 이어서 쓰고 다시 제출할 수 있어요.';
+          bannerSlot.appendChild(nb);
+        }
+      }
+    })();
+    let right=null,refreshNotes=null;
+    if(hasMap){
+      right=el('div','wright');
+      right.appendChild(el('div','fl',mindmapItems.length?'🧠 내가 적은 마인드맵':'📋 내가 적은 표'));
+      const notesHost=el('div');notesHost.style.cssText='margin-top:8px';
+      right.appendChild(notesHost);
+      refreshNotes=()=>{
+        notesHost.innerHTML='';
+        mindmapItems.forEach(m=>{
+          const card=el('div','exmnotes-card');
+          card.appendChild(el('div','lbl',escH(m.name)));
+          const val=(mmNotes[m.name]||'').trim();
+          const txt=el('div','txt'+(val?'':' empty'),escH(val||'(아직 안 적었어요)'));
+          card.appendChild(txt);
+          notesHost.appendChild(card);
+        });
+        tableItems.forEach(t=>{
+          const d=tblNotes[t.title];
+          const filled=d.rows.filter(r=>r.some(c=>String(c||'').trim()));
+          const card=el('div','exmnotes-card');
+          card.appendChild(el('div','lbl','📋 '+escH(t.title)));
+          if(!filled.length)card.appendChild(el('div','txt empty','(아직 안 적었어요)'));
+          filled.forEach(r=>{
+            const line=el('div','txt');line.style.cssText='margin-top:4px';
+            line.innerHTML=t.cols.map((c,ci)=>'<b>'+escH(c)+'</b>: '+escH(r[ci]||'-')).join('<br>');
+            card.appendChild(line);
+          });
+          notesHost.appendChild(card);
+        });
+      };
+      refreshNotes();
+      writingSlideRefresh=refreshNotes;
+      wrap.appendChild(right);
+      b.appendChild(wrap);
+    }
+  },{focus:'textarea',onEnter:()=>{if(writingSlideRefresh)writingSlideRefresh();},wide:hasSide,wideMax:'1200px'});
+  // 2) 점수 + 제출
+  slideAdd(b=>{b.appendChild(el('span','badge green','수행평가 대비 · 채점 결과'));b.appendChild(el('h1','title','자동 채점 결과'));
+    b._onShow=()=>{};
+    const render=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());
+      const totalConds=topic.conds.length,okConds=topic.conds.filter(c=>c.test(taskText)).length;
+      const score=totalConds?Math.round(okConds/totalConds*100):0;const gr=score>=90?'A':score>=80?'B':score>=70?'C':'D';
+      const wrapR=el('div','rep');
+      const hero=el('div','scorehero');hero.innerHTML='<div class="big">'+score+'<small>/100</small></div><div class="grade '+gr+'">'+gr+' 등급</div>';wrapR.appendChild(hero);
+      const studyMs=Date.now()-examStart;
+      const rtime=el('div','rrow');rtime.innerHTML='<span class="rl">학습 시간</span><span class="rn">'+fmtDur(studyMs)+'</span>';wrapR.appendChild(rtime);
+      const rc=el('div','rrow');rc.innerHTML='<span class="rl">조건 충족</span><span class="rn">'+okConds+' / '+totalConds+'</span>';wrapR.appendChild(rc);
+      b.appendChild(wrapR);
+      // 평가 영역별 수행 수준(상/중/하 채점 기준)은 학생에게 절대 보여주지 않고 서버에만 저장돼 있다가,
+      // 이 버튼을 누르면 AI가 그 기준에 맞춰 판단한 "예상 점수"만 알려줘요.
+      const gradeRow=el('div','rep');gradeRow.style.cssText='margin-top:14px';
+      const gradeBtn=el('button','btn blue','🤖 AI 예상 채점 보기');gradeBtn.type='button';
+      const gradeBox=el('div');gradeBox.style.cssText='margin-top:10px';
+      gradeRow.appendChild(gradeBtn);gradeRow.appendChild(gradeBox);
+      b.appendChild(gradeRow);
+      gradeBtn.onclick=async()=>{
+        if(!taskText.trim()){gradeBox.innerHTML='<div class="fx no">먼저 글을 써주세요.</div>';return;}
+        gradeBtn.disabled=true;const prevT=gradeBtn.textContent;gradeBtn.textContent='채점하는 중…';gradeBox.innerHTML='';
+        try{
+          const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'gradeExamRubric',topicId:topic.id,studentId:USER.id,text:taskText})});
+          const data=await res.json();
+          if(!data||data.ok===false)throw new Error((data&&data.error)||'AI 예상 채점에 실패했어요.');
+          const r=data.result;
+          let html='<div style="background:#eef0ff;border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.7">';
+          html+='<b>🤖 AI 예상 채점 결과 · '+escH(String(r.total))+' / '+escH(String(r.totalMax))+'점</b>';
+          (r.areas||[]).forEach(a=>{
+            html+='<div style="margin-top:8px"><b>'+escH(a.area)+'</b> <span style="color:#4338ca;font-weight:700">'+escH(String(a.score))+' / '+escH(String(a.maxScore))+'점</span></div>';
+            if(a.reason)html+='<div style="padding-left:6px;color:#6b7684;font-size:13px">'+escH(a.reason)+'</div>';
+          });
+          html+='<div class="hint" style="margin-top:8px">※ AI가 매긴 예상 점수예요. 실제 점수는 선생님이 첨삭에서 확인해주세요.</div></div>';
+          gradeBox.innerHTML=html;
+        }catch(e){
+          gradeBox.innerHTML='<div class="fx no">'+escH(String(e.message||e))+'</div>';
+        }finally{
+          gradeBtn.disabled=false;gradeBtn.textContent=prevT;
+        }
+      };
+      const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';
+      const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','글 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
+      const msg=el('div','rep hint','제출하면 관리자(선생님)가 글을 읽고 첨삭을 남길 수 있어요.');b.appendChild(msg);
+      const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());
+        const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];
+        const studyTimeStr=fmtDur(studyMs);
+        const prog=`수행평가 조건 ${okConds}/${totalConds} · 학습시간 ${studyTimeStr}`;
+        // 마인드맵·문법 연습 단계가 있었던 수행평가라면, 그 중간 과정도 함께 보내서 나중에 리포트에서
+        // "고쳐 쓴 최종 글"과 함께 볼 수 있게 해요. 빈 값만 있으면(가지를 하나도 안 채웠으면) 아예 안 보내요.
+        const mmFilled=Object.keys(mmNotes).some(k=>String(mmNotes[k]||'').trim());
+        const gpFilled=Object.keys(gpNotes).some(k=>String(gpNotes[k]||'').trim());
+        const tblFilled=Object.keys(tblNotes).some(k=>tblNotes[k].rows.some(r=>r.some(c=>String(c||'').trim())));
+        const payload={book:lv.book,chapter:'Performance Assessment',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Performance Assessment',topic.title),datetime:dt,
+          quiz:'',arrange:'',compose:'',task:okConds+'/'+totalConds,final:taskText,total:okConds+'/'+totalConds,score:score,grade:gr,progress:prog,studyTime:studyTimeStr,
+          mindmapNotes:mmFilled?JSON.stringify(mmNotes):'',tableNotes:tblFilled?JSON.stringify(tblNotes):'',grammarPractice:gpFilled?JSON.stringify(gpNotes):''};
+        const txt=['English Writing Lab · 수행평가 대비',topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'학습 시간: '+studyTimeStr,'',
+          '[작성한 글]',taskText||'(작성 없음)','','총점 '+score+'/100 ('+gr+') · 조건 '+okConds+'/'+totalConds].join('\n');
+        return{payload,txt};};
+      dl.onclick=()=>{const {txt}=build();const blob=new Blob(['﻿'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='수행평가_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
+      sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
+        if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true; /* 수행평가는 AI 첨삭을 자동으로 만들지 않아요(선생님이 필요할 때 직접 만들어요). */}catch(e){}}
+        if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_수행평가_'+USER.name+'_'+topic.id+'.json';document.body.appendChild(a);a.click();a.remove();}
+        saveDone('EX-'+topic.id,payload.progress);sub.disabled=false;sub.textContent=sent?'제출 완료!':'제출 완료 (파일 저장됨)';
+        msg.innerHTML=sent?'관리자에게 전송되었어요.':'서버 주소가 없어 파일로 저장했어요. 선생님께 내면 됩니다.';
+        const hb=el('button','btn blue','← 홈으로');hb.style.marginTop='10px';hb.onclick=()=>{nav.classList.remove('on');viewHome();};b.appendChild(hb);};
+    };
+    b._onEnterReport=render;render();
+  });
+  slides[slides.length-1]._onEnter=function(){freezeStudyTimer();this._box._onEnterReport&&this._box._onEnterReport();};
+  deckStart();
+}
+
+/* ================= Story Writing (student flow) ================= */
+function shuffleArr(a){const r=a.slice();for(let i=r.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[r[i],r[j]]=[r[j],r[i]];}return r;}
+/* 그림별로 나눠 쓰는 글을 자연스럽게 이어주는 연결어(순서 표현) 참고 목록이에요. 버튼을 누르면
+   지금 커서가 있는(또는 마지막으로 눌러쓴) 그림 글쓰기 칸에 바로 끼워 넣어줘요. */
+const STORY_CONNECTORS=[{en:'First,',ko:'먼저,'},{en:'Then,',ko:'그다음,'},{en:'Next,',ko:'그리고 나서,'},{en:'After that,',ko:'그 후에,'},{en:'Finally,',ko:'마지막으로,'}];
+const countWords=s=>(s||'').trim().split(/\s+/).filter(Boolean).length;
+function runStory(topic){setWide(true);deckInit();
+  const storyStart=Date.now();setStudyTimer(storyStart,'⏱ 학습 시간');
+  const pics=topic.pics&&topic.pics.length?topic.pics:[{imageUrl:'',crop:'center center',questions:[],words:[],starter:''}];
+  const texts=pics.map(()=>'');
+  const DRAFT_CHAPTER='Story Writing',DRAFT_POINT=topic.title||topic.id;
+  // memos: 그림별로 "질문(힌트)을 보고 떠오른 생각"을 자유롭게 적어두는 메모장이에요.
+  // 나중에 "그림별 글쓰기" 화면에서 이 메모를 옆에 보여줘서, 미리 적어둔 생각을 참고해서 영작할 수 있게 해요.
+  const ST={texts:texts.slice(),memos:pics.map(()=>'')};
+  const saveMemo=debounce(()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);},2000);
+  let memoTas=[]; // Look & Think 화면에서 그림별로 만들어지는 메모 textarea들 (글쓰기 화면에서도 참고용으로 값을 읽어요)
+  // 1) 단어 학습 — 4단계로 나눠서 진행해요: ① 단어-뜻 미리 보기(전체 단어) → ② 카드 뒤집기 게임 → ③ 짝 연결하기 → ④ 그림 보고 맞추기.
+  //    ①에서는 전체 단어를 다 보여주지만, ②·③·④ 게임 단계는 같은 단어를 반복하지 않도록 전체 단어를 3등분해서
+  //    서로 다른 단어 묶음을 나눠 맡게 해요 — 그래야 한 번에 너무 많지도 않고, 세 단계를 다 거치면 전체 단어를 골고루 익혀요.
+  const seenW=new Set();const wordsByPic=[];
+  pics.forEach((p,pi)=>{const list=[];(p.words||[]).forEach(w=>{if(w.en&&!seenW.has(w.en.toLowerCase())){seenW.add(w.en.toLowerCase());list.push(w);}});wordsByPic.push(list);});
+  const allWordsFull=(function(){
+    const buckets=wordsByPic.map(l=>l.slice());const out=[];let i=0;
+    while(buckets.some(b=>b.length)){const b=buckets[i%buckets.length];if(b.length)out.push(b.shift());i++;}
+    return out;
+  })();
+  function splitInto3(arr){
+    const n=arr.length;if(!n)return[[],[],[]];
+    const per=Math.ceil(n/3);
+    return [arr.slice(0,per),arr.slice(per,per*2),arr.slice(per*2)];
+  }
+  const [wordsFlip,wordsConnect,wordsPicPool]=splitInto3(allWordsFull);
+  // 2-1) 단어-뜻 미리 보기 (전체 단어, 숨김 없이 바로 보여줘요, 눌러서 발음 듣기)
+  slideAdd(b=>{
+    b.appendChild(el('span','badge green','Story · Words 1/4'));
+    b.appendChild(el('h1','title','단어 뜻 알아보기'));
+    if(!allWordsFull.length){b.appendChild(el('div','hint','등록된 단어가 없어요.'));return;}
+    b.appendChild(el('div','hint','카드를 눌러 발음을 들어보세요. 뜻까지 다 익힌 다음 "다음"을 눌러 게임으로 넘어가요.'));
+    const grid=el('div');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:14px';
+    allWordsFull.forEach(w=>{
+      const card=el('button','btn ghost');card.type='button';
+      card.style.cssText='padding:14px 10px;border-radius:12px;display:flex;flex-direction:column;gap:4px;align-items:center;cursor:pointer';
+      card.innerHTML='<span style="font-size:20px">🔊</span><span style="font-size:16px;font-weight:800">'+escH(w.en)+'</span><span style="font-size:13px;color:#6b7684">'+escH(w.ko||'')+'</span>';
+      card.onclick=()=>speakWord(w.en);
+      grid.appendChild(card);
+    });
+    b.appendChild(grid);
+  },{wide:true,wideMax:'900px'});
+  // 2-2) 카드 뒤집기 게임 (기존 매칭 게임, 항상 가운데 정렬)
+  slideAdd(b=>{
+    b.style.textAlign='center';
+    b.appendChild(el('span','badge green','Story · Words 2/4'));
+    b.appendChild(el('h1','title','카드 뒤집기'));
+    if(!wordsFlip.length){b.appendChild(el('div','hint','등록된 단어가 없어요.'));return;}
+    b.appendChild(el('div','hint','카드를 두 장씩 뒤집어 짝을 맞춰보세요. 영어 카드를 뒤집으면 발음도 들려요.'));
+    const boardWrap=el('div');boardWrap.style.cssText='display:flex;justify-content:center;margin-top:16px';
+    const board=el('div');board.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px;max-width:640px;justify-content:center';
+    boardWrap.appendChild(board);b.appendChild(boardWrap);
+    let cards=[];wordsFlip.forEach((w,i)=>{cards.push({key:i,type:'en',text:w.en});cards.push({key:i,type:'ko',text:w.ko||w.en});});
+    cards=shuffleArr(cards);
+    let flipped=[],matched=new Set(),lock=false;
+    const statusEl=el('div','fx');statusEl.style.marginTop='12px';b.appendChild(statusEl);
+    cards.forEach((c,idx)=>{
+      const btn=el('button','btn ghost',' ');btn.type='button';
+      btn.style.cssText='height:78px;font-size:15px;font-weight:700;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;text-align:center;padding:6px;';
+      btn.textContent='?';
+      btn.onclick=()=>{
+        if(lock||matched.has(idx)||flipped.some(f=>f.idx===idx))return;
+        btn.textContent=c.text;btn.style.background='#eef0ff';
+        if(c.type==='en')speakWord(c.text);
+        flipped.push({idx,c,btn});
+        if(flipped.length===2){
+          lock=true;
+          const [a,bfl]=flipped;
+          if(a.c.key===bfl.c.key){
+            matched.add(a.idx);matched.add(bfl.idx);
+            a.btn.style.background='#e3f9ec';bfl.btn.style.background='#e3f9ec';
+            flipped=[];lock=false;
+            statusEl.className='fx ok';statusEl.textContent=matched.size+' / '+cards.length+' 매칭 완료';
+            if(matched.size===cards.length){statusEl.textContent='모두 맞췄어요! 🎉';}
+          }else{
+            setTimeout(()=>{a.btn.textContent='?';a.btn.style.background='';bfl.btn.textContent='?';bfl.btn.style.background='';flipped=[];lock=false;},700);
+          }
+        }
+      };
+      board.appendChild(btn);
+    });
+  },{wide:true,wideMax:'1000px'});
+  // 2-3) 짝 연결하기 (왼쪽 단어의 점에서 오른쪽 뜻의 점까지 손가락/마우스로 선을 그어서 짝짓기)
+  slideAdd(b=>{
+    b.style.textAlign='center';
+    b.appendChild(el('span','badge green','Story · Words 3/4'));
+    b.appendChild(el('h1','title','짝 연결하기'));
+    if(!wordsConnect.length){b.appendChild(el('div','hint','등록된 단어가 없어요.'));return;}
+    b.appendChild(el('div','hint','왼쪽 단어의 점을 누른 채로 끌어서, 오른쪽의 알맞은 뜻 점까지 선을 이어보세요.'));
+    const stage=el('div');stage.style.cssText='position:relative;display:flex;gap:110px;justify-content:center;align-items:flex-start;margin-top:18px;touch-action:none';
+    const leftCol=el('div');leftCol.style.cssText='display:flex;flex-direction:column;gap:14px;min-width:150px';
+    const rightCol=el('div');rightCol.style.cssText='display:flex;flex-direction:column;gap:14px;min-width:150px';
+    stage.appendChild(leftCol);stage.appendChild(rightCol);
+    const svgNS='http://www.w3.org/2000/svg';
+    const svg=document.createElementNS(svgNS,'svg');
+    svg.setAttribute('style','position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:visible');
+    stage.appendChild(svg);
+    b.appendChild(stage);
+    const statusEl2=el('div','fx');statusEl2.style.marginTop='12px';b.appendChild(statusEl2);
+    const enList=shuffleArr(wordsConnect.map((w,i)=>({key:i,text:w.en})));
+    const koList=shuffleArr(wordsConnect.map((w,i)=>({key:i,text:w.ko||w.en})));
+    const matchedKeys=new Set();
+    function mkRow(item,isEn){
+      // 점(dot)은 두 칸 사이(가운데 빈 공간, 선이 실제로 지나가는 쪽)에 있는 게 자연스러워요.
+      // 왼쪽 칸(영어)은 그대로 두면 라벨 다음에 점이 와서 이미 안쪽(오른쪽)에 오고,
+      // 오른쪽 칸(한글 뜻)은 뒤집어야 점이 라벨보다 먼저(왼쪽=안쪽)로 와요.
+      const row=el('div');row.style.cssText='display:flex;align-items:center;gap:8px;'+(isEn?'':'flex-direction:row-reverse;');
+      const lbl=el('button','btn ghost',item.text);lbl.type='button';
+      lbl.style.cssText='padding:10px 14px;font-size:14px;border-radius:10px;cursor:pointer';
+      if(isEn)lbl.onclick=()=>speakWord(item.text);
+      const dot=el('div');
+      dot.style.cssText='width:18px;height:18px;border-radius:50%;background:#c7cbe8;border:2px solid #4338ca;cursor:pointer;flex:none;touch-action:none';
+      dot.dataset.key=String(item.key);dot.dataset.side=isEn?'en':'ko';
+      row.appendChild(lbl);row.appendChild(dot);
+      return {row,lbl,dot,key:item.key,isEn};
+    }
+    const leftRows=enList.map(item=>mkRow(item,true));
+    const rightRows=koList.map(item=>mkRow(item,false));
+    leftRows.forEach(r=>leftCol.appendChild(r.row));
+    rightRows.forEach(r=>rightCol.appendChild(r.row));
+    let dragLine=null,dragFrom=null;
+    function stagePt(clientX,clientY){const rect=stage.getBoundingClientRect();return {x:clientX-rect.left,y:clientY-rect.top};}
+    function dotCenter(dot){const r=dot.getBoundingClientRect();return stagePt(r.left+r.width/2,r.top+r.height/2);}
+    function startDrag(row,e){
+      if(matchedKeys.has(row.key))return;
+      dragFrom=row;
+      const p=dotCenter(row.dot);
+      dragLine=document.createElementNS(svgNS,'line');
+      dragLine.setAttribute('x1',p.x);dragLine.setAttribute('y1',p.y);
+      dragLine.setAttribute('x2',p.x);dragLine.setAttribute('y2',p.y);
+      dragLine.setAttribute('stroke','#4338ca');dragLine.setAttribute('stroke-width','3');dragLine.setAttribute('stroke-dasharray','5,4');
+      svg.appendChild(dragLine);
+      try{row.dot.setPointerCapture(e.pointerId);}catch(err){}
+    }
+    function moveDrag(e){
+      if(!dragLine)return;
+      const p=stagePt(e.clientX,e.clientY);
+      dragLine.setAttribute('x2',p.x);dragLine.setAttribute('y2',p.y);
+    }
+    function finishFail(){
+      statusEl2.className='fx no';statusEl2.textContent='다시 생각해보세요.';
+      setTimeout(()=>{if(statusEl2.textContent==='다시 생각해보세요.')statusEl2.textContent='';},700);
+    }
+    function endDrag(e){
+      if(!dragLine){dragFrom=null;return;}
+      const p=stagePt(e.clientX,e.clientY);
+      const pool=dragFrom.isEn?rightRows:leftRows;
+      let target=null,minD=30;
+      pool.forEach(r=>{
+        if(matchedKeys.has(r.key))return;
+        const c=dotCenter(r.dot);
+        const d=Math.hypot(c.x-p.x,c.y-p.y);
+        if(d<minD){minD=d;target=r;}
+      });
+      svg.removeChild(dragLine);dragLine=null;
+      if(target){
+        if(target.key===dragFrom.key){
+          const p1=dotCenter(dragFrom.dot),p2=dotCenter(target.dot);
+          const line=document.createElementNS(svgNS,'line');
+          line.setAttribute('x1',p1.x);line.setAttribute('y1',p1.y);line.setAttribute('x2',p2.x);line.setAttribute('y2',p2.y);
+          line.setAttribute('stroke','#34b467');line.setAttribute('stroke-width','4');
+          svg.appendChild(line);
+          matchedKeys.add(dragFrom.key);
+          dragFrom.dot.style.background='#34b467';target.dot.style.background='#34b467';
+          statusEl2.className='fx ok';statusEl2.textContent=matchedKeys.size+' / '+wordsConnect.length+' 짝 연결 완료';
+          if(matchedKeys.size===wordsConnect.length)statusEl2.textContent='모두 연결했어요! 🎉';
+        }else{
+          finishFail();
+        }
+      }
+      dragFrom=null;
+    }
+    leftRows.concat(rightRows).forEach(r=>{
+      r.dot.addEventListener('pointerdown',e=>startDrag(r,e));
+    });
+    stage.addEventListener('pointermove',moveDrag);
+    stage.addEventListener('pointerup',endDrag);
+    stage.addEventListener('pointercancel',()=>{if(dragLine){svg.removeChild(dragLine);dragLine=null;}dragFrom=null;});
+  },{wide:true,wideMax:'760px'});
+  // 2-4) 그림 보고 맞추기 — 이야기 속 사진이 아니라, 그 "단어"에 맞는 그림(선생님이 미리 만들어둔 단어별 그림, words의 3번째 en|ko|img 항목)이
+  //      자동으로 나와요. 단어에 그림이 없으면 그 단어는 건너뛰고, 그림이 하나도 없으면 이 단계 자체가 생략돼요.
+  const picQuizWords=wordsPicPool.filter(w=>w.img);
+  const picQuiz=picQuizWords.map(correct=>{
+    const distractPool=picQuizWords.filter(w=>w.en.toLowerCase()!==correct.en.toLowerCase());
+    const distracts=shuffleArr(distractPool).slice(0,3);
+    const opts=shuffleArr([correct].concat(distracts));
+    return {correct,opts};
+  });
+  if(picQuiz.length){
+    slideAdd(b=>{
+      b.appendChild(el('span','badge green','Story · Words 4/4'));
+      b.appendChild(el('h1','title','그림 보고 맞추기'));
+      b.appendChild(el('div','hint','단어를 보고(눌러서 발음도 들어보고) 알맞은 그림을 골라보세요.'));
+      const grid=el('div');grid.style.cssText='display:flex;flex-direction:column;gap:18px;margin-top:14px';
+      picQuiz.forEach(q=>{
+        const row=el('div');row.style.cssText='display:flex;gap:16px;align-items:center;flex-wrap:wrap';
+        const wordBtn=el('button','btn ghost','🔊 '+q.correct.en);wordBtn.type='button';wordBtn.style.cssText='padding:10px 16px;font-size:15px;font-weight:700;border-radius:10px;cursor:pointer;min-width:110px';
+        wordBtn.onclick=()=>speakWord(q.correct.en);
+        row.appendChild(wordBtn);
+        const optWrap=el('div');optWrap.style.cssText='display:flex;gap:8px;flex-wrap:wrap';
+        const fb=el('span','fx');
+        q.opts.forEach(o=>{
+          const btn=el('button','btn ghost');btn.type='button';btn.style.cssText='padding:4px;border-radius:10px;cursor:pointer;line-height:0';
+          const oimg=document.createElement('img');oimg.src=fixDriveImageUrl(o.img);oimg.alt=o.en;
+          oimg.style.cssText='width:84px;height:84px;object-fit:cover;border-radius:8px;display:block';
+          btn.appendChild(oimg);
+          btn.onclick=()=>{
+            const ok=o.en.toLowerCase()===q.correct.en.toLowerCase();
+            btn.style.outline=ok?'3px solid #34b467':'3px solid #e0526b';
+            fb.className='fx '+(ok?'ok':'no');fb.textContent=ok?'정답이에요! 🎉':'다시 생각해보세요.';
+          };
+          optWrap.appendChild(btn);
+        });
+        row.appendChild(optWrap);row.appendChild(fb);
+        grid.appendChild(row);
+      });
+      b.appendChild(grid);
+    },{wide:true,wideMax:'900px'});
+  }
+  // 2) 그림 보기 + 질문(힌트) + 메모 (질문은 바로 보이지 않고 "💡 힌트 보기" 버튼을 눌러야 보여요)
+  //    단어를 먼저 익히고 온 다음이라, 이제 그림과 질문을 보면서 떠오르는 생각을 아래 메모장에
+  //    자유롭게 적어둘 수 있어요 — 이 메모는 "그림별 글쓰기" 화면에서 그대로 옆에 다시 보여줘서
+  //    미리 적어둔 생각(간단한 마인드맵처럼)을 참고해서 영작하도록 도와줘요.
+  slideAdd(b=>{b.appendChild(el('span','badge accent','Story · Look & Think'));
+    b.appendChild(el('h1','title',topic.title||topic.titleKo||''));
+    if(topic.intro)b.appendChild(el('div','lead',topic.intro));
+    const grid=el('div');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:14px';
+    pics.forEach((p,i)=>{
+      const card=el('div');card.style.cssText='background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06)';
+      if(p.imageUrl){
+        // 정사각형 박스로 보여줘요 — 선생님이 크롭 위치를 고를 때 쓰는 미리보기(buildCropPicker)도 정사각형이라,
+        // 학생 화면도 똑같이 정사각형이어야 선생님이 본 것과 같은 영역이 보여요. 예전엔 가로로 긴 고정 높이
+        // 박스(220px)를 썼는데, 그림판 배치에 따라 칸 너비가 서로 달라져서(그리드가 자동으로 줄바꿈되니까)
+        // "3~4등분" 조각처럼 여백(레터박스)이 있는 그림이 어떤 칸에서는 여백이 가려지고 어떤 칸에서는
+        // 그대로 드러나는 등 그림마다 다르게 잘려 보이는 문제가 있었어요.
+        const imgBox=el('div');imgBox.style.cssText='width:100%;aspect-ratio:1/1;overflow:hidden;background:#000;';
+        const img=document.createElement('img');img.src=fixDriveImageUrl(p.imageUrl);img.alt='picture '+(i+1);img.loading='lazy';
+        img.style.cssText='width:100%;height:100%;object-fit:cover;object-position:'+(p.crop||'center center')+';transform:scale('+zoomToScale(p.zoom)+');transform-origin:'+(p.crop||'center center')+';display:block';
+        imgBox.appendChild(img);
+        card.appendChild(imgBox);
+      }
+      const body=el('div');body.style.cssText='padding:10px 12px';
+      body.appendChild(el('div','fl','Picture '+(i+1)));
+      if(p.questions&&p.questions.length){
+        const hintBtn=el('button','btn ghost','💡 힌트 보기');hintBtn.type='button';hintBtn.style.cssText='padding:5px 10px;font-size:12px;margin-top:6px';
+        const ul=el('ul');ul.style.cssText='display:none;margin:6px 0 0;padding-left:18px;font-size:13.5px;color:#4a5160;line-height:1.6';
+        p.questions.forEach(q=>{const li=document.createElement('li');li.textContent=q;ul.appendChild(li);});
+        let shown=false;
+        hintBtn.onclick=()=>{shown=!shown;ul.style.display=shown?'block':'none';hintBtn.textContent=shown?'🙈 힌트 숨기기':'💡 힌트 보기';};
+        body.appendChild(hintBtn);
+        body.appendChild(ul);}
+      const memoWrap=el('div');memoWrap.style.cssText='margin-top:8px';
+      memoWrap.appendChild(el('div','fl','📝 메모 (자유롭게 적어보세요)'));
+      const memoTa=el('textarea','in');memoTa.style.cssText='min-height:64px;font-size:13px';
+      memoTa.placeholder='이 그림을 보고 떠오르는 내용을 자유롭게 적어보세요.';
+      memoTa.value=ST.memos[i]||'';
+      memoTa.addEventListener('input',()=>{ST.memos[i]=memoTa.value;saveMemo();});
+      memoWrap.appendChild(memoTa);
+      body.appendChild(memoWrap);
+      memoTas[i]=memoTa;
+      card.appendChild(body);grid.appendChild(card);
+    });
+    b.appendChild(grid);
+  },{wide:true,wideMax:'1400px'});
+  // 3) 그림별 글쓰기 + 실시간 이야기 합치기
+  let bannerSlot;
+  let allPicsWritten=()=>false; // 아래 slideAdd 안에서 실제 텍스트영역들을 알게 되면 다시 정의돼요.
+  let renderPicRef=()=>{}; // 마찬가지로 아래 slideAdd 안에서 실제 renderPic으로 다시 정의돼요.
+  slideAdd(b=>{
+    b.appendChild(el('span','badge accent','Story · Write'));
+    b.appendChild(el('h1','title','Write Your Story'));
+    bannerSlot=el('div');b.appendChild(bannerSlot);
+    const saveRow=el('div');saveRow.style.cssText='margin:6px 0 12px;display:flex;align-items:center;gap:8px';
+    const saveBtn=el('button','btn ghost','💾 임시 저장');saveBtn.type='button';saveBtn.style.cssText='padding:6px 12px;font-size:13px';
+    const saveMsg=el('span','fx');saveRow.appendChild(saveBtn);saveRow.appendChild(saveMsg);b.appendChild(saveRow);
+    const connBar=el('div');connBar.style.cssText='display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px';
+    connBar.appendChild(el('span','hint','🔗 연결어:'));
+    let lastFocusedTa=null;
+    STORY_CONNECTORS.forEach(c=>{
+      const cb=el('button','btn ghost',c.en+' <span style="opacity:.6;font-size:11px">'+c.ko+'</span>');cb.type='button';
+      cb.style.cssText='padding:4px 10px;font-size:12px';
+      cb.onclick=()=>{
+        const ta=lastFocusedTa||tas[0];if(!ta)return;
+        const start=ta.selectionStart||0,end=ta.selectionEnd||0;
+        ta.value=ta.value.slice(0,start)+c.en+' '+ta.value.slice(end);
+        const newPos=start+c.en.length+1;
+        ta.focus();ta.selectionStart=ta.selectionEnd=newPos;
+        ta.dispatchEvent(new Event('input'));
+      };
+      connBar.appendChild(cb);
+    });
+    b.appendChild(buildDictPanel());
+    b.appendChild(connBar);
+    // 그림을 한 장씩 크게 보여주고 화살표(◀ ▶)로 넘겨가며 쓰도록 바꿨어요 — 그림이 작게 여러 장
+    // 나열돼 있으면 잘려 보이기도 하고 한 번에 집중하기 어려워서예요. 그림은 자르지 않고(object-fit:contain)
+    // 원본 비율 그대로 다 보이게 했어요.
+    const nav2=el('div');nav2.style.cssText='display:flex;align-items:center;justify-content:center;margin-bottom:8px';
+    const picLabel=el('div','fl','Picture 1 / '+pics.length);picLabel.style.cssText='font-size:15px';
+    nav2.appendChild(picLabel);
+    b.appendChild(nav2);
+    // 그림 상자를 화면 높이에 맞춰 최대한 크게 보여주되, 그림의 실제 가로세로 비율 그대로
+    // 딱 맞는 크기로 만들어서(자르지 않고) 불필요한 검은 여백이 남지 않게 해요. 이전/다음 화살표는
+    // 그림 양옆에 남는 빈 공간을 채우는 큰 버튼으로 만들어서(flex:1로 남는 폭을 나눠 가져요) 누르기
+    // 편하고, 옆에 노는 공간이 없게 했어요.
+    // prevPicBtn/nextPicBtn은 picNavRow 안에 항상 떠 있고(그림이 없는 컷이어도 이전/다음은 계속 눌러야
+    // 하니까요), 그림 상자(imgBox)만 그림이 있을 때만 보였다 사라져요.
+    // 화살표는 (예전에 크게 만들었다가) 다시 작은 동그란 버튼으로 줄였어요 — 대신 오른쪽에 남는 공간에는
+    // "그림별 글쓰기"에 도움 되도록, 그 그림에서 나온 단어와(있으면) Look & Think 화면에서 적어둔 메모를
+    // 보여주는 참고 카드를 넣었어요.
+    const picNavRow=el('div');picNavRow.style.cssText='display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:10px;flex-wrap:wrap';
+    const NAV_BTN_STYLE='width:40px;height:40px;min-width:40px;flex:0 0 auto;border-radius:50%;font-size:16px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0;color:#fff;border:none;box-shadow:var(--shadow-sm);cursor:pointer';
+    const prevPicBtn=el('button','','◀');prevPicBtn.type='button';prevPicBtn.title='이전 그림';prevPicBtn.style.cssText=NAV_BTN_STYLE+';background:linear-gradient(120deg,var(--accent),var(--accent-2))';
+    const leftCol=el('div');leftCol.style.cssText='display:flex;align-items:center;flex:0 0 auto';
+    leftCol.appendChild(prevPicBtn);
+    const imgBox=el('div');imgBox.style.cssText='display:flex;flex:0 0 auto;overflow:hidden;background:#000;border-radius:12px;max-width:100%';
+    const img=document.createElement('img');img.alt='';img.style.cssText='width:100%;height:100%;display:block;object-fit:contain';
+    imgBox.appendChild(img);
+    const nextPicBtn=el('button','','▶');nextPicBtn.type='button';nextPicBtn.title='다음 그림';nextPicBtn.style.cssText=NAV_BTN_STYLE+';background:linear-gradient(120deg,var(--accent),var(--accent-2))';
+    const refPanel=el('div');refPanel.style.cssText='width:200px;max-width:42vw;background:#f6f7fb;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.5;max-height:420px;overflow:auto;text-align:left';
+    const rightCol=el('div');rightCol.style.cssText='display:flex;flex-direction:column;align-items:center;gap:8px;flex:0 0 auto';
+    rightCol.appendChild(nextPicBtn);rightCol.appendChild(refPanel);
+    picNavRow.appendChild(leftCol);picNavRow.appendChild(imgBox);picNavRow.appendChild(rightCol);
+    b.appendChild(picNavRow);
+    let curBorders=null,curToken=0;
+    // curBorders가 있으면(검정 여백을 찾았으면) 그 부분을 화면 밖으로 밀어내서(overflow:hidden으로 잘라서)
+    // 실제 그림 내용만 상자에 꽉 차게 보여주고, 없으면 예전처럼 원본 전체를 그대로(object-fit:contain) 보여줘요.
+    const fitImgBox=()=>{
+      const nw=img.naturalWidth,nh=img.naturalHeight;
+      if(!nw||!nh)return;
+      // 양옆(작은 버튼 + 오른쪽 참고 카드)이 실제로 차지하는 폭을 빼고, 남는 폭 안에서 그림을 최대한
+      // 크게 맞춰요 — 참고 카드가 그림을 밀어내지 않게 하기 위해서예요.
+      const sideW=(leftCol.offsetWidth||40)+(rightCol.offsetWidth||200)+40;
+      const wrapW=Math.max(200,(picNavRow.clientWidth||900)-sideW);
+      const targetH=Math.min(window.innerHeight*0.58,520);
+      if(curBorders){
+        const bd=curBorders;
+        const cw=nw*(1-bd.left-bd.right),ch=nh*(1-bd.top-bd.bottom);
+        let h=targetH,scale=h/ch,w=cw*scale;
+        if(w>wrapW){w=wrapW;scale=w/cw;h=ch*scale;}
+        if(h<200){h=200;scale=h/ch;w=Math.min(cw*scale,wrapW);}
+        imgBox.style.width=w+'px';imgBox.style.height=h+'px';
+        img.style.objectFit='none';
+        img.style.width=(nw*scale)+'px';img.style.height=(nh*scale)+'px';
+        img.style.transform='translate('+(-bd.left*nw*scale)+'px,'+(-bd.top*nh*scale)+'px)';
+      }else{
+        let h=targetH,w=h*(nw/nh);
+        if(w>wrapW){w=wrapW;h=w*(nh/nw);}
+        if(h<200){h=200;w=Math.min(h*(nw/nh),wrapW);}
+        imgBox.style.width=w+'px';imgBox.style.height=h+'px';
+        img.style.objectFit='contain';img.style.width='100%';img.style.height='100%';img.style.transform='none';
+      }
+    };
+    const showPic=(url)=>{
+      curBorders=null;
+      const token=++curToken;
+      const onReady=()=>{
+        if(token!==curToken)return;
+        fitImgBox();
+        detectBlackBorders(url).then(res=>{if(token!==curToken)return;if(res){curBorders=res;fitImgBox();}});
+      };
+      img.onload=onReady;
+      img.src=url;
+      if(img.complete&&img.naturalWidth)onReady();
+    };
+    window.addEventListener('resize',fitImgBox);
+    const tas=pics.map(()=>{const ta=addWordCount(el('textarea','in'));ta.style.minHeight='110px';ta.addEventListener('focus',()=>{lastFocusedTa=ta;});return ta;});
+    const taSlot=el('div');b.appendChild(taSlot);
+    let writeIdx=0;
+    const renderPic=()=>{
+      const p=pics[writeIdx];
+      picLabel.textContent='Picture '+(writeIdx+1)+' / '+pics.length;
+      const isFirst=writeIdx===0,isLast=writeIdx===pics.length-1;
+      prevPicBtn.disabled=isFirst;
+      prevPicBtn.style.opacity=isFirst?'.35':'1';prevPicBtn.style.cursor=isFirst?'not-allowed':'pointer';
+      nextPicBtn.disabled=isLast;
+      if(isLast){
+        // 더 넘길 그림이 없는 마지막 그림에서는 "▶"가 아니라 초록색 "✓"로 바꿔서
+        // 색만 봐도(주황=계속 진행, 초록=끝) 여기서 그림 넘기기는 끝났다는 걸 바로 알 수 있게 해요.
+        nextPicBtn.innerHTML='✓';nextPicBtn.title='마지막 그림이에요';
+        nextPicBtn.style.background='linear-gradient(120deg,var(--green),#1f8a5c)';nextPicBtn.style.opacity='1';nextPicBtn.style.cursor='not-allowed';
+      }else{
+        nextPicBtn.innerHTML='▶';nextPicBtn.title='다음 그림';
+        nextPicBtn.style.background='linear-gradient(120deg,var(--accent),var(--accent-2))';nextPicBtn.style.opacity='1';nextPicBtn.style.cursor='pointer';
+      }
+      // 오른쪽 참고 카드: 이 그림을 볼 때 Look & Think에서 적어둔 메모 + 이 그림에서 나온 단어를 보여줘요.
+      const memoVal=(ST.memos&&ST.memos[writeIdx]||'').trim();
+      const words=(p.words||[]).filter(w=>w&&w.en);
+      let refHtml='';
+      if(memoVal)refHtml+='<div style="font-weight:800;margin-bottom:4px">📝 내 메모</div><div style="white-space:pre-wrap;color:#4a5160;margin-bottom:10px">'+escH(memoVal)+'</div>';
+      if(words.length)refHtml+='<div style="font-weight:800;margin-bottom:4px">📚 이 그림 단어</div><ul style="margin:0;padding-left:16px;color:#4a5160">'+words.map(w=>'<li>'+escH(w.en)+(w.ko?(' - '+escH(w.ko)):'')+'</li>').join('')+'</ul>';
+      refPanel.innerHTML=refHtml||'<div style="color:#9aa1ad">참고할 메모나 단어가 없어요.</div>';
+      if(p.imageUrl){imgBox.style.display='flex';showPic(fixDriveImageUrl(p.imageUrl));}else{imgBox.style.display='none';}
+      taSlot.innerHTML='';
+      const ta=tas[writeIdx];
+      ta.placeholder='Write 1-2 sentences about this picture in English.';
+      taSlot.appendChild(ta);lastFocusedTa=ta;ta.focus();
+    };
+    renderPicRef=renderPic;
+    prevPicBtn.onclick=()=>{if(writeIdx>0){writeIdx--;renderPic();}};
+    nextPicBtn.onclick=()=>{if(writeIdx<pics.length-1){writeIdx++;renderPic();}};
+    renderPic();
+    b.appendChild(el('div','fl','Story So Far'));
+    const storyBox=el('div');storyBox.style.cssText='background:#f6f7fb;border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.7;min-height:60px;white-space:pre-wrap';
+    b.appendChild(storyBox);
+    const wcEl=el('div','hint');wcEl.style.cssText='margin-top:6px';b.appendChild(wcEl);
+    const refresh=()=>{ST.texts=tas.map(t=>t.value);storyBox.textContent=ST.texts.filter(Boolean).join(' ')||'(Nothing written yet)';
+      const wc=countWords(ST.texts.filter(Boolean).join(' '));
+      if(topic.minWords>0){wcEl.textContent='현재 '+wc+'단어 / 목표 '+topic.minWords+'단어';wcEl.style.color=wc>=topic.minWords?'#2e9e5b':'#8a8f9c';}
+      else{wcEl.textContent='현재 '+wc+'단어';wcEl.style.color='#8a8f9c';}};
+    const doAutosave=debounce(()=>{saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='자동 저장됨';},2500);
+    // 그림 4개(전체)를 다 쓰기 전에는 화면 오른쪽 아래의 전체 "다음 ▶" 버튼을 눌러도 다음 단계
+    // (체크리스트/제출 화면)로 못 넘어가게 잠가둬요 — 그림별 글쓰기를 빠짐없이 끝냈는지 확인시키기 위해서예요.
+    allPicsWritten=()=>tas.every(t=>t.value.trim().length>0);
+    // nextB(화면 우측 아래 "다음 ▶")는 모든 슬라이드가 같이 쓰는 버튼이라, 지금 이 "그림별 글쓰기"
+    // 화면이 실제로 열려있을 때만 그 상태를 건드려야 해요 — 안 그러면 아직 이 화면에 오지도 않았는데
+    // (예: 초기 셋업 중 자동으로 실행되는 임시 저장 불러오기 콜백에서) 다른 화면의 다음 버튼까지
+    // 잘못 잠가버릴 수 있어요.
+    const refreshNextLock=()=>{if(slides[idx]&&slides[idx]._box===b)nextB.disabled=(idx===slides.length-1)||!allPicsWritten();};
+    tas.forEach(ta=>{ta.addEventListener('input',()=>{refresh();doAutosave();refreshNextLock();});ta.addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});});
+    saveBtn.onclick=()=>{refresh();saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='저장했어요! 나중에 이어서 쓸 수 있어요.';};
+    refresh();
+    (async()=>{
+      const found=await fetchDraft(DRAFT_CHAPTER,DRAFT_POINT);
+      if(found&&found.obj&&found.obj.texts&&ST.texts.every(t=>!t.trim())){
+        ST.texts=found.obj.texts;tas.forEach((ta,i)=>ta.value=ST.texts[i]||'');refresh();
+        if(found.obj.memos){ST.memos=found.obj.memos;memoTas.forEach((mt,i)=>{if(mt)mt.value=ST.memos[i]||'';});}
+        bannerSlot.appendChild(draftBanner(found.savedAt));
+      }
+      refreshNextLock();
+    })();
+  },{wide:true,wideMax:'1400px',lock:()=>!allPicsWritten(),onEnter(){renderPicRef();}});
+  // (예시 이야기 슬라이드는 없앴어요 — 학생이 미리 정답 예시를 보고 베끼는 걸 막기 위해서예요.
+  //  topic.sampleText 데이터 자체는 그대로 남아있으니 필요하면 나중에 다시 켤 수 있어요.)
+  // 5) 체크리스트 + 점수 + 제출
+  const conds=[
+    {label:'모든 그림에 대해 썼어요',test:()=>ST.texts.filter(t=>t&&t.trim()).length>=pics.length},
+    {label:'문장이 대문자로 시작해요',test:()=>ST.texts.filter(Boolean).every(t=>t.split(/[.!?]\s+/).filter(s=>s.trim()).every(s=>/^[A-Z]/.test(s.trim())))},
+    {label:'문장이 마침표로 끝나요',test:()=>ST.texts.filter(Boolean).every(t=>/[.!?]\s*$/.test(t.trim()))}
+  ];
+  if(topic.minWords>0){
+    conds.push({label:'그림들을 합쳐서 총 '+topic.minWords+'단어 이상 쓰기',test:()=>countWords(ST.texts.filter(Boolean).join(' '))>=topic.minWords});
+  }
+  slideAdd(b=>{b.appendChild(el('span','badge green','Story · Result'));b.appendChild(el('h1','title','체크리스트 & 제출'));
+    const rec=createRecorderWidget(); // 재진입해도 녹음 내용이 유지되도록 render() 밖(한 번만)에서 만들어요.
+    const render=()=>{b.querySelectorAll('.rep').forEach(x=>x.remove());
+      const fullText=ST.texts.filter(Boolean).join(' ');
+      const ul=el('ul','conds rep');conds.forEach(c=>{const ok=c.test();const li=el('li',ok?'pass':'fail','<span class="mk">'+(ok?'✓':'✕')+'</span>'+c.label);ul.appendChild(li);});b.appendChild(ul);
+      const okCount=conds.filter(c=>c.test()).length,total=conds.length;
+      const score=total?Math.round(okCount/total*100):0;const gr=score>=90?'A':score>=80?'B':score>=70?'C':'D';
+      const hero=el('div','scorehero rep');hero.innerHTML='<div class="big">'+score+'<small>/100</small></div><div class="grade '+gr+'">'+gr+' 등급</div>';b.appendChild(hero);
+      const studyMs=Date.now()-storyStart;
+      const rtime=el('div','rrow rep');rtime.innerHTML='<span class="rl">학습 시간</span><span class="rn">'+fmtDur(studyMs)+'</span>';b.appendChild(rtime);
+      b.appendChild(rec.el);
+      const btnRow=el('div','rep');btnRow.style.cssText='margin-top:16px;display:flex;gap:10px;flex-wrap:wrap';
+      const sub=el('button','btn green','선생님께 제출');const dl=el('button','btn ghost','글 저장(.txt)');btnRow.appendChild(sub);btnRow.appendChild(dl);b.appendChild(btnRow);
+      const msg=el('div','rep hint','제출하면 관리자(선생님)가 글을 읽고 첨삭을 남길 수 있어요.');b.appendChild(msg);
+      const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());
+        const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];const studyTimeStr=fmtDur(studyMs);
+        const prog=`체크리스트 ${okCount}/${total} · 학습시간 ${studyTimeStr}`;
+        const payload={book:lv.book,chapter:'Story Writing',point:topic.title||topic.id,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Story Writing',topic.title||topic.id),datetime:dt,
+          quiz:'',arrange:'',compose:'',task:okCount+'/'+total,final:fullText,total:okCount+'/'+total,score:score,grade:gr,progress:prog,studyTime:studyTimeStr};
+        const txt=['English Writing Lab · Story Writing',topic.title||topic.id,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'학습 시간: '+studyTimeStr,'',
+          '[작성한 이야기]',fullText||'(작성 없음)','','총점 '+score+'/100 ('+gr+') · 체크 '+okCount+'/'+total].join('\n');
+        return{payload,txt};};
+      dl.onclick=()=>{const {txt}=build();const blob=new Blob(['﻿'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='PictureStory_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
+      sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
+        const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
+        if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;triggerAiFeedbackNow(payload.subId,payload.academy);}catch(e){}}
+        if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_PictureStory_'+USER.name+'_'+topic.id+'.json';document.body.appendChild(a);a.click();a.remove();}
+        saveDone('ST-'+topic.id,payload.progress);sub.disabled=false;sub.textContent=sent?'제출 완료!':'제출 완료 (파일 저장됨)';
+        msg.innerHTML=sent?'관리자에게 전송되었어요.':'서버 주소가 없어 파일로 저장했어요. 선생님께 내면 됩니다.';
+        const hb=el('button','btn blue','← 홈으로');hb.style.marginTop='10px';hb.onclick=()=>{nav.classList.remove('on');viewHome();};b.appendChild(hb);};
+    };
+    b._onEnterReport=render;render();
+  });
+  slides[slides.length-1]._onEnter=function(){freezeStudyTimer();this._box._onEnterReport&&this._box._onEnterReport();};
+  deckStart();
+}
+
+/* report onEnter hook: re-render score on entering report slide */
+const _deckShow=deckShow;
+deckShow=function(i){_deckShow(i);const s=slides[idx];if(s&&s._box){if(s._box._onEnterReport)s._box._onEnterReport();}};
+
+/* ================= 컨텐츠 실시간 불러오기 =================
+   예전에는 문법 드릴·문단 쓰기·기사 요약·수행평가·그림 이야기·레벨·패턴챕터 데이터가 이 파일 안에
+   통째로 구워져 있어서(GEN=[...] 처럼), 구글 시트에서 "🔄 사이트에 반영하기"를 눌러야만 최신 내용이
+   반영됐어요. 그러다 보니 (1) 시트를 고쳐도 반영을 안 누르면 학생 화면엔 안 보이고, (2) 기능이 업데이트돼서
+   새 파일을 GitHub에 올리면 그 파일에 구워져 있던 예전 데이터로 잠깐 되돌아가 보이는 문제가 있었어요.
+   이제는 사이트가 켜질 때마다(로그인 화면이 뜨기 전에) 서버(Apps Script)에 있는 그대로를 실시간으로
+   받아와서 채워 넣어요 — 시트를 고치면 새로고침만 해도 바로 반영되고, 코드를 업데이트해도 데이터가
+   전혀 흔들리지 않아요. 서버에서 못 받아오면(네트워크 오류 등) 조용히 건너뛰고, 코드에 원래 내장된
+   기본 커리큘럼(레벨1~3의 기존 챕터 등)만으로 계속 쓸 수 있게 해요. */
+async function loadLiveContent(){
+  let contentChanged=false;
+  try{
+    const res=await fetch(SUBMIT_URL+'?view=content&_t='+Date.now(),{method:'GET',cache:'no-store'});
+    const data=await res.json();
+    if(data&&data.ok){
+      if(Array.isArray(data.levels))LEVELS_DATA=data.levels;
+      if(Array.isArray(data.patternStructure))PATTERN_STRUCTURE_DATA=data.patternStructure;
+      if(Array.isArray(data.gen))GEN=data.gen;
+      if(Array.isArray(data.genpara))GENPARA=data.genpara;
+      if(Array.isArray(data.genarticle))GENARTICLE=data.genarticle;
+      if(Array.isArray(data.genexam))GENEXAM=data.genexam;
+      if(Array.isArray(data.story))GENSTORY=data.story;
+      if(typeof data.drillMinWords==='number'&&data.drillMinWords>=0)DRILL_MIN_WORDS=data.drillMinWords;
+      if(typeof data.drillMinSentences==='number'&&data.drillMinSentences>=0)DRILL_MIN_SENTENCES=data.drillMinSentences;
+      saveContentCache();
+      contentChanged=(window._contentSig!==undefined&&window._contentSig!==contentSig_(data));
+      window._contentSig=contentSig_(data);
+    }
+  }catch(e){
+    console.warn('컨텐츠를 실시간으로 불러오지 못했어요(기본 커리큘럼만 사용해요):',e);
+  }
+  remergeContent();
+  // 저장해 둔 예전 내용으로 먼저 홈을 그렸는데 그사이 선생님이 컨텐츠를 고쳤다면, 지금 홈 화면일 때 새 내용으로 다시 그려요
+  // (예전엔 로그아웃했다 들어와야만 바뀐 게 보였어요). 글 쓰는 중인 화면은 건드리지 않아요.
+  if(contentChanged&&USER&&USER.role==='student'&&document.querySelector('.hero'))enterHome();
+}
+function contentSig_(d){return JSON.stringify([d.levels,d.patternStructure,d.gen,d.genpara,d.genarticle,d.genexam,d.story]);}
+/* loadLiveContent()가 data.xxx를 GEN/GENPARA/... 전역 변수에 채운 뒤 항상 실행하던 "병합" 순서를
+   그대로 뽑아낸 거예요. 실시간 구독(onSnapshot)도 콘텐츠가 바뀔 때마다 이 함수를 다시 불러서
+   똑같은 방식으로 반영해요 — 병합 순서가 중요해요: 레벨/챕터 구조부터 먼저 자리를 잡아야, 그 위에
+   문법 드릴 등 실제 내용을 끼워 넣을 수 있어요. */
+function remergeContent(){
+  applyLevelsData();
+  pinStoryLevelFirst();
+  applyPatternStructureData();
+  mergeGen();
+  balanceAll();
+  mergePara();
+  mergeArticle();
+  mergeExam();
+  mergeStory();
+}
+
+/* ================= 실시간 콘텐츠 구독 =================
+   로그인(mintToken) 뒤 firebase 인증이 성공하면(fbSignedIn) 시작돼요. 선생님이 컨텐츠·레벨·패턴
+   챕터를 고치면, 지금까지는 "다른 화면으로 이동해야" 반영됐는데, 이제는 컬렉션이 바뀌는 순간
+   GEN/GENPARA/... 전역 변수가 바로 갱신돼요(화면을 강제로 다시 그리지는 않아요 — 기존에도
+   loadLiveContent()를 다시 불렀을 때 지금 보고 있는 화면을 억지로 새로고침하지 않고 다음 화면
+   이동 때 반영되게 해온 것과 같은 방식이라, 한창 글을 쓰는 중에 화면이 갑자기 바뀌는 일이 없어요). */
+const CONTENT_REALTIME_MAP=[
+  ['gen','ewl_content_pattern'],
+  ['genpara','ewl_content_paragraph'],
+  ['genarticle','ewl_content_article'],
+  ['genexam','ewl_content_exam'],
+  ['story','ewl_content_story'],
+  ['levels','ewl_levels'],
+  ['patternStructure','ewl_patternStructure'],
+  ['patternUnits','ewl_pattern_units']
+];
+let _contentUnsubs=[];
+let _contentRemergeTimer=null;
+function scheduleRemergeContent(){
+  // 여러 컬렉션이 거의 동시에 바뀌어도(예: 챕터+유닛을 같이 저장) 병합을 한 번만 다시 돌리게 살짝 묶어줘요.
+  if(_contentRemergeTimer)clearTimeout(_contentRemergeTimer);
+  _contentRemergeTimer=setTimeout(()=>{ _contentRemergeTimer=null; remergeContent(); },150);
+}
+function startRealtimeContent(){
+  stopRealtimeContent();
+  CONTENT_REALTIME_MAP.forEach(([key,colName])=>{
+    const unsub=fbDb.collection(colName).onSnapshot(snap=>{
+      const list=snap.docs.map(d=>Object.assign({id:d.id},d.data()));
+      if(key==='gen')GEN=list;
+      else if(key==='genpara')GENPARA=list;
+      else if(key==='genarticle')GENARTICLE=list;
+      else if(key==='genexam')GENEXAM=list;
+      else if(key==='story')GENSTORY=list;
+      else if(key==='levels')LEVELS_DATA=list;
+      else if(key==='patternStructure')PATTERN_STRUCTURE_DATA=list;
+      // patternUnits(ewl_pattern_units)는 지금 클라이언트 병합 로직이 따로 쓰지 않아서(패턴 챕터
+      // 문서 안에 유닛이 함께 들어있는 구조예요) 최신 목록만 받아두고 화면 반영은 하지 않아요.
+      scheduleRemergeContent();
+    },err=>{ console.warn('실시간 콘텐츠 구독 오류('+colName+'):',err); });
+    _contentUnsubs.push(unsub);
+  });
+}
+function stopRealtimeContent(){
+  _contentUnsubs.forEach(fn=>{try{fn();}catch(e){}});
+  _contentUnsubs=[];
+  if(_contentRemergeTimer){clearTimeout(_contentRemergeTimer);_contentRemergeTimer=null;}
+}
+
+/* ================= 화면마다 주소(#/…) 붙이기 =================
+   화면을 옮길 때마다 주소 뒤에 #/exam, #/students 같은 이름이 붙어요. 그래서 ① 새로고침해도 보던 화면으로 돌아오고,
+   ② 브라우저 뒤로가기/앞으로가기가 되고, ③ 그 주소를 북마크하거나 다른 선생님께 보낼 수 있어요.
+   (글을 쓰는 중인 화면·제출 상세처럼 값이 많이 필요한 화면은 주소가 바뀌지 않고, 새로고침하면 그 메뉴 화면으로 돌아와요.) */
+const ROUTES=[ // [함수 이름, 주소, 누가(s=학생, t=선생님), 주소에 붙일 값 개수]
+  ['viewHome','home','s',0],['viewPointMenu','pattern','s',0],['viewParaMenu','paragraph','s',0],['viewArticleMenu','article','s',0],
+  ['viewExamMenu','exam','s',0],['viewStoryMenu','story','s',0],['viewMyFeedback','feedback','s',0],['viewRewriteList','rewrite','s',0],
+  ['viewTeacherHome','teacher','t',0],['viewGradingManage','grading','t',0],['viewAiStats','stats','t',0],['viewReportStudentList','report','t',0],
+  ['viewContentAdd','content-add','t',0],['viewAiContentChatBot','content-ai','t',0],['viewContentEditPicker','content-edit','t',0],
+  ['viewContentEditList','content-list','t',1],['viewAddContentForm','content-form','t',2],['viewLevelManage','levels','t',0],
+  ['viewStudentManage','students','t',0],['viewTeacherManage','teachers','t',0],['viewReportSettings','report-settings','t',1],
+  ['viewTeacherStudent','student','t',2]
+];
+const ROUTE_BY_PATH={};
+let _routeSilent=false;
+/* 주소 방식: 인터넷(https)에서는 …/writing-lab/exam 처럼 슬래시로 나뉘는 진짜 주소를 쓰고,
+   내 컴퓨터에서 파일로 열었을 때(file://)만 …#/exam 방식으로 동작해요.
+   GitHub Pages는 없는 주소로 들어오면 404.html 을 보여주는데, 그 파일이 다시 이 페이지(?r=exam)로 보내주면
+   아래에서 주소창만 …/exam 으로 되돌려요(그래서 새로고침·북마크·주소 공유가 모두 돼요). */
+const ROUTE_PATHMODE=/^https?:$/.test(location.protocol);
+const ROUTE_BASE=(function(){
+  if(!ROUTE_PATHMODE)return '';
+  if(/\.github\.io$/i.test(location.hostname)){const seg=location.pathname.split('/')[1];return '/'+(seg&&seg.indexOf('.')<0?seg:'')+(seg&&seg.indexOf('.')<0?'/':'');}
+  return '/';
+})();
+(function(){try{
+  if(!ROUTE_PATHMODE)return;
+  const m=location.search.match(/[?&]r=([^&]*)/);
+  if(m){history.replaceState(null,'',ROUTE_BASE+decodeURIComponent(m[1])+location.hash);}
+}catch(e){}})();
+function routeNow_(){ // 지금 주소가 가리키는 화면 이름 (예: 'exam', 'student/abc/홍길동')
+  if(ROUTE_PATHMODE){let r=location.pathname;if(ROUTE_BASE&&r.indexOf(ROUTE_BASE)===0)r=r.slice(ROUTE_BASE.length);return r.replace(/^\/+|\/+$/g,'').replace(/^index\.html$/,'');}
+  return location.hash.replace(/^#\/?/,'');
+}
+function routeSet_(route){try{
+  const target=ROUTE_PATHMODE?(ROUTE_BASE+route):('#/'+route);
+  if(routeNow_()!==route)history.replaceState(history.state,'',target);
+}catch(e){}}
+function routeClear_(){try{if(routeNow_())history.replaceState(history.state,'',ROUTE_PATHMODE?ROUTE_BASE:location.pathname+location.search);}catch(e){}}
+function routeAllowed_(role){return role==='t'?(USER&&USER.role==='teacher'):(USER&&USER.role!=='teacher');}
+ROUTES.forEach(([name,path,role,nargs])=>{
+  const orig=window[name];
+  if(typeof orig!=='function')return;
+  ROUTE_BY_PATH[path]={name,orig,role,nargs};
+  window[name]=function(...a){
+    if(!_routeSilent&&USER&&USER.id&&routeAllowed_(role)){
+      const vals=a.slice(0,nargs).filter(v=>v!==undefined&&v!==null&&typeof v!=='object'&&typeof v!=='function').map(v=>encodeURIComponent(String(v)));
+      routeSet_([path].concat(vals).join('/')); // 기록을 새로 쌓지 않고 주소만 바꿔요(뒤로가기는 기존처럼 화면의 ◀ 버튼으로 동작)
+    }
+    const was=_routeSilent;_routeSilent=true; // 이 화면을 그리는 도중 안에서 불리는 다른 화면 함수는 주소를 바꾸지 않아요
+    try{return orig.apply(this,a);}finally{_routeSilent=was;}
+  };
+});
+const _origViewLogin=window.viewLogin;
+window.viewLogin=function(...a){routeClear_();return _origViewLogin.apply(this,a);};
+/* ---- 글쓰기·문제 풀이 화면도 주소를 가져요: pattern/<unit id>, paragraph/<id>, article/<id>, exam/<id>, story/<id> ----
+   새로고침하면 같은 글쓰기 화면이 다시 열리고, 쓰던 내용은 원래 있던 임시저장(초안) 기능으로 이어져요. */
+const ITEM_ROUTES=[['runDrill','pattern','P'],['runParagraph','paragraph','T'],['runArticle','article','T'],['runExam','exam','T'],['runStory','story','T']];
+const ITEM_ORIG={};
+function findItem_(kind,id){
+  id=String(id);
+  const scanMap=(map)=>{for(const lv of Object.keys(map||{})){const f=(map[lv]||[]).find(x=>x&&String(x.id)===id);if(f)return {item:f,level:lv};}return null;};
+  if(kind==='pattern'){
+    for(const l of LEVELS){for(const c of (l.chapters||[])){const i=(c.points||[]).findIndex(p=>p&&String(p.id)===id);if(i>=0)return {item:c.points[i],level:l.id,pts:c.points,idx:i};}}
+    return null;
+  }
+  return scanMap(kind==='paragraph'?PARA:kind==='article'?ARTICLE:kind==='exam'?EXAM:STORY);
+}
+ITEM_ROUTES.forEach(([fn,kind])=>{
+  const orig=window[fn];if(typeof orig!=='function')return;
+  ITEM_ORIG[kind]=orig;
+  window[fn]=function(...a){
+    const it=a[0];
+    if(!_routeSilent&&USER&&USER.id&&!TEACHER_PREVIEW&&USER.role!=='teacher'&&it&&it.id!==undefined)routeSet_(kind+'/'+encodeURIComponent(String(it.id)));
+    const was=_routeSilent;_routeSilent=true;
+    try{return orig.apply(this,a);}finally{_routeSilent=was;}
+  };
+});
+function runItemRoute_(kind,id){
+  const f=findItem_(kind,id);if(!f||!f.item)return false;
+  if(f.level&&LEVELS.some(l=>l.id===f.level)&&kind!=='exam')curLevel=f.level;
+  _routeSilent=true;
+  try{
+    if(kind==='pattern'){const P=loadProg();window.runDrill(f.item,{review:!!P[f.item.id],chapterPoints:f.pts,pointIndex:f.idx});}
+    else if(kind==='paragraph')window.runParagraph(f.item);
+    else if(kind==='article')window.runArticle(f.item);
+    else if(kind==='exam')window.runExam(f.item);
+    else window.runStory(f.item);
+  }catch(e){_routeSilent=false;return false;}
+  _routeSilent=false;
+  return true;
+}
+/* ---- Re-Writing 쓰기 화면(학생)과 제출물 상세 화면(선생님)도 주소를 가져요 ----
+   rewrite-write/<제출 번호>, submission/<학생 id>/<학생 이름>/<제출 번호> */
+(function(){
+  const rw=window.viewRewriteWrite;
+  if(typeof rw==='function')window.viewRewriteWrite=function(...a){
+    const sub=a[0];
+    if(!_routeSilent&&USER&&USER.id&&USER.role!=='teacher'&&sub&&sub.subId)routeSet_('rewrite-write/'+encodeURIComponent(String(sub.subId)));
+    const was=_routeSilent;_routeSilent=true;
+    try{return rw.apply(this,a);}finally{_routeSilent=was;}
+  };
+  const sd=window.viewTeacherSubmissionDetail;
+  if(typeof sd==='function')window.viewTeacherSubmissionDetail=function(...a){
+    const sub=a[0],sid=a[1],sname=a[2];
+    if(!_routeSilent&&USER&&USER.id&&USER.role==='teacher'&&sub&&sub.subId&&sid)routeSet_('submission/'+encodeURIComponent(String(sid))+'/'+encodeURIComponent(String(sname||''))+'/'+encodeURIComponent(String(sub.subId)));
+    const was=_routeSilent;_routeSilent=true;
+    try{return sd.apply(this,a);}finally{_routeSilent=was;}
+  };
+})();
+function runRewriteWriteRoute_(subId){
+  window.viewRewriteList();routeSet_('rewrite-write/'+encodeURIComponent(String(subId))); // 불러오는 동안 목록을 먼저 보여줘요
+  (async()=>{
+    try{
+      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+      const data=await res.json();
+      const subs=(data&&data.ok)?(data.submissions||[]):[];
+      const s=subs.find(x=>String(x.subId)===String(subId));
+      if(!s){routeSet_('rewrite');return;}
+      let dn=null;
+      subs.forEach(x=>{if(String(x.chapter||'')==='Rewriting'&&String(x.point||'')===String(s.point||s.chapter||'')&&(!dn||String(x.datetime||'')>String(dn.datetime||'')))dn=x;});
+      _routeSilent=true;try{window.viewRewriteWrite(s,dn||undefined);}finally{_routeSilent=false;}
+      routeSet_('rewrite-write/'+encodeURIComponent(String(subId)));
+    }catch(e){routeSet_('rewrite');}
+  })();
+}
+function runRoute(hash){
+  const m=String(hash||'').replace(/^#\/?/,'').split('/').map(x=>{try{return decodeURIComponent(x);}catch(e){return x;}});
+  if(m[0]==='rewrite-write'&&m[1]){
+    if(!USER||!USER.id||!routeAllowed_('s'))return false;
+    runRewriteWriteRoute_(m[1]);return true;
+  }
+  if(m[0]==='submission'&&m[1]&&m[3]){
+    if(!USER||!USER.id||!routeAllowed_('t'))return false;
+    _routeSilent=true;try{restoreTeacherSubmissionDetail(m[1],m[2],m[3]);}finally{_routeSilent=false;}
+    routeSet_('submission/'+[m[1],m[2],m[3]].map(encodeURIComponent).join('/'));
+    return true;
+  }
+  if(m[1]&&ITEM_ORIG[m[0]]){
+    if(!USER||!USER.id||!routeAllowed_('s'))return false;
+    if(runItemRoute_(m[0],m.slice(1).join('/')))return true;
+    // 글을 못 찾으면(아직 컨텐츠를 못 받았거나 사라졌으면) 그 위 메뉴 화면으로 열어요.
+    const pr=ROUTE_BY_PATH[m[0]];if(pr){_routeSilent=true;try{pr.orig();}finally{_routeSilent=false;}routeSet_(m[0]);return true;}
+    return false;
+  }
+  const r=ROUTE_BY_PATH[m[0]];
+  if(!r||!USER||!USER.id||!routeAllowed_(r.role))return false;
+  _routeSilent=true;
+  try{r.orig.apply(null,m.slice(1,1+r.nargs).map(v=>v===''?undefined:v));}catch(e){_routeSilent=false;return false;}
+  _routeSilent=false;
+  return true;
+}
+window.addEventListener('hashchange',()=>{
+  if(ROUTE_PATHMODE)return;
+  if(!USER||!USER.id)return;
+  if(!runRoute(routeNow_())&&!routeNow_())enterHome();
+});
+
+/* ================= start ================= */
+(async function boot(){
+  // 예전엔 매번 새로고침할 때마다 커리큘럼 전체(레벨·패턴·수행평가 등)를 서버에서 다 받아올 때까지
+  // 화면이 하얗게 비어있었어요(보통 1초 정도) — 그 사이엔 딱히 보여줄 데이터가 없어서 "불러오는
+  // 중" 문구를 띄우거나 아예 하얗게 비워두거나 둘 중 하나였어요. 이제 이전에 받아둔 컨텐츠가
+  // 로컬에 캐시돼 있으면 그걸로 즉시 화면부터 그리고, 최신 내용은 뒤에서 조용히 받아와 반영해요
+  // (컨텐츠가 실제로 바뀌었을 때만 remergeContent가 다시 계산해요 — 화면을 억지로 새로고침하진
+  // 않아요). 캐시가 아예 없는 첫 방문(이 브라우저에서 처음 여는 경우)에만 예전처럼 기다려요.
+  const cachedContent=loadContentCache();
+  const hasCachedContent=!!(cachedContent&&(cachedContent.levels||cachedContent.gen||cachedContent.genpara||cachedContent.genarticle||cachedContent.genexam||cachedContent.story));
+  if(hasCachedContent){
+    if(Array.isArray(cachedContent.levels))LEVELS_DATA=cachedContent.levels;
+    if(Array.isArray(cachedContent.patternStructure))PATTERN_STRUCTURE_DATA=cachedContent.patternStructure;
+    if(Array.isArray(cachedContent.gen))GEN=cachedContent.gen;
+    if(Array.isArray(cachedContent.genpara))GENPARA=cachedContent.genpara;
+    if(Array.isArray(cachedContent.genarticle))GENARTICLE=cachedContent.genarticle;
+    if(Array.isArray(cachedContent.genexam))GENEXAM=cachedContent.genexam;
+    if(Array.isArray(cachedContent.story))GENSTORY=cachedContent.story;
+    if(typeof cachedContent.drillMinWords==='number')DRILL_MIN_WORDS=cachedContent.drillMinWords;
+    if(typeof cachedContent.drillMinSentences==='number')DRILL_MIN_SENTENCES=cachedContent.drillMinSentences;
+    window._contentSig=contentSig_(cachedContent);
+    remergeContent();
+  }else{
+    await loadLiveContent();
+  }
+  const sess=loadSession();
+  if(sess&&sess.id){
+    USER=Object.assign({id:'',name:'',role:'student',school:'',schoolGrade:'',cls:'',academy:'',isAdmin:false,isAcademyAdmin:false,isTestAccount:false},sess);
+    // 새로고침 등으로 로그인 상태가 복원될 때도, 캐시에 저장된 반→레벨 매핑으로 바로 그 학생의 레벨 홈으로 맞춰줘요.
+    if(USER.role==='student'){
+      const cached=loadRosterCache();
+      CLASS_LEVELS=(cached&&cached.classLevels&&typeof cached.classLevels==='object')?cached.classLevels:{};
+      applyClassLevel(USER.cls);
+    }
+    applySessionUI();
+    if(runRoute(routeNow_())){
+      // 주소(#/…)가 가리키는 화면으로 바로 열었어요.
+    }else if(USER.role==='teacher'){
+      const savedNav=loadTeacherNav();
+      if(savedNav&&savedNav.studentId){
+        try{
+          if(savedNav.subId){ restoreTeacherSubmissionDetail(savedNav.studentId,savedNav.studentName,savedNav.subId); }
+          else{ viewTeacherStudent(savedNav.studentId,savedNav.studentName); }
+        }
+        catch(e){ enterHome(); }
+      }else{
+        enterHome();
+      }
+    }else{
+      enterHome();
+    }
+    // 로그인 상태로 남아 있던 학생이 그 사이 휴원·퇴원 처리됐으면 로그아웃시켜요.
+    fetchRoster().then(r=>{
+      if(USER.role!=='student')return;
+      const me=((r&&r.students)||[]).find(x=>String(x.id)===String(USER.id));
+      if(me&&isInactiveStudent(me)){logoutBtn.onclick();return;}
+      // 로그인 상태가 계속 유지되는 동안 선생님이 학교·학년·반을 고치면, 예전 값이 세션에 남아서 새로 공개한
+      // 콘텐츠(대상 학교/학년/반)가 안 보이는 문제가 있었어요. 접속할 때마다 최신 명단 값으로 맞춰줘요.
+      if(me){
+        const fresh={school:me.school||'',schoolGrade:me.schoolGrade||'',cls:me.cls||'',academy:me.academy||'',isTestAccount:!!String(me.isTestAccount||'').trim()};
+        const changed=Object.keys(fresh).some(k=>String(USER[k]||'')!==String(fresh[k]));
+        const lvBefore=curLevel;
+        if(changed){ Object.assign(USER,fresh); saveSession(); }
+        // 반→레벨 연결을 선생님이 바꿨을 수도 있어서, 학생 정보가 안 바뀌었어도 최신 명단 기준으로 다시 맞춰요.
+        applyClassLevel(USER.cls);
+        if((changed||curLevel!==lvBefore)&&document.querySelector('.hero'))enterHome(); // 지금 홈 화면이면 새 값으로 다시 그려요.
+      }
+    }).catch(()=>{});
+  }else{
+    viewLogin();
+  }
+  if(hasCachedContent)loadLiveContent().catch(()=>{}); // 캐시로 먼저 그린 뒤, 최신 내용은 뒤에서 조용히 갱신해요.
+})();

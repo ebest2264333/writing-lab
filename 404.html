@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>English Writing Lab</title>
+<script>
+/* GitHub Pages는 …/writing-lab/exam 처럼 실제 파일이 없는 주소로 들어오면 이 파일(404.html)을 보여줘요.
+   여기서 곧바로 …/writing-lab/?r=exam 으로 보내면, index.html 이 주소창을 다시 …/writing-lab/exam 으로 바꿔서
+   해당 화면을 열어줘요. (저장소 이름이 writing-lab 하나 깊이라서 segment=1 이에요.) */
+(function(){
+  var segment=1,l=window.location;
+  var parts=l.pathname.split('/');
+  var base=parts.slice(0,1+segment).join('/')+'/';
+  var rest=parts.slice(1+segment).join('/');
+  l.replace(l.protocol+'//'+l.host+base+'?r='+encodeURIComponent(rest)+l.hash);
+})();
+</script>
+</head>
+<body></body>
+</html>
