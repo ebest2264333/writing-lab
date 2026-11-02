@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-23t';
+const APP_VERSION='2026-10-23v';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2544,9 +2544,9 @@ const WR_CSS_COMMON=
   "*{box-sizing:border-box}body{margin:0;background:#E9EBF0;padding:24px 12px;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-family:'Noto Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#1F2430;line-height:1.6}"+
   ".wr-page{max-width:794px;margin:0 auto;background:#fff;padding:0 0 22px}"+
   ".wr-sent{display:flex;gap:14px;break-inside:avoid;page-break-inside:avoid}"+
-  ".wr-err{margin:6px 0 10px}.wr-pair{font-size:14.5px}.wr-pair .l1,.wr-pair .l2{display:flex;flex-wrap:wrap;align-items:center;gap:6px}.wr-pair .l2{margin-top:4px}"+
+  ".wr-err{margin:10px 0 16px}.wr-pair{font-size:14.5px}.wr-pair .l1,.wr-pair .l2{display:flex;flex-wrap:wrap;align-items:center;gap:8px;line-height:1.7}.wr-pair .l2{margin-top:9px}"+
   ".arr{color:#8A93A5}.chip{font-size:11px;font-weight:700;padding:1px 7px;border-radius:5px;border:1px solid currentColor;margin-left:4px}"+
-  ".wr-note{font-size:13px;color:#4A5262;margin-top:2px;line-height:1.55;display:flex;gap:6px}"+
+  ".wr-note{font-size:13px;color:#4A5262;margin-top:9px;line-height:1.7;display:flex;gap:8px;align-items:flex-start}"+
   ".wr-legend{break-after:avoid;page-break-after:avoid;display:flex;gap:14px;justify-content:flex-end;font-size:11.5px;font-weight:700;margin:-4px 0 8px}.wr-empty{padding:14px 4px;color:#6B7486;font-size:14px}"+
   ".noprint{text-align:center;margin:22px 0 4px}.noprint button{padding:11px 26px;font-size:14px;font-weight:800;border:none;border-radius:8px;background:#1B2A49;color:#fff;cursor:pointer}"+
   "@page{size:A4;margin:10mm}@media print{body{background:#fff;padding:0}.wr-page{max-width:100%;box-shadow:none}.noprint{display:none}.wr-final,.wr-cmt,.wr-err,.wr-par,.wr-score,.wr-card{break-inside:avoid;page-break-inside:avoid}}";
@@ -4282,7 +4282,7 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
     else{
       const getJ=async(u)=>{try{const r=await fetch(SUBMIT_URL+u+'&_t='+Date.now(),{cache:'no-store'});return await r.json();}catch(e){return null;}};
       const [data,rd]=await Promise.all([
-        getJ('?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')),
+        getJ('?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&lite=1'),
         getJ('?view=studentList')
       ]);
       if(data&&data.ok)all=data.submissions||[];
