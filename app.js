@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-24b';
+const APP_VERSION='2026-10-24c';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2662,9 +2662,17 @@ function buildWritingReportHtml_(ctx){
 }
 /** 제출물 하나(원본 또는 다시쓰기)로 Writing Report를 새 창에 열어줘요. 양식(초등/중등)·로고는 학원 설정을 따라요. */
 async function printWritingReport(s,studentName,studentId,academyName,siblings,forceStage){
-  const win=window.open('','_blank');
-  if(!win){alert('팝업이 차단되어 있어요. 브라우저 팝업 차단을 해제한 뒤 다시 시도해주세요.');return;}
-  win.document.open();win.document.write('<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;padding:40px;color:#555">리포트를 만드는 중이에요…</body>');win.document.close();
+  /* 새 탭을 따로 열지 않고, 화면에 안 보이는 iframe에 리포트를 그린 뒤 바로 인쇄 창을 띄워요(버튼 한 번으로 인쇄 화면까지). */
+  const note=document.createElement('div');
+  note.textContent='리포트를 만드는 중이에요…';
+  note.style.cssText='position:fixed;left:50%;top:24px;transform:translateX(-50%);background:#1B2A49;color:#fff;padding:10px 20px;border-radius:10px;font-size:14px;font-weight:700;z-index:99999;box-shadow:0 4px 14px rgba(0,0,0,.25)';
+  document.body.appendChild(note);
+  const frame=document.createElement('iframe');
+  frame.setAttribute('aria-hidden','true');
+  frame.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  document.body.appendChild(frame);
+  const cleanup=()=>{try{note.remove();}catch(_){}try{frame.remove();}catch(_){}};
+  const win=frame.contentWindow;
   try{
     const cfg=await fetchReportConfig();
     const pair=writingReportPair_(s,siblings);
@@ -2682,7 +2690,17 @@ async function printWritingReport(s,studentName,studentId,academyName,siblings,f
       topic:topicName,rubric,sentences:writingReportSentences_(base),
       finalText:writingReportFinal_(base)||(finalSrc?String(finalSrc.final||finalSrc.text||''):String(base.text||'')),comment:writingReportComment_([base,rw]),pics};
     win.document.open();win.document.write(buildWritingReportHtml_(ctx));win.document.close();
-  }catch(e){try{win.document.body.textContent='리포트를 만들지 못했어요: '+(e&&e.message||e);}catch(_){}}
+    // 글꼴·그림이 다 불러와진 뒤에 인쇄해야 모양이 안 깨져요.
+    const d=win.document;
+    try{if(d.fonts&&d.fonts.ready)await Promise.race([d.fonts.ready,new Promise(r=>setTimeout(r,4000))]);}catch(_){}
+    await Promise.all(Array.from(d.images||[]).map(im=>im.complete?null:new Promise(r=>{im.onload=im.onerror=r;setTimeout(r,4000);})));
+    await new Promise(r=>setTimeout(r,250));
+    note.remove();
+    win.focus();
+    win.addEventListener('afterprint',()=>setTimeout(cleanup,500));
+    setTimeout(cleanup,10*60*1000); // 혹시 afterprint가 안 오는 브라우저를 위해
+    win.print();
+  }catch(e){cleanup();alert('리포트를 만들지 못했어요: '+(e&&e.message||e));}
 }
 
 /** 로고 이미지 파일 → 작게 줄인 이미지 데이터(data URL). SVG는 그대로, 나머지는 긴 변 360px로 줄여요. */
