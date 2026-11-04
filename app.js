@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-23z';
+const APP_VERSION='2026-10-24b';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2578,7 +2578,7 @@ const WR_CSS_COMMON=
   ".wr-note{font-size:13px;color:#4A5262;margin-top:9px;line-height:1.7;display:flex;gap:8px;align-items:flex-start}"+
   ".wr-legend{break-after:avoid;page-break-after:avoid;display:flex;gap:14px;justify-content:flex-end;font-size:11.5px;font-weight:700;margin:-4px 0 8px}.wr-empty{padding:14px 4px;color:#6B7486;font-size:14px}"+
   ".noprint{text-align:center;margin:22px 0 4px}.noprint button{padding:11px 26px;font-size:14px;font-weight:800;border:none;border-radius:8px;background:#1B2A49;color:#fff;cursor:pointer}"+
-  "@page{size:A4;margin:10mm}@media print{body{background:#fff;padding:0}.wr-page{max-width:100%;box-shadow:none}.noprint{display:none}.wr-final,.wr-cmt,.wr-err,.wr-par,.wr-score,.wr-card{break-inside:avoid;page-break-inside:avoid}/* 맨 아래 '학원이름 · WRITING LAB' 줄이 공간이 모자라 혼자 새 페이지로 넘어가지 않게, 바로 위 내용에 붙여서 마지막 페이지 맨 아래에 두고 여백도 줄여요. */.wr-page{padding-bottom:0!important}.wr-foot{margin-top:6px!important;margin-bottom:0!important;padding-bottom:0!important;break-before:avoid;page-break-before:avoid;break-inside:avoid}.wr-par{break-after:avoid;page-break-after:avoid;margin-top:12px!important}}";
+  "@page{size:A4;margin:14mm 10mm}@media print{body{background:#fff;padding:0}.wr-page{max-width:100%;box-shadow:none}.noprint{display:none}.wr-final,.wr-cmt,.wr-err,.wr-par,.wr-score,.wr-card{break-inside:avoid;page-break-inside:avoid}/* 맨 아래 '학원이름 · WRITING LAB' 줄이 공간이 모자라 혼자 새 페이지로 넘어가지 않게, 바로 위 내용에 붙여서 마지막 페이지 맨 아래에 두고 여백도 줄여요. */.wr-page{padding-bottom:0!important}.wr-foot{margin-top:6px!important;margin-bottom:0!important;padding-bottom:0!important;break-before:avoid;page-break-before:avoid;break-inside:avoid}.wr-par{break-after:avoid;page-break-after:avoid;margin-top:12px!important}}";
 const WR_CSS_MID=
   ".wr-hero{background:#1B4A8A;padding:28px 34px 26px;color:#fff;position:relative;border-bottom:14px solid #7BA3D6}"+
   ".wr-hero .eyebrow{font-family:Inter,sans-serif;font-size:11px;font-weight:700;letter-spacing:.18em;display:flex;align-items:center;gap:10px}"+
@@ -2617,7 +2617,9 @@ const WR_CSS_ELEM=
   ".ic{display:inline-flex;width:20px;height:20px;border-radius:50%;align-items:center;justify-content:center;font-size:11px;font-weight:900;flex:0 0 auto}.ic-x{background:#F9C9C4;color:#B3261E}.ic-ok{background:#BFE8CF;color:#0E6B3A}.ic-q{background:#BFD8F7;color:#1B4A8A;margin-top:2px}"+
   ".wr-wrong{color:#C62828;text-decoration:line-through;font-weight:500}.wr-plain{color:#1F2430}.wr-ok{color:#C62828;font-weight:800}.wr-miss{color:#1D4ED8;font-weight:800}.wr-sug{color:#7C3AED;font-weight:800}.chip{background:#fff;border-radius:999px;padding:1px 9px}.chip.m{color:#1D4ED8;background:#E3ECFF;border:none}.chip.s{color:#7C3AED;background:#EFE8FF;border:none}"+
   ".wr-par{margin-top:18px;margin-left:auto;width:300px;border:1.5px solid #DDD6C8;border-radius:14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:flex-end;font-family:Jua,sans-serif;color:#6E675A;break-inside:avoid}.wr-par i{display:inline-block;width:110px;border-bottom:1px solid #6E675A;margin-left:8px}"+
-  ".wr-foot{margin-top:14px;font-size:10px;letter-spacing:.12em;color:#9A917F;font-weight:700}";
+  ".wr-foot{margin-top:14px;font-size:10px;letter-spacing:.12em;color:#9A917F;font-weight:700}.wr-foot-fix{display:none}"+
+  /* 인쇄·PDF: 시트 전체(여백 포함)를 같은 크림색으로 채우고, 맨 아래 학원 문구는 모든 페이지 아래쪽에 고정해요. */
+  "@page{size:A4;margin:0}@media print{html,body{background:#FFFDF9!important;padding:0!important}.wr-page{background:#FFFDF9!important;max-width:100%!important;padding:17mm 13mm 19mm!important;-webkit-box-decoration-break:clone;box-decoration-break:clone}.wr-foot{display:none!important}.wr-foot-fix{display:block;position:fixed;left:13mm;bottom:8mm;margin:0;font-size:10px;letter-spacing:.12em;color:#9A917F;font-weight:700}}";
 function wrLogoHtml_(ctx){
   if(ctx.logo)return '<div class="logo"><img src="'+escH(ctx.logo)+'" alt="logo"></div>';
   return ctx.academy?('<div class="logo txt" style="'+(ctx.stage==='초등'?'color:#6E675A':'color:#fff')+'">'+escH(ctx.academy)+'</div>'):'';
@@ -2654,7 +2656,7 @@ function buildWritingReportHtml_(ctx){
       '<div class="wr-h">'+String(k+1).padStart(2,'0')+'. 완성된 글</div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 완성된 글이 없어요)</p>')+'</div>'+
       '<div class="wr-h">'+String(k+2).padStart(2,'0')+'. 선생님 코멘트</div><div class="wr-cmt">'+cmtHtml+'</div>'+
       '<div class="wr-h">'+String(k+3).padStart(2,'0')+'. 문장별 첨삭</div><div class="wr-card2">'+sentsHtml+'</div>'+
-      '<div class="wr-par">부모님 확인<span>(서명)<i></i></span></div><div class="wr-foot">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div>';
+      '<div class="wr-par">부모님 확인<span>(서명)<i></i></span></div><div class="wr-foot">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div><div class="wr-foot-fix">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div>';
   }
   return '<!doctype html><html><head><meta charset="utf-8"><title>'+title+'</title>'+WR_FONTS+'<style>'+WR_CSS_COMMON+(e?WR_CSS_ELEM:WR_CSS_MID)+'</style></head><body><div class="wr-page">'+body+'</div>'+printBtn+'</body></html>';
 }
