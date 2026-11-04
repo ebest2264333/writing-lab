@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-23x';
+const APP_VERSION='2026-10-23z';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -4006,6 +4006,17 @@ const EXAM_TYPE_OPTS=[['','전체'],['문법드릴','문법드릴'],['글쓰기'
  *  "영역" 칸이 첨삭관리·리포트·내 제출 내역 등 여러 화면에서 전부 '-'(빈 칸)으로 나오고, "제출한
  *  글 수정하기"(첨삭 전 수정) 같은 type 값에 의존하던 기능도 전부 조용히 막혀 있었어요. s.type이
  *  있으면(옛날 마이그레이션 데이터) 그대로 쓰고, 없으면 chapter로 판단해서 채워줘요. */
+/** 이름이 바뀐 학생은 명단의 현재 이름으로 보여줘요(저장된 글은 안 바꿔요). 반·학교·학년은 제출한 그때 값 그대로예요. */
+function overlayRoster_(subs,roster){
+  const list=roster||ROSTER;
+  if(!Array.isArray(list)||!list.length||!Array.isArray(subs))return subs;
+  const m=new Map();list.forEach(r=>{if(r&&r.id!==undefined)m.set(String(r.id),r);});
+  return subs.map(x=>{
+    const r=x&&m.get(String(x.id));
+    if(!r)return x;
+    return Object.assign({},x,{name:r.name||x.name}); // 반·학교·학년은 글을 낸 그때 값을 그대로 둬요(반 변경은 학생 저장 시 이번 달 글만 서버가 옮겨줘요)
+  });
+}
 function submissionTypeLabel(s){
   if(s&&s.type)return s.type;
   const chapter=String((s&&s.chapter)||'');
@@ -4133,7 +4144,7 @@ function buildTeacherMenuSidebar(sidebarCol){
     try{
       const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
-      let all=(data&&data.ok)?(data.submissions||[]):[];
+      let all=(data&&data.ok)?overlayRoster_(data.submissions||[]):[];
       if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
       const hasFeedback=submissionHasAnyFeedback;
       // 퀴즈만 풀고 조건 영작(text)은 안 쓴 Pattern Drill 제출물은 첨삭할 글이 없으니 이 배지
@@ -4314,10 +4325,11 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
         getJ('?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&lite=1'),
         getJ('?view=studentList')
       ]);
-      if(data&&data.ok)all=data.submissions||[];
       if(rd&&rd.ok)roster=rd.students||[];
+      if(data&&data.ok)all=overlayRoster_(data.submissions||[],roster);
       if(data&&data.ok&&rd&&rd.ok)window._thCache={k:ck,t:Date.now(),all:all.slice(),roster:roster.slice()};
     }
+    if(hit)all=overlayRoster_(all,roster);
     if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
     if(!USER.isAdmin)roster=roster.filter(s=>String(s.academy||'').trim()===String(USER.academy||'').trim());
     loading.remove();
@@ -4333,7 +4345,7 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
     if(fbSignedIn){
       const unsub=fbDb.collection('ewl_submissions').onSnapshot(snap=>{
         if(firstSnap){firstSnap=false;return;}
-        const fresh=snap.docs.map(d=>d.data());
+        const fresh=overlayRoster_(snap.docs.map(d=>d.data()),roster);
         all=USER.isAdmin?fresh:fresh.filter(s=>String(s.academy||'')===String(USER.academy||''));
         if(renderReady)render(); else viewTeacherHome();
       },err=>console.warn('교사 제출물 실시간 구독 오류:',err));
@@ -4434,7 +4446,7 @@ function viewGradingManage(opts){teacherMount(w=>{
     try{
       const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
-      if(data&&data.ok)all=data.submissions||[];
+      if(data&&data.ok)all=overlayRoster_(data.submissions||[]);
     }catch(e){}
     if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
     // 휴원·퇴원 학생의 제출물은 첨삭 목록에서 기본으로 빼요(선생님 홈의 "휴원·퇴원 학생도 보기"에서 확인할 수 있어요).
@@ -4622,7 +4634,7 @@ function viewAiStats(){teacherMount(w=>{
     try{
       const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
-      if(data&&data.ok)all=data.submissions||[];
+      if(data&&data.ok)all=overlayRoster_(data.submissions||[]);
     }catch(e){}
     if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
     loading.remove();
@@ -4692,7 +4704,7 @@ function viewReportStudentList(){teacherMount(w=>{
     try{
       const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
-      if(data&&data.ok)all=data.submissions||[];
+      if(data&&data.ok)all=overlayRoster_(data.submissions||[]);
     }catch(e){}
     if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
     loading.remove();
@@ -6371,6 +6383,8 @@ function viewStudentForm(existing){teacherMount(w=>{
       const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
       let data=null;try{data=await res.json();}catch(e){}
       if(data&&data.ok===false)throw new Error(data.error||'저장 실패');
+      window._thCache=null;
+      if(data&&data.movedThisMonth>0)alert('저장했어요. 이번 달에 낸 글 '+data.movedThisMonth+'개를 새 반으로 옮겼어요. (지난달 이전 글은 그때의 반 그대로예요.)');
       viewStudentManage();
     }catch(e){
       msg.className='fx no';msg.textContent='저장 중 문제가 생겼어요: '+String(e.message||e);
@@ -6576,10 +6590,10 @@ function viewTeacherStudent(studentId,studentName,afterLoad){
       const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(studentId)+'&academy='+encodeURIComponent(USER.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&role=teacher&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
       if(data&&data.ok&&(data.submissions||[]).length){
-        const first=data.submissions[0];
+        const first=overlayRoster_(data.submissions.slice(0,1))[0];
         ctx=[first.school,stageGrade(first.school,first.schoolGrade),first.cls].filter(Boolean).join(' · ');
       }
-      if(data&&data.ok)subs=data.submissions||[];
+      if(data&&data.ok)subs=overlayRoster_(data.submissions||[]);
     }catch(e){}
     // 수행평가/기사/이야기처럼 target_school·target_grade·target_class로 공개 대상이 제한된 컨텐츠는
     // "지금 로그인한 사용자(선생님)"가 아니라 "미리보기 중인 그 학생" 기준으로 보여야 해요. 학생계정
