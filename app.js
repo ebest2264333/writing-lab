@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-23v';
+const APP_VERSION='2026-10-23x';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2504,6 +2504,35 @@ function writingReportSentences_(sub){
   });
   return out;
 }
+/** "완성된 글" — 학생이 쓴 원본 글에 AI 첨삭(문장별 corrected, 없으면 틀린 표현→고친 표현)을 모두 반영해서,
+ *  글 전체가 고쳐진 최종본으로 만들어요. 학생이 직접 다시 쓴 글(Re-Writing)은 틀린 곳이 남아 있을 수 있어서 쓰지 않아요.
+ *  문단·줄바꿈은 원문 그대로 두고 문장 자리만 바꿔 끼워요. 첨삭이 하나도 없으면 빈 문자열을 돌려줘요. */
+function writingReportFinal_(sub){
+  if(!sub||!sub.text)return '';
+  const text=String(sub.text);
+  const a1=parseAiFeedback(sub.aiFeedback),a2=parseAiFeedback(sub.aiFeedbackGpt);
+  let out='',cursor=0,changed=false;
+  splitSentences(text).forEach((sent,i)=>{
+    const pos=text.indexOf(sent,cursor);
+    if(pos<0)return;
+    let fixed=sent;
+    const pick=(a)=>{const e=a.sentences[i]||a.sentences[String(i)];return e&&typeof e==='object'?e:null;};
+    const e1=pick(a1),e2=pick(a2);
+    const corr=(e1&&String(e1.corrected||'').trim())||(e2&&String(e2.corrected||'').trim())||'';
+    if(corr){fixed=corr;}
+    else{
+      const errs=((e1&&e1.errors)||[]).concat((e2&&e2.errors)||[]);
+      errs.forEach(x=>{
+        if(!x||!x.wrong||!x.correct||(x.type&&x.type!=='wrong'&&x.type!=='suggestion'))return;
+        if(fixed.indexOf(x.wrong)>=0)fixed=fixed.replace(x.wrong,String(x.correct).split(/\s*(?:\/|또는|\bor\b)\s*/)[0]);
+      });
+    }
+    if(fixed!==sent)changed=true;
+    out+=text.slice(cursor,pos)+fixed;cursor=pos+sent.length;
+  });
+  out+=text.slice(cursor);
+  return changed?out:'';
+}
 function writingReportComment_(subs){
   const seen={},parts=[];
   subs.filter(Boolean).forEach(x=>{
@@ -2549,7 +2578,7 @@ const WR_CSS_COMMON=
   ".wr-note{font-size:13px;color:#4A5262;margin-top:9px;line-height:1.7;display:flex;gap:8px;align-items:flex-start}"+
   ".wr-legend{break-after:avoid;page-break-after:avoid;display:flex;gap:14px;justify-content:flex-end;font-size:11.5px;font-weight:700;margin:-4px 0 8px}.wr-empty{padding:14px 4px;color:#6B7486;font-size:14px}"+
   ".noprint{text-align:center;margin:22px 0 4px}.noprint button{padding:11px 26px;font-size:14px;font-weight:800;border:none;border-radius:8px;background:#1B2A49;color:#fff;cursor:pointer}"+
-  "@page{size:A4;margin:10mm}@media print{body{background:#fff;padding:0}.wr-page{max-width:100%;box-shadow:none}.noprint{display:none}.wr-final,.wr-cmt,.wr-err,.wr-par,.wr-score,.wr-card{break-inside:avoid;page-break-inside:avoid}}";
+  "@page{size:A4;margin:10mm}@media print{body{background:#fff;padding:0}.wr-page{max-width:100%;box-shadow:none}.noprint{display:none}.wr-final,.wr-cmt,.wr-err,.wr-par,.wr-score,.wr-card{break-inside:avoid;page-break-inside:avoid}/* 맨 아래 '학원이름 · WRITING LAB' 줄이 공간이 모자라 혼자 새 페이지로 넘어가지 않게, 바로 위 내용에 붙여서 마지막 페이지 맨 아래에 두고 여백도 줄여요. */.wr-page{padding-bottom:0!important}.wr-foot{margin-top:6px!important;margin-bottom:0!important;padding-bottom:0!important;break-before:avoid;page-break-before:avoid;break-inside:avoid}.wr-par{break-after:avoid;page-break-after:avoid;margin-top:12px!important}}";
 const WR_CSS_MID=
   ".wr-hero{background:#1B4A8A;padding:28px 34px 26px;color:#fff;position:relative;border-bottom:14px solid #7BA3D6}"+
   ".wr-hero .eyebrow{font-family:Inter,sans-serif;font-size:11px;font-weight:700;letter-spacing:.18em;display:flex;align-items:center;gap:10px}"+
@@ -2613,7 +2642,7 @@ function buildWritingReportHtml_(ctx){
       '<div class="row"><div class="c"><div class="k">NAME<b>이름</b></div><div class="v">'+escH(ctx.name)+'</div></div><div class="c"><div class="k">CLASS<b>반</b></div><div class="v">'+escH(ctx.cls||'-')+'</div></div><div class="c"><div class="k">LEVEL<b>레벨</b></div><div class="v">'+escH(ctx.level||'-')+'</div></div><div class="c"><div class="k">DATE<b>날짜</b></div><div class="v">'+escH(ctx.date)+'</div></div></div></div>'+
       scoreHtml+
       '<div class="wr-h"><span class="n">'+(r?'02':'01')+'</span><span class="t">문장별 첨삭</span><span class="e">FEEDBACK</span></div>'+sentsHtml+
-      (ctx.finalText?('<div class="wr-h"><span class="n">'+(r?'03':'02')+'</span><span class="t">다시 쓴 글</span><span class="e">FINAL DRAFT</span></div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+wrParagraphs_(ctx.finalText)+'</div>'):'')+
+      (ctx.finalText?('<div class="wr-h"><span class="n">'+(r?'03':'02')+'</span><span class="t">완성된 글</span><span class="e">FINAL DRAFT</span></div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+wrParagraphs_(ctx.finalText)+'</div>'):'')+
       '<div class="wr-h"><span class="n">'+(r?(ctx.finalText?'04':'03'):(ctx.finalText?'03':'02'))+'</span><span class="t">선생님 코멘트</span><span class="e">TEACHER\'S COMMENT</span></div><div class="wr-cmt">'+cmtHtml+'<div class="wr-sign">담당 선생님<i></i></div></div></div>'+
       '<div class="wr-foot"><span>'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</span><b>MIDDLE SCHOOL</b></div>';
   }else{
@@ -2622,7 +2651,7 @@ function buildWritingReportHtml_(ctx){
     body='<div class="wr-head"><div><div class="dots"><i style="background:#E8736B"></i><i style="background:#3DB56F"></i><i style="background:#4C9BE8"></i></div><div class="eyebrow">WRITING-LAB · REPORT</div><h1>Writing Report</h1></div>'+wrLogoHtml_(ctx)+'</div>'+
       '<div class="wr-card"><div class="r topic"><span class="k">주제</span><span class="v">'+escH(ctx.topic)+'</span></div><div class="r g"><div><span class="k">이름</span><span class="v">'+escH(ctx.name)+'</span></div><div><span class="k">반</span><span class="v">'+escH(ctx.cls||'-')+'</span></div><div><span class="k">레벨</span><span class="v">'+escH((ctx.level||'-').replace(/^Level\s*/i,''))+'</span></div><div><span class="k">날짜</span><span class="v">'+escH(ctx.date)+'</span></div></div></div>'+
       picsHtml+
-      '<div class="wr-h">'+String(k+1).padStart(2,'0')+'. 다시 쓴 글</div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 다시 쓴 글이 없어요)</p>')+'</div>'+
+      '<div class="wr-h">'+String(k+1).padStart(2,'0')+'. 완성된 글</div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 완성된 글이 없어요)</p>')+'</div>'+
       '<div class="wr-h">'+String(k+2).padStart(2,'0')+'. 선생님 코멘트</div><div class="wr-cmt">'+cmtHtml+'</div>'+
       '<div class="wr-h">'+String(k+3).padStart(2,'0')+'. 문장별 첨삭</div><div class="wr-card2">'+sentsHtml+'</div>'+
       '<div class="wr-par">부모님 확인<span>(서명)<i></i></span></div><div class="wr-foot">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div>';
@@ -2649,7 +2678,7 @@ async function printWritingReport(s,studentName,studentId,academyName,siblings,f
     const ctx={stage,logo:ac.logo||ACADEMY_LOGOS[acad]||'',academy:acad,name:studentName||s.name||'',cls:s.cls||'',
       level:(rubric&&rubric.writingLevel)||'',date:wrDateStr_(base.datetime||s.datetime,stage==='초등'?'. ':'.'),
       topic:topicName,rubric,sentences:writingReportSentences_(base),
-      finalText:finalSrc?String(finalSrc.final||finalSrc.text||''):(stage==='초등'?String(base.text||''):''),comment:writingReportComment_([base,rw]),pics};
+      finalText:writingReportFinal_(base)||(finalSrc?String(finalSrc.final||finalSrc.text||''):String(base.text||'')),comment:writingReportComment_([base,rw]),pics};
     win.document.open();win.document.write(buildWritingReportHtml_(ctx));win.document.close();
   }catch(e){try{win.document.body.textContent='리포트를 만들지 못했어요: '+(e&&e.message||e);}catch(_){}}
 }
