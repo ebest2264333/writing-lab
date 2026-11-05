@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-24c';
+const APP_VERSION='2026-10-24d';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -4312,6 +4312,20 @@ function tryAutoGradeMigration(){
   GRADE_MIGRATION_TRIED=true;
   try{fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'migrateStudentGrades',auto:true,role:'teacher',requesterIsAdmin:true,requesterIsAcademyAdmin:false,requesterAcademy:USER.academy||''})}).catch(()=>{});}catch(e){}
 }
+/** 목록을 20개씩 나눠 보여주는 쪽 이동 막대(◀ 이전 · 1 2 3 · 다음 ▶). 화면에 한 번에 그리는 양이 줄어서 목록이 길어도 빠릿해요. */
+const LIST_PAGE_SIZE=20;
+function pagerEl_(total,page,size,go){
+  const pages=Math.max(1,Math.ceil(total/size));
+  const bar=el('div');bar.style.cssText='display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;margin:12px 0';
+  if(pages<=1)return null;
+  const mk=(label,p,disabled,on)=>{const b=el('button','btn ghost',label);b.type='button';b.style.cssText='padding:5px 11px;font-size:13px;min-width:34px'+(on?';background:#1B2A49;color:#fff;border-color:#1B2A49':'');b.disabled=!!disabled;if(!disabled)b.onclick=()=>go(p);return b;};
+  bar.appendChild(mk('◀ 이전',page-1,page<=0));
+  const want=new Set([0,pages-1,page-1,page,page+1,page-2,page+2].filter(p=>p>=0&&p<pages));
+  let last=-1;Array.from(want).sort((a,b)=>a-b).forEach(p=>{if(last>=0&&p-last>1)bar.appendChild(el('span','hint','…'));bar.appendChild(mk(String(p+1),p,false,p===page));last=p;});
+  bar.appendChild(mk('다음 ▶',page+1,page>=pages-1));
+  const info=el('span','hint','총 '+total+'건 · '+(page+1)+'/'+pages+'쪽');info.style.marginLeft='8px';bar.appendChild(info);
+  return bar;
+}
 function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMount(w=>{
   const titleRow=el('div');titleRow.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap';
   titleRow.appendChild(el('h1','title',USER.name+' 선생님'+(USER.isAdmin?' · 전체 학원 관리자':(USER.academy?' · '+USER.academy:''))));
@@ -4380,10 +4394,11 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
     filterBox.style.display='flex';
     if(inactiveIds.size){
       const lab=el('label');lab.style.cssText='display:flex;align-items:center;gap:6px;font-size:13px;color:#6b7684;align-self:flex-end;padding-bottom:8px;cursor:pointer';
-      const cb=el('input');cb.type='checkbox';cb.onchange=()=>{showInactive=cb.checked;render();};
+      const cb=el('input');cb.type='checkbox';cb.onchange=()=>{showInactive=cb.checked;hpage=0;render();};
       lab.appendChild(cb);lab.appendChild(document.createTextNode('휴원·퇴원 학생도 보기 ('+inactiveIds.size+'명)'));
       filterBox.appendChild(lab);
     }
+    let hpage=0;
     const render=()=>{
       Array.from(box.children).slice(1).forEach(c=>c.remove());
       const fa=fAcademy?fAcademy.sel.value:'',fs=fSchool.sel.value,fg=fGrade.sel.value,fc=fCls.sel.value,ft=fType.sel.value;
@@ -4403,7 +4418,10 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
       });
       const studentsOut=Object.values(counts).sort((a,b)=>b.lastAt<a.lastAt?-1:1);
       if(!studentsOut.length){box.appendChild(el('div','hint','조건에 맞는 제출 내역이 없어요.'));return;}
-      studentsOut.forEach(s=>{
+      if(hpage*LIST_PAGE_SIZE>=studentsOut.length)hpage=Math.max(0,Math.ceil(studentsOut.length/LIST_PAGE_SIZE)-1);
+      const goH=(p)=>{hpage=p;render();try{box.scrollIntoView({block:'start'});}catch(e){}};
+      const pgTop=pagerEl_(studentsOut.length,hpage,LIST_PAGE_SIZE,goH);if(pgTop)box.appendChild(pgTop);
+      studentsOut.slice(hpage*LIST_PAGE_SIZE,(hpage+1)*LIST_PAGE_SIZE).forEach(s=>{
         const row=el('div','point');
         row.appendChild(el('div','dot','●'));
         const ctx=[USER.isAdmin?s.academy:'',s.school,stageGrade(s.school,s.schoolGrade),s.cls].filter(Boolean).join(' · ');
@@ -4413,8 +4431,9 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
         row.onclick=()=>viewTeacherStudent(s.id,s.name||s.id);
         box.appendChild(row);
       });
+      const pgBot=pagerEl_(studentsOut.length,hpage,LIST_PAGE_SIZE,goH);if(pgBot)box.appendChild(pgBot);
     };
-    (fAcademy?[fAcademy.sel,fSchool.sel,fGrade.sel,fCls.sel,fType.sel]:[fSchool.sel,fGrade.sel,fCls.sel,fType.sel]).forEach(sel=>sel.addEventListener('change',render));
+    (fAcademy?[fAcademy.sel,fSchool.sel,fGrade.sel,fCls.sel,fType.sel]:[fSchool.sel,fGrade.sel,fCls.sel,fType.sel]).forEach(sel=>sel.addEventListener('change',()=>{hpage=0;render();}));
     render();
     renderReady=true;
   })();
@@ -4463,6 +4482,8 @@ function viewGradingManage(opts){teacherMount(w=>{
   w.appendChild(tableWrap);
   (async()=>{
     let all=[];
+    // 학생 명단도 제출 목록과 '동시에' 요청해요(하나 끝나고 다음 걸 받으면 시간이 두 배로 걸렸어요).
+    const rosterP=fetch(SUBMIT_URL+'?view=studentList&_t='+Date.now(),{cache:'no-store'}).then(r=>r.json()).catch(()=>null);
     try{
       const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
@@ -4471,8 +4492,7 @@ function viewGradingManage(opts){teacherMount(w=>{
     if(!USER.isAdmin)all=all.filter(s=>String(s.academy||'')===String(USER.academy||''));
     // 휴원·퇴원 학생의 제출물은 첨삭 목록에서 기본으로 빼요(선생님 홈의 "휴원·퇴원 학생도 보기"에서 확인할 수 있어요).
     try{
-      const rr=await fetch(SUBMIT_URL+'?view=studentList&_t='+Date.now(),{cache:'no-store'});
-      const rd=await rr.json();
+      const rd=await rosterP;
       if(rd&&rd.ok){const off=new Set((rd.students||[]).filter(isInactiveStudent).map(r=>String(r.id)));all=all.filter(x=>!off.has(String(x.id)));}
     }catch(e){}
     loading.remove();
@@ -4499,6 +4519,7 @@ function viewGradingManage(opts){teacherMount(w=>{
     const hasFeedback=submissionHasAnyFeedback;
     const parseDt=s=>{const raw=String(s.datetime||'').trim();if(!raw)return null;const d=new Date(raw.replace(' ','T'));return isNaN(d.getTime())?null:d;};
     const fmtElapsed=ms=>{if(ms==null)return '-';if(ms<0)ms=0;const t=Math.floor(ms/1000),dd=Math.floor(t/86400),h=Math.floor((t%86400)/3600),m=Math.floor((t%3600)/60),s2=t%60,z=x=>String(x).padStart(2,'0');return (dd>0?dd+'일 ':'')+z(h)+':'+z(m)+':'+z(s2);};
+    let gpage=0;
     const render=()=>{
       Array.from(tableWrap.children).forEach(c=>c.remove());
       const fa=fAcademy?fAcademy.sel.value:'',ft=fType.sel.value,fst=fStatus.sel.value,fte=fTeacher.sel.value,ff=fFrom.inp.value,ftt=fTo.inp.value;
@@ -4530,6 +4551,9 @@ function viewGradingManage(opts){teacherMount(w=>{
       });
       filtered.sort((a,b)=>String(b.datetime||'').localeCompare(String(a.datetime||'')));
       if(!filtered.length){tableWrap.appendChild(el('div','hint','조건에 맞는 제출 내역이 없어요.'));return;}
+      if(gpage*LIST_PAGE_SIZE>=filtered.length)gpage=Math.max(0,Math.ceil(filtered.length/LIST_PAGE_SIZE)-1);
+      const goG=(p)=>{gpage=p;render();try{tableWrap.scrollIntoView({block:'start'});}catch(e){}};
+      const pgTopG=pagerEl_(filtered.length,gpage,LIST_PAGE_SIZE,goG);if(pgTopG)tableWrap.appendChild(pgTopG);
       const table=el('table');table.style.cssText='width:100%;border-collapse:collapse;font-size:13px;min-width:860px';
       const thead=el('thead');const headRow=el('tr');
       const cols=['No','제출시간(경과)','상태'].concat(USER.isAdmin?['학원']:[]).concat(['이름(아이디)','영역','내용','학교·학년·반','첨삭담당']);
@@ -4537,7 +4561,8 @@ function viewGradingManage(opts){teacherMount(w=>{
       thead.appendChild(headRow);table.appendChild(thead);
       const tbody=el('tbody');
       const now=Date.now();
-      filtered.forEach((s,i)=>{
+      filtered.slice(gpage*LIST_PAGE_SIZE,(gpage+1)*LIST_PAGE_SIZE).forEach((s,i0)=>{
+        const i=i0+gpage*LIST_PAGE_SIZE;
         const done=hasFeedback(s);
         const tr=el('tr');
         tr.style.cssText='background:'+(done?'#f0faf3':'#fdeeee')+';cursor:pointer';
@@ -4577,12 +4602,13 @@ function viewGradingManage(opts){teacherMount(w=>{
       });
       table.appendChild(tbody);
       tableWrap.appendChild(table);
+      const pgBotG=pagerEl_(filtered.length,gpage,LIST_PAGE_SIZE,goG);if(pgBotG)tableWrap.appendChild(pgBotG);
     };
     // 학원을 바꾸면 학년·반 선택지를, 학년을 바꾸면 반 선택지를 그 범위에 맞게 다시 채워요(render 전에 먼저).
     if(fAcademy)fAcademy.sel.addEventListener('change',fillGradeCls);
     fGrade.sel.addEventListener('change',fillGradeCls);
-    (fAcademy?[fAcademy.sel,fType.sel,fStatus.sel,fTeacher.sel,fGrade.sel,fCls.sel]:[fType.sel,fStatus.sel,fTeacher.sel,fGrade.sel,fCls.sel]).forEach(sel=>sel.addEventListener('change',render));
-    [fFrom.inp,fTo.inp].forEach(inp=>inp.addEventListener('change',render));
+    (fAcademy?[fAcademy.sel,fType.sel,fStatus.sel,fTeacher.sel,fGrade.sel,fCls.sel]:[fType.sel,fStatus.sel,fTeacher.sel,fGrade.sel,fCls.sel]).forEach(sel=>sel.addEventListener('change',()=>{gpage=0;render();}));
+    [fFrom.inp,fTo.inp].forEach(inp=>inp.addEventListener('change',()=>{gpage=0;render();}));
     render();
   })();
 });}
