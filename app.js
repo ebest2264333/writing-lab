@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-13r';
+const APP_VERSION='2026-11-13s';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -3433,18 +3433,19 @@ function autoComputeRubric(sub){
   const stage=schoolStageFromText(classLevelName)||schoolStageFromText(sub.school)||'';
   const isElementary=stage==='초';
   // 초등학생: 과제완성 80/65/50/35, 형식 오류비율 0.2/0.4/0.6/0.85 (관대한 기준)
-  // 중·고등학생(기본값 포함): 과제완성 85/72/60/45, 형식 오류비율 0.35/0.6/0.85/1.2 (제안은 오류로 안 세요).
+  // 중·고등학생(기본값 포함): 과제완성 85/70/40/25, 형식 오류비율 0.35/0.65/1.5/2.0 (제안은 오류로 안 세요).
+  // D·E는 "정말 못한 경우"에만 나오게 C 구간을 넓게 잡았어요(실제 중등 글 90편 기준 D가 4편, E는 0편).
   // 예전 기준(90/80/70/60, 0.1/0.25/0.45/0.7)은 실제 중등 글 90편에 대 보니 형식이 전부 D·E, 총점 평균 8.7/20(최고 14)로
   // 너무 낮게 나와서, 실제 분포(점수 중앙값 73, 문장당 오류 중앙값 0.64)에 맞춰 다시 잡았어요(평균 13.7/20, 4~20점에 고르게 퍼져요).
   const taskGrade=isElementary
     ? (scoreVal>=80?'A':scoreVal>=65?'B':scoreVal>=50?'C':scoreVal>=35?'D':'E')
-    : (scoreVal>=85?'A':scoreVal>=72?'B':scoreVal>=60?'C':scoreVal>=45?'D':'E');
+    : (scoreVal>=85?'A':scoreVal>=70?'B':scoreVal>=40?'C':scoreVal>=25?'D':'E');
   const sents=sub.text?splitSentences(sub.text):[];
   const errCount=countAiErrors(sub,!isElementary);
   const errRatio=sents.length?(errCount/sents.length):(errCount?1:0);
   const formatGrade=isElementary
     ? (errRatio<=0.2?'A':errRatio<=0.4?'B':errRatio<=0.6?'C':errRatio<=0.85?'D':'E')
-    : (errRatio<=0.35?'A':errRatio<=0.6?'B':errRatio<=0.85?'C':errRatio<=1.2?'D':'E');
+    : (errRatio<=0.35?'A':errRatio<=0.65?'B':errRatio<=1.5?'C':errRatio<=2?'D':'E');
   const taskScore=rubricGradeToScore(taskGrade),formatScore=rubricGradeToScore(formatGrade);
   const totalScore=taskScore+formatScore;
   const totalPercent=Math.round(totalScore/20*100);
