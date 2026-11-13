@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-13q';
+const APP_VERSION='2026-11-13r';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2649,7 +2649,7 @@ function buildWritingReportHtml_(ctx){
       scoreHtml+
       '<div class="wr-h"><span class="n">'+(r?'02':'01')+'</span><span class="t">문장별 첨삭</span><span class="e">FEEDBACK</span></div>'+sentsHtml+
       (ctx.finalText?('<div class="wr-h"><span class="n">'+(r?'03':'02')+'</span><span class="t">완성된 글</span><span class="e">FINAL DRAFT</span></div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+wrParagraphs_(ctx.finalText)+'</div>'):'')+
-      '<div class="wr-h"><span class="n">'+(r?(ctx.finalText?'04':'03'):(ctx.finalText?'03':'02'))+'</span><span class="t">선생님 코멘트</span><span class="e">TEACHER\'S COMMENT</span></div><div class="wr-cmt">'+cmtHtml+'<div class="wr-sign">담당 선생님<i></i></div></div></div>'+
+      '<div class="wr-h"><span class="n">'+(r?(ctx.finalText?'04':'03'):(ctx.finalText?'03':'02'))+'</span><span class="t">선생님 코멘트</span><span class="e">TEACHER\'S COMMENT</span></div><div class="wr-cmt">'+cmtHtml+'</div></div>'+
       '<div class="wr-foot"><span>'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</span><b>MIDDLE SCHOOL</b></div>';
   }else{
     const picsHtml=(ctx.pics&&ctx.pics.length)?('<div class="wr-h">01. 그림 보고 쓰기</div><div class="wr-pics">'+ctx.pics.map(p=>'<div class="p"><div><img src="'+escH(p.imageUrl)+'" style="object-position:'+escH(p.crop||'center center')+';transform:scale('+((Number(p.zoom)||100)/100)+')" alt=""></div></div>').join('')+'</div>'):'';
@@ -2764,7 +2764,8 @@ const WR_COVER_CSS='.wr-cover{break-inside:avoid;page-break-inside:avoid}.wr-cov
   '.wr-cover .cv.cp .cv-num{left:-6px;top:27px;width:166px;font-size:94px}.wr-cover .cv.cp .cv-num.sm{font-size:84px;top:33px}.wr-cover .cv.cp .cv-wol{padding-bottom:4px}.wr-cover .cv.cp .cv-wol .k{font-size:30px}'+
   '.wr-cover .cv.cp .cv-title{font-size:48px;margin-top:4mm}.wr-cover .cv.cp .cv-tag{font-size:13.5px;margin-top:6px}.wr-cover .cv.cp .cv-box{margin-top:5mm;padding:14px 20px 12px}.wr-cover .cv.cp .cv-ch{margin-top:5mm;font-size:18px}'+
   '.wr-cover .cv-list.two{display:grid;grid-template-columns:1fr 1fr;column-gap:22px}.wr-cover .cv-list.two .cv-row{gap:9px;min-width:0}.wr-cover .cv-list.two .tg{flex-basis:78px;font-size:10px}.wr-cover .cv-list.two .rw2{display:none}.wr-cover .cv-list.two .cv-more{grid-column:1/-1}'+
-  '.wr-cover .cv-foot{margin-top:auto;border-top:1px solid #DDD6C8;padding-top:10px;display:flex;justify-content:space-between}.wr-cover .cv-foot .cv-mono{font-size:9.5px;color:#9A917F}';
+  ".wr-cover .cv-par{margin-top:auto;margin-left:auto;width:300px;border:1.5px solid #DDD6C8;border-radius:14px;background:#fff;padding:11px 16px;display:flex;justify-content:space-between;align-items:flex-end;font-family:Jua,'Noto Sans KR',sans-serif;font-size:15px;color:#6E675A}.wr-cover .cv-par i{display:inline-block;width:110px;border-bottom:1px solid #6E675A;margin-left:8px}"+
+  '.wr-cover .cv-foot{margin-top:5mm;border-top:1px solid #DDD6C8;padding-top:10px;display:flex;justify-content:space-between}.wr-cover .cv-foot .cv-mono{font-size:9.5px;color:#9A917F}';
 const WR_MONTHS_EN=['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
 /** 글 종류 → 표지 목록에 찍을 [영어 이름, 색 구분용 클래스]. 종류마다 띠 색이 달라요. */
 function wrKindTag_(kind){
@@ -2795,19 +2796,21 @@ const WR_COVER_MID_CSS='.wr-cvm{break-inside:avoid;page-break-inside:avoid;paddi
   ".wr-cvm .row .tt{flex:1;font-size:14.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"+
   ".wr-cvm .list.dense .row{padding:6px 0}.wr-cvm .list.dense .tt{font-size:13px}.wr-cvm .list.two{display:grid;grid-template-columns:1fr 1fr;column-gap:22px}.wr-cvm .list.two .row{gap:10px;min-width:0}.wr-cvm .list.two .tg{flex-basis:104px;font-size:7px;letter-spacing:.04em}.wr-cvm .more{font-size:11.5px;color:#6B7486;padding-top:6px;text-align:right}"+
   ".wr-cvm .cm.cp .mk{margin-top:4mm}.wr-cvm .cm.cp .sq{width:132px;height:132px;font-size:84px}.wr-cvm .cm.cp .sq.one{font-size:98px}.wr-cvm .cm.cp .wol .k{font-size:24px}.wr-cvm .cm.cp .ttl{font-size:44px;margin-top:5mm}.wr-cvm .cm.cp .tag{margin-top:8px}.wr-cvm .cm.cp .nm{margin-top:6mm}.wr-cvm .cm.cp .ch{margin-top:6mm}"+
-  ".wr-cvm .ft{margin-top:auto;border-top:1px solid #D3D8E1;padding-top:9px;display:flex;justify-content:space-between}.wr-cvm .ft .mono{font-size:8px;color:#4A5262}.wr-cvm .ft b{color:#E07B2A;margin-left:12px}";
+  ".wr-cvm .par{margin-top:auto;margin-left:auto;width:290px;border-top:2px solid #1B4A8A;border-bottom:1px solid #1F2430;display:flex;justify-content:space-between;align-items:center;padding:9px 4px}.wr-cvm .par .k{font-family:Inter,sans-serif;font-size:8px;font-weight:800;letter-spacing:.14em;color:#6B7486;line-height:1.2}.wr-cvm .par .k b{display:block;font-family:'Noto Sans KR';font-size:11px;letter-spacing:0;color:#1F2430}.wr-cvm .par .v{font-size:12px;color:#4A5262}.wr-cvm .par i{display:inline-block;width:120px;border-bottom:1px solid #1F2430;margin-left:8px}"+
+  ".wr-cvm .ft{margin-top:5mm;border-top:1px solid #D3D8E1;padding-top:9px;display:flex;justify-content:space-between}.wr-cvm .ft .mono{font-size:8px;color:#4A5262}.wr-cvm .ft b{color:#E07B2A;margin-left:12px}";
 function wrCoverMidPart_(ym,list){
   const c=list[0];
   const y=ym.slice(0,4),m=+ym.slice(5,7),en=WR_MONTHS_EN[m-1]||'';
   const MAXR=18,shown=list.slice(0,MAXR);
   const rows=shown.map((x,i)=>'<div class="row"><span class="no">'+String(i+1).padStart(2,'0')+'</span><span class="tg '+wrKindTag_(x._kind)[1]+'">'+escH(wrKindTag_(x._kind)[0])+'</span><span class="tt">'+escH(x.topic||'')+'</span></div>').join('');
-  return '<div class="wr-page wr-cvm"><div class="cm'+(shown.length>4?' cp':'')+'"><div class="sp"><span class="a">WRITING-LAB</span><span class="b">MONTHLY · REPORT</span></div><div class="bd">'+
+  return '<div class="wr-page wr-cvm"><div class="cm'+(shown.length>3?' cp':'')+'"><div class="sp"><span class="a">WRITING-LAB</span><span class="b">MONTHLY · REPORT</span></div><div class="bd">'+
     '<div class="top"><div class="l mono">WRITING-LAB · MONTHLY REPORT</div>'+(c.logo?'<img class="logo" src="'+c.logo+'" alt="">':'')+'</div>'+
     '<div class="mk"><div class="sq'+(m<10?' one':'')+'">'+m+'</div><div class="wol"><div class="k">월</div><div class="mono">'+en+' '+y+'</div></div></div>'+
     '<div class="ttl">Monthly<br>Writing <span>Report</span></div><div class="tag">고쳐 쓴 문장만큼 단단해지는 나의 영어</div>'+
     '<div class="nm"><div class="c"><div class="k">NAME<b>이름</b></div><div class="v">'+escH(c.name||'')+'</div></div><div class="c"><div class="k">CLASS<b>반</b></div><div class="v">'+escH(c.cls||'')+'</div></div></div>'+
     '<div class="ch">이번 달에 담긴 글<span class="mono">CONTENTS</span></div>'+
-    '<div class="list'+(shown.length>4?' dense':'')+(shown.length>10?' two':'')+'">'+rows+'</div>'+(list.length>MAXR?'<div class="more">외 '+(list.length-MAXR)+'편</div>':'')+
+    '<div class="list'+(shown.length>3?' dense':'')+(shown.length>10?' two':'')+'">'+rows+'</div>'+(list.length>MAXR?'<div class="more">외 '+(list.length-MAXR)+'편</div>':'')+
+    '<div class="par"><div class="k">PARENT<b>부모님 확인</b></div><div class="v">(서명)<i></i></div></div>'+
     '<div class="ft"><span class="mono">'+escH(String(c.academy||''))+(c.academy?' · ':'')+'WRITING LAB</span><span class="mono">'+y+'. '+String(m).padStart(2,'0')+'<b>MIDDLE SCHOOL</b></span></div>'+
     '</div></div></div>';
 }
@@ -2817,16 +2820,17 @@ function wrCoverPart_(ym,list){
   const c=list[0];
   const y=ym.slice(0,4),m=+ym.slice(5,7);
   const en=WR_MONTHS_EN[m-1]||'';
-  const MAXR=18,shown=list.slice(0,MAXR);
+  const MAXR=16,shown=list.slice(0,MAXR);
   const rows=shown.map((x,i)=>'<div class="cv-row"><span class="no">'+String(i+1).padStart(2,'0')+'</span><span class="tg '+wrKindTag_(x._kind)[1]+'">'+escH(wrKindTag_(x._kind)[0])+'</span><span class="tt">'+escH(x.topic||'')+'</span>'+'</div>').join('');
   const elem=c.stage==='초등';
-  return '<div class="wr-page wr-cover"><div class="cv'+(shown.length>3?' cp':'')+'">'+
+  return '<div class="wr-page wr-cover"><div class="cv'+(shown.length>2?' cp':'')+'">'+
     '<div class="cv-top"><div class="l"><i style="background:#F0796B"></i><i style="background:#3FBE87"></i><i style="background:#5AA5F0"></i><span class="cv-mono">WRITING-LAB · MONTHLY REPORT</span></div>'+(c.logo?'<img class="cv-logo" src="'+c.logo+'" alt="">':'')+'</div>'+
     '<div class="cv-mark"><div class="cv-circ"><b class="c1"></b><b class="c2"></b><b class="c3"></b><div class="cv-num'+(m>=10?' sm':'')+'">'+m+'</div></div><div class="cv-wol"><div class="k">월</div><div class="cv-mono">'+en+' '+y+'</div></div></div>'+
     '<div class="cv-title">Monthly<br>Writing Report</div><div class="cv-tag">한 문장씩, 내 영어가 자라는 기록</div>'+
     '<div class="cv-box"><div class="f n">이름<span class="v">'+escH(c.name||'')+'</span></div><div class="f c">반<span class="v">'+escH(c.cls||'')+'</span></div></div>'+
     '<div class="cv-ch">이번 달에 담긴 글<span class="cv-mono">CONTENTS</span></div>'+
-    '<div class="cv-list'+(shown.length>3?' dense':'')+(shown.length>10?' two':'')+'">'+rows+(list.length>MAXR?'<div class="cv-more">외 '+(list.length-MAXR)+'편</div>':'')+'</div>'+
+    '<div class="cv-list'+(shown.length>2?' dense':'')+(shown.length>8?' two':'')+'">'+rows+(list.length>MAXR?'<div class="cv-more">외 '+(list.length-MAXR)+'편</div>':'')+'</div>'+
+    '<div class="cv-par">부모님 확인<span>(서명)<i></i></span></div>'+
     '<div class="cv-foot"><span class="cv-mono">'+(elem?'':escH(String(c.academy||''))+(c.academy?' · ':'')+'WRITING LAB')+'</span><span class="cv-mono">'+y+'. '+String(m).padStart(2,'0')+'</span></div>'+
     '</div></div>';
 }
