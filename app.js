@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-24g';
+const APP_VERSION='2026-11-13a';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -925,9 +925,11 @@ function condsToTests(conds){
     else test=()=>true;return {label:c.label,test};});
 }
 function parseExplainPartsText(text){
-  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
-    let m=line.match(/^텍스트\s*:\s*(.*)$/);
+  // 텍스트 줄은 앞뒤 띄어쓰기를 그대로 살려요("…먼저 " 다음에 노란 키워드가 바로 붙어서 "먼저부사적 용법"처럼 보이던 문제).
+  return String(text||'').split('\n').map(x=>x.replace(/\r/g,'')).filter(x=>x.trim()).map(raw=>{
+    let m=raw.match(/^\s*텍스트\s*:\s?(.*)$/);
     if(m)return {t:m[1]};
+    const line=raw.trim();
     m=line.match(/^키워드\s*:\s*(.*)$/);
     const rest=m?m[1]:line;
     const parts=rest.split('|').map(x=>x.trim());
@@ -2719,15 +2721,50 @@ async function printWritingReport(s,studentName,studentId,academyName,siblings,f
   });
 }
 /* ===== 기간별 리포트 묶음 — 정한 기간에 낸 글마다 Writing Report를 만들어서, 학생별로 쭉 이어 한 번에 인쇄·PDF 저장해요(매달 학부모님께 보낼 때 쓰세요) ===== */
-function wrCombineHtml_(htmls){
+/** 리포트 묶음이 인쇄하면 몇 쪽이 될지 미리 재요. 같은 쪽 나누기 엔진을 쓰는 '단 나누기(columns)'로 A4 한 쪽 크기를 흉내 내서 세요. */
+async function wrMeasurePages_(css,partsHtml,stage){
+  const mid=stage!=='초등';
+  const wMm=mid?190:210,hMm=mid?269:297;
+  const px=mm=>mm/25.4*96;
+  const fr=document.createElement('iframe');
+  fr.setAttribute('aria-hidden','true');
+  fr.style.cssText='position:fixed;left:-20000px;top:0;width:'+Math.ceil(px(wMm)+20)+'px;height:'+Math.ceil(px(hMm)+20)+'px;border:0;visibility:hidden';
+  document.body.appendChild(fr);
+  try{
+    const d=fr.contentDocument;
+    const mcss=css.replace(/@page\s*\{[^}]*\}/g,'').replace(/@media print\{/g,'@media all{'); // 인쇄용 규칙을 화면에도 적용해서 잴 수 있게
+    d.open();d.write('<!doctype html><html><head><meta charset="utf-8">'+WR_FONTS+'<style>'+mcss+'html,body{margin:0!important;padding:0!important;background:#fff!important}.wr-foot-fix{display:none!important}.wr-page+.wr-page{break-before:page}#mc{width:'+px(wMm)+'px;height:'+px(hMm)+'px;column-width:'+px(wMm)+'px;column-gap:0;column-fill:auto;overflow:visible}</style></head><body><div id="mc">'+partsHtml+'</div></body></html>');d.close();
+    try{if(d.fonts&&d.fonts.ready)await Promise.race([d.fonts.ready,new Promise(r=>setTimeout(r,5000))]);}catch(_){}
+    await Promise.all(Array.from(d.images||[]).map(im=>im.complete?null:new Promise(r=>{im.onload=im.onerror=r;setTimeout(r,5000);})));
+    await new Promise(r=>setTimeout(r,150));
+    const mc=d.getElementById('mc');
+    return Math.max(1,Math.round(mc.scrollWidth/px(wMm)));
+  }finally{try{fr.remove();}catch(_){}}
+}
+/** ctxs: 같은 양식의 리포트 내용들(학생별로 이어져 있어요). padOdd면 쪽수가 홀수로 끝나는 학생 다음에 빈 면을 하나 넣어서, 양면 인쇄에서 다음 학생이 앞면에서 시작하게 해요. */
+async function wrCombineHtml_(ctxs,padOdd){
+  const htmls=ctxs.map(buildWritingReportHtml_);
   const css=(htmls[0].match(/<style>([\s\S]*?)<\/style>/)||[])[1]||'';
-  const pages=htmls.map((h,i)=>{
+  const parts=htmls.map((h,i)=>{
     const a=h.indexOf('<div class="wr-page">'),b=h.lastIndexOf('<div class="noprint">');
     let part=h.slice(a,b);
     if(i>0)part=part.replace(/<div class="wr-foot-fix">[\s\S]*?<\/div>/,''); // 고정 하단 문구는 첫 리포트 것만 남겨요(겹쳐 찍히지 않게)
     return part;
   });
-  return '<!doctype html><html><head><meta charset="utf-8"><title>Writing Report</title>'+WR_FONTS+'<style>'+css+'.wr-page+.wr-page{break-before:page;page-break-before:always}</style></head><body>'+pages.join('')+'<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div></body></html>';
+  let body='';
+  if(padOdd){
+    // 학생(_sid)별로 묶어서 쪽수를 재고, 홀수면 그 학생 뒤에 빈 면을 끼워요.
+    const stage=ctxs[0].stage;
+    let k=0;
+    while(k<ctxs.length){
+      let e=k;while(e+1<ctxs.length&&ctxs[e+1]._sid===ctxs[k]._sid)e++;
+      const block=parts.slice(k,e+1).join('');
+      let n=1;try{n=await wrMeasurePages_(css,block,stage);}catch(_){n=2;}
+      body+=block+((n%2===1&&e<ctxs.length-1)?'<div class="wr-blank">&nbsp;</div>':'');
+      k=e+1;
+    }
+  }else body=parts.join('');
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Writing Report</title>'+WR_FONTS+'<style>'+css+'.wr-page+.wr-page,.wr-blank+.wr-page{break-before:page;page-break-before:always}.wr-blank{break-before:page;page-break-before:always;height:2px;color:transparent;overflow:hidden}.noprint .wr-blank{display:none}</style></head><body>'+body+'<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div></body></html>';
 }
 function periodReportEligible_(s){
   return !!s&&String(s.chapter||'')!=='Rewriting'&&String(s.text||'').trim()&&submissionHasAnyFeedback(s);
@@ -2746,6 +2783,7 @@ function openPeriodReportDialog_(opts){
     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"><label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">시작일<input type="date" class="in" id="prFrom" value="'+first+'" style="padding:8px 10px;border-radius:10px"></label>'+
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">끝나는 날<input type="date" class="in" id="prTo" value="'+today+'" style="padding:8px 10px;border-radius:10px"></label></div>'+
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684;margin-top:10px">Re-Writing 여부<select class="in" id="prRw" style="padding:8px 10px;border-radius:10px;font-size:14px"><option value="all">전체 (Re-Writing 안 한 글도 포함)</option><option value="done">Re-Writing 완료한 글만</option><option value="todo">Re-Writing 안 한 글만</option></select></label>'+
+    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:12px;cursor:pointer"><input type="checkbox" id="prDuplex" checked> 양면 인쇄용 — 쪽수가 홀수로 끝나는 학생 다음에는 빈 면을 하나 넣어요 (학생끼리 안 섞여요)</label>'+
     '<div id="prInfo" class="hint" style="margin:12px 0;min-height:38px">제출 기록을 불러오는 중…</div>'+
     '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" id="prCancel" type="button">닫기</button><button class="btn green" id="prGo" type="button" disabled>리포트 만들기 · 인쇄</button></div>';
   ov.appendChild(box);document.body.appendChild(ov);
@@ -2773,6 +2811,7 @@ function openPeriodReportDialog_(opts){
   (async()=>{try{all=await opts.loadSubs();}catch(e){all=[];}ready=true;refresh();})();
   q('prGo').onclick=async()=>{
     const p=pick();if(!p.ok.length)return;
+    const duplex=!!q('prDuplex').checked;
     close();
     const cfg=await fetchReportConfig();
     // 학생별(이름순)로 묶고, 한 학생 안에서는 낸 날짜 순으로 이어 붙여요.
@@ -2785,13 +2824,15 @@ function openPeriodReportDialog_(opts){
     const groups={};
     ordered.forEach(s=>{
       const ctx=wrCtxFor_(s,s.name||'',s.academy||'',byStu.get(String(s.id))||[s],null,cfg);
+      ctx._sid=String(s.id);
       (groups[ctx.stage]=groups[ctx.stage]||[]).push(ctx);
     });
+    // 양식(초등/중등)이 다르면 CSS가 달라서 양식마다 따로 인쇄해요.
     const stages=Object.keys(groups);
     for(let i=0;i<stages.length;i++){
       const st=stages[i];
       if(i>0&&!confirm('다음은 '+st+' 양식 리포트 '+groups[st].length+'개예요. 인쇄 화면을 열까요?'))break;
-      await printHtmlDoc_(async()=>wrCombineHtml_(groups[st].map(buildWritingReportHtml_)),'리포트 '+groups[st].length+'개를 만드는 중이에요…');
+      await printHtmlDoc_(()=>wrCombineHtml_(groups[st],duplex),'리포트 '+groups[st].length+'개를 만드는 중이에요…');
     }
   };
 }
@@ -6473,6 +6514,30 @@ function viewStudentManage(){teacherMount(w=>{
     render();
   })();
 });}
+/* 아이디 중복 검토(화면 쪽) — 저장하기 직전에 최신 명단(학생+선생님)을 다시 받아와서, 대소문자·앞뒤 공백 차이를
+   무시하고 같은 아이디가 이미 있으면 서버에 보내지 않고 바로 알려줘요. 서버(handleSaveStudent/handleSaveTeacher)도
+   같은 검토를 한 번 더 해요 — 서버가 예전 버전이어도 화면에서 먼저 막히게 이중으로 둔 거예요.
+   kind: 'student'|'teacher', originalId: 수정 중인 계정의 원래 아이디(자기 자신은 겹침으로 안 쳐요). */
+async function checkIdDup_(id,kind,originalId){
+  const norm=x=>String(x==null?'':x).trim().toLowerCase();
+  const key=norm(id);if(!key)return '';
+  let data=null;
+  try{const res=await fetch(SUBMIT_URL+'?_t='+Date.now(),{method:'GET',cache:'no-store'});data=await res.json();}catch(e){return '';}
+  if(!data||!Array.isArray(data.students))return '';
+  ROSTER=data.students;TEACHERS=Array.isArray(data.teachers)?data.teachers:[];
+  const selfS=kind==='student'?norm(originalId):null,selfT=kind==='teacher'?norm(originalId):null;
+  const stu=ROSTER.find(s=>norm(s.id)===key&&norm(s.id)!==selfS);
+  if(stu){
+    const st=studentStatus(stu);
+    let m='이미 사용 중인 아이디예요('+stu.id+'). "'+(stu.name||stu.id)+'" 학생('+(stu.academy||'학원 미지정')+(stu.cls?' · '+stu.cls:'')+')이 쓰고 있어요.';
+    if(st==='휴원'||st==='퇴원')m+=' 지금 '+st+' 상태예요 — 같은 학생이 돌아온 거라면 새로 만들지 말고 학생 명단에서 상태를 "재원"으로 바꿔주세요.';
+    else m+=' 다른 아이디를 써주세요.';
+    return m;
+  }
+  const tea=TEACHERS.find(t=>norm(t.id)===key&&norm(t.id)!==selfT);
+  if(tea)return '선생님 계정에서 이미 쓰고 있는 아이디예요('+tea.id+'). 다른 아이디를 써주세요.';
+  return '';
+}
 function viewStudentForm(existing){teacherMount(w=>{
   const isEdit=!!existing;
   const bk=el('button','backbtn','◀ 학생 명단으로');bk.onclick=viewStudentManage;w.appendChild(bk);
@@ -6530,7 +6595,13 @@ function viewStudentForm(existing){teacherMount(w=>{
     if(!payload.id){msg.className='fx no';msg.textContent='아이디를 입력해주세요.';return;}
     if(!payload.pw){msg.className='fx no';msg.textContent='비밀번호를 입력해주세요.';return;}
     if(!payload.name){msg.className='fx no';msg.textContent='이름을 입력해주세요.';return;}
-    saveBtn.disabled=true;msg.className='fx';msg.textContent='저장 중…';
+    if(/\s/.test(payload.id)){msg.className='fx no';msg.textContent='아이디에는 띄어쓰기를 넣을 수 없어요.';return;}
+    saveBtn.disabled=true;msg.className='fx';msg.textContent='아이디가 겹치지 않는지 확인하는 중…';
+    if(!isEdit||String(existing.id).trim().toLowerCase()!==payload.id.toLowerCase()){
+      const dupMsg=await checkIdDup_(payload.id,'student',isEdit?existing.id:'');
+      if(dupMsg){msg.className='fx no';msg.textContent=dupMsg+' (저장하지 않았어요.)';saveBtn.disabled=false;return;}
+    }
+    msg.textContent='저장 중…';
     try{
       const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
       let data=null;try{data=await res.json();}catch(e){}
@@ -6711,7 +6782,13 @@ function viewTeacherForm(existing){teacherMount(w=>{
     if(!payload.id){msg.className='fx no';msg.textContent='아이디를 입력해주세요.';return;}
     if(!payload.pw){msg.className='fx no';msg.textContent='비밀번호를 입력해주세요.';return;}
     if(!payload.name){msg.className='fx no';msg.textContent='이름을 입력해주세요.';return;}
-    saveBtn.disabled=true;msg.className='fx';msg.textContent='저장 중…';
+    if(/\s/.test(payload.id)){msg.className='fx no';msg.textContent='아이디에는 띄어쓰기를 넣을 수 없어요.';return;}
+    saveBtn.disabled=true;msg.className='fx';msg.textContent='아이디가 겹치지 않는지 확인하는 중…';
+    if(!isEdit||String(existing.id).trim().toLowerCase()!==payload.id.toLowerCase()){
+      const dupMsg=await checkIdDup_(payload.id,'teacher',isEdit?existing.id:'');
+      if(dupMsg){msg.className='fx no';msg.textContent=dupMsg+' (저장하지 않았어요.)';saveBtn.disabled=false;return;}
+    }
+    msg.textContent='저장 중…';
     try{
       const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
       let data=null;try{data=await res.json();}catch(e){}
