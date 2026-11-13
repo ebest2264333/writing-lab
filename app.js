@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-13i';
+const APP_VERSION='2026-11-13n';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2643,7 +2643,6 @@ function buildWritingReportHtml_(ctx){
         [['과제 완성',r.taskGrade,r.taskScore],['형식',r.formatGrade,r.formatScore]].map(x=>
           '<div class="bar"><div class="bh"><span>'+x[0]+'</span><b>'+escH(String(x[1]||'-'))+' · '+escH(String(x[2]!=null?x[2]:'-'))+' / 10</b></div><div class="tr"><div class="fl" style="width:'+Math.max(0,Math.min(100,(Number(x[2])||0)*10))+'%;background:'+wrGradeColor_(x[1])+'"></div></div></div>').join('')+
       '</div><div class="wr-total"><div class="l">TOTAL<b>종합 점수</b></div><div class="v">'+escH(String(r.totalScore!=null?r.totalScore:'-'))+'<small>/ 20 · '+escH(String(r.totalGrade||''))+'</small></div></div></div>'):'';
-    const n=(k)=>String(r?k:k-1).padStart(2,'0');
     body='<div class="wr-hero"><div class="eyebrow">WRITING-LAB · REPORT</div><h1>Writing <span>Report</span></h1><div class="sub">제출한 영작과 첨삭, 다시 쓴 글을 정리한 학습 리포트입니다.</div>'+wrLogoHtml_(ctx)+'</div>'+
       '<div class="wr-in"><div class="wr-meta"><div class="row topic"><div class="c"><div class="k">TOPIC<b>주제</b></div><div class="v">'+escH(ctx.topic)+'</div></div></div>'+
       '<div class="row"><div class="c"><div class="k">NAME<b>이름</b></div><div class="v">'+escH(ctx.name)+'</div></div><div class="c"><div class="k">CLASS<b>반</b></div><div class="v">'+escH(ctx.cls||'-')+'</div></div><div class="c"><div class="k">LEVEL<b>레벨</b></div><div class="v">'+escH(ctx.level||'-')+'</div></div><div class="c"><div class="k">DATE<b>날짜</b></div><div class="v">'+escH(ctx.date)+'</div></div></div></div>'+
@@ -3354,11 +3353,12 @@ function schoolStageFromText(s){
 }
 /* 그 제출물의 문장별 AI 첨삭(claude+gpt)에 달린 "틀린 부분" 개수를 세요 — 형식(문법·철자) 등급을
  * 자동으로 매길 때 "문장 수 대비 오류가 얼마나 적은지"를 재는 잣대로 써요. */
-function countAiErrors(sub){
+function countAiErrors(sub,skipSuggestions){
   const aifb=parseAiFeedback(sub&&sub.aiFeedback),aifbGpt=parseAiFeedback(sub&&sub.aiFeedbackGpt);
   let n=0;
+  // skipSuggestions: "더 자연스러운 제안"(보라색)은 틀린 게 아니라서 오류 개수에서 빼요.
   [aifb,aifbGpt].forEach(fb=>{
-    Object.keys(fb.sentences||{}).forEach(k=>{const e=fb.sentences[k];if(e&&typeof e==='object'&&Array.isArray(e.errors))n+=e.errors.length;});
+    Object.keys(fb.sentences||{}).forEach(k=>{const e=fb.sentences[k];if(e&&typeof e==='object'&&Array.isArray(e.errors))n+=skipSuggestions?e.errors.filter(x=>!x||x.type!=='suggestion').length:e.errors.length;});
   });
   return n;
 }
@@ -3382,16 +3382,18 @@ function autoComputeRubric(sub){
   const stage=schoolStageFromText(classLevelName)||schoolStageFromText(sub.school)||'';
   const isElementary=stage==='초';
   // 초등학생: 과제완성 80/65/50/35, 형식 오류비율 0.2/0.4/0.6/0.85 (관대한 기준)
-  // 중·고등학생(기본값 포함): 과제완성 90/80/70/60, 형식 오류비율 0.1/0.25/0.45/0.7 (예전 기준대로 엄격하게)
+  // 중·고등학생(기본값 포함): 과제완성 85/72/60/45, 형식 오류비율 0.35/0.6/0.85/1.2 (제안은 오류로 안 세요).
+  // 예전 기준(90/80/70/60, 0.1/0.25/0.45/0.7)은 실제 중등 글 90편에 대 보니 형식이 전부 D·E, 총점 평균 8.7/20(최고 14)로
+  // 너무 낮게 나와서, 실제 분포(점수 중앙값 73, 문장당 오류 중앙값 0.64)에 맞춰 다시 잡았어요(평균 13.7/20, 4~20점에 고르게 퍼져요).
   const taskGrade=isElementary
     ? (scoreVal>=80?'A':scoreVal>=65?'B':scoreVal>=50?'C':scoreVal>=35?'D':'E')
-    : (scoreVal>=90?'A':scoreVal>=80?'B':scoreVal>=70?'C':scoreVal>=60?'D':'E');
+    : (scoreVal>=85?'A':scoreVal>=72?'B':scoreVal>=60?'C':scoreVal>=45?'D':'E');
   const sents=sub.text?splitSentences(sub.text):[];
-  const errCount=countAiErrors(sub);
+  const errCount=countAiErrors(sub,!isElementary);
   const errRatio=sents.length?(errCount/sents.length):(errCount?1:0);
   const formatGrade=isElementary
     ? (errRatio<=0.2?'A':errRatio<=0.4?'B':errRatio<=0.6?'C':errRatio<=0.85?'D':'E')
-    : (errRatio<=0.1?'A':errRatio<=0.25?'B':errRatio<=0.45?'C':errRatio<=0.7?'D':'E');
+    : (errRatio<=0.35?'A':errRatio<=0.6?'B':errRatio<=0.85?'C':errRatio<=1.2?'D':'E');
   const taskScore=rubricGradeToScore(taskGrade),formatScore=rubricGradeToScore(formatGrade);
   const totalScore=taskScore+formatScore;
   const totalPercent=Math.round(totalScore/20*100);
