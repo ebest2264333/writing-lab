@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-13a';
+const APP_VERSION='2026-11-13b';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2753,11 +2753,12 @@ async function wrCombineHtml_(ctxs,padOdd){
   });
   let body='';
   if(padOdd){
-    // 학생(_sid)별로 묶어서 쪽수를 재고, 홀수면 그 학생 뒤에 빈 면을 끼워요.
+    // padOdd: 'report'면 리포트(글)마다, 'student'(또는 true)면 학생(_sid)별로 묶어서 쪽수를 재고, 홀수면 그 뒤에 빈 면을 끼워요.
+    const perReport=padOdd==='report';
     const stage=ctxs[0].stage;
     let k=0;
     while(k<ctxs.length){
-      let e=k;while(e+1<ctxs.length&&ctxs[e+1]._sid===ctxs[k]._sid)e++;
+      let e=k;while(!perReport&&e+1<ctxs.length&&ctxs[e+1]._sid===ctxs[k]._sid)e++;
       const block=parts.slice(k,e+1).join('');
       let n=1;try{n=await wrMeasurePages_(css,block,stage);}catch(_){n=2;}
       body+=block+((n%2===1&&e<ctxs.length-1)?'<div class="wr-blank">&nbsp;</div>':'');
@@ -2783,7 +2784,7 @@ function openPeriodReportDialog_(opts){
     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"><label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">시작일<input type="date" class="in" id="prFrom" value="'+first+'" style="padding:8px 10px;border-radius:10px"></label>'+
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">끝나는 날<input type="date" class="in" id="prTo" value="'+today+'" style="padding:8px 10px;border-radius:10px"></label></div>'+
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684;margin-top:10px">Re-Writing 여부<select class="in" id="prRw" style="padding:8px 10px;border-radius:10px;font-size:14px"><option value="all">전체 (Re-Writing 안 한 글도 포함)</option><option value="done">Re-Writing 완료한 글만</option><option value="todo">Re-Writing 안 한 글만</option></select></label>'+
-    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:12px;cursor:pointer"><input type="checkbox" id="prDuplex" checked> 양면 인쇄용 — 쪽수가 홀수로 끝나는 학생 다음에는 빈 면을 하나 넣어요 (학생끼리 안 섞여요)</label>'+
+    '<div style="font-size:12.5px;font-weight:700;color:#6b7684;margin:12px 0 4px">양면 인쇄용 빈 면</div><select id="prDuplex" class="in" style="padding:9px;font-size:13.5px;border-radius:10px"><option value="report">글마다 — 홀수 쪽으로 끝나는 리포트 다음에 빈 면 (리포트마다 새 종이에서 시작)</option><option value="student">학생마다 — 한 학생의 리포트는 이어서, 다음 학생만 새 종이에서 시작</option><option value="none">넣지 않음 (단면 인쇄)</option></select>'+
     '<div id="prInfo" class="hint" style="margin:12px 0;min-height:38px">제출 기록을 불러오는 중…</div>'+
     '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" id="prCancel" type="button">닫기</button><button class="btn green" id="prGo" type="button" disabled>리포트 만들기 · 인쇄</button></div>';
   ov.appendChild(box);document.body.appendChild(ov);
@@ -2811,7 +2812,7 @@ function openPeriodReportDialog_(opts){
   (async()=>{try{all=await opts.loadSubs();}catch(e){all=[];}ready=true;refresh();})();
   q('prGo').onclick=async()=>{
     const p=pick();if(!p.ok.length)return;
-    const duplex=!!q('prDuplex').checked;
+    const duplex=q('prDuplex').value==='none'?'':q('prDuplex').value;
     close();
     const cfg=await fetchReportConfig();
     // 학생별(이름순)로 묶고, 한 학생 안에서는 낸 날짜 순으로 이어 붙여요.
