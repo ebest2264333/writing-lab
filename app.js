@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-13n';
+const APP_VERSION='2026-11-13q';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2752,11 +2752,11 @@ const WR_COVER_CSS='.wr-cover{break-inside:avoid;page-break-inside:avoid}.wr-cov
   ".wr-cover .cv-wol{padding-bottom:10px}.wr-cover .cv-wol .k{font-family:Jua,'Noto Sans KR',sans-serif;font-size:40px;line-height:1.1}.wr-cover .cv-wol .cv-mono{margin-top:8px;font-size:12.5px}"+
   ".wr-cover .cv-title{font-family:Jua,'Noto Sans KR',sans-serif;font-size:66px;line-height:1.12;margin-top:7mm}.wr-cover .cv-tag{font-size:15px;color:#4A4640;margin-top:10px}"+
   '.wr-cover .cv-box{margin-top:8mm;border:1.5px solid #DDD6C8;border-radius:16px;background:#fff;padding:20px 20px 16px;display:flex;gap:16px;align-items:flex-end;font-family:Jua,\'Noto Sans KR\',sans-serif;font-size:15px;color:#6E675A}'+
-  '.wr-cover .cv-box .f{display:flex;align-items:flex-end;gap:8px}.wr-cover .cv-box .f.n{flex:2}.wr-cover .cv-box .f.c{flex:1}.wr-cover .cv-box .v{flex:1;border-bottom:1.5px solid #D5CFC3;font-family:\'Noto Sans KR\',sans-serif;font-weight:500;font-size:17px;color:#2B2926;padding:0 4px 5px;min-height:30px;white-space:nowrap;overflow:hidden}'+
+  '.wr-cover .cv-box .f{display:flex;align-items:flex-end;gap:8px}.wr-cover .cv-box .f.n{flex:2}.wr-cover .cv-box .f.c{flex:1}.wr-cover .cv-box .v{flex:1;border-bottom:1.5px solid #D5CFC3;font-family:Jua,\'Noto Sans KR\',sans-serif;font-weight:400;font-size:20px;color:#2B2926;padding:0 6px 3px;min-height:30px;white-space:nowrap;overflow:hidden}'+
   ".wr-cover .cv-ch{margin-top:8mm;display:flex;align-items:baseline;gap:10px;font-family:Jua,'Noto Sans KR',sans-serif;font-size:20px}.wr-cover .cv-ch .cv-mono{font-size:10px;color:#9A917F}"+
   '.wr-cover .cv-list{margin-top:8px;border:1.5px solid #DDD6C8;border-radius:16px;background:#fff;padding:4px 20px}'+
   '.wr-cover .cv-row{display:flex;align-items:center;gap:16px;padding:11px 0;border-bottom:1px solid #E6E0D4}.wr-cover .cv-row:last-child{border-bottom:0}'+
-  ".wr-cover .cv-row .no{flex:0 0 30px;font-family:Jua,sans-serif;font-size:18px}.wr-cover .cv-row .tg{flex:0 0 96px;text-align:center;font-family:Jua,'Noto Sans KR',sans-serif;font-size:11.5px;border-radius:999px;padding:2px 6px;background:#DCEBFB;color:#1B4A8A;white-space:nowrap;overflow:hidden}.wr-cover .cv-row .tg.rw{background:#D8F3E2;color:#1C7A4D}"+
+  ".wr-cover .cv-row .no{flex:0 0 30px;font-family:Jua,sans-serif;font-size:18px}.wr-cover .cv-row .tg{flex:0 0 112px;text-align:center;font-family:Jua,'Noto Sans KR',sans-serif;font-size:11.5px;border-radius:999px;padding:2px 6px;background:#DCEBFB;color:#1B4A8A;white-space:nowrap;overflow:hidden}.wr-cover .cv-row .tg.k-drill{background:#DCEBFB;color:#1B4A8A}.wr-cover .cv-row .tg.k-para{background:#FFE6C9;color:#A2560A}.wr-cover .cv-row .tg.k-art{background:#EAE2FB;color:#5B3CB0}.wr-cover .cv-row .tg.k-story{background:#FFDDE5;color:#B03A5B}.wr-cover .cv-row .tg.k-etc{background:#E4F3E9;color:#1C7A4D}"+
   ".wr-cover .cv-row .tt{flex:1;font-size:15.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.wr-cover .cv-row .rw2{flex:0 0 auto;font-family:Jua,'Noto Sans KR',sans-serif;font-size:11px;border-radius:999px;padding:2px 9px;background:#D8F3E2;color:#1C7A4D}"+
   '.wr-cover .cv-list.dense .cv-row{padding:6px 0}.wr-cover .cv-list.dense .tt{font-size:13.5px}.wr-cover .cv-list.dense .no{font-size:15px}.wr-cover .cv-more{font-size:12px;color:#8A8274;padding:6px 0 8px;text-align:right}'+
   // 글이 많을 때(4편 이상)는 위쪽(숫자·제목)을 줄여서 목록 자리를 넓혀요. 11편부터는 목록을 두 줄(2단)로 놓아요.
@@ -2766,6 +2766,51 @@ const WR_COVER_CSS='.wr-cover{break-inside:avoid;page-break-inside:avoid}.wr-cov
   '.wr-cover .cv-list.two{display:grid;grid-template-columns:1fr 1fr;column-gap:22px}.wr-cover .cv-list.two .cv-row{gap:9px;min-width:0}.wr-cover .cv-list.two .tg{flex-basis:78px;font-size:10px}.wr-cover .cv-list.two .rw2{display:none}.wr-cover .cv-list.two .cv-more{grid-column:1/-1}'+
   '.wr-cover .cv-foot{margin-top:auto;border-top:1px solid #DDD6C8;padding-top:10px;display:flex;justify-content:space-between}.wr-cover .cv-foot .cv-mono{font-size:9.5px;color:#9A917F}';
 const WR_MONTHS_EN=['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
+/** 글 종류 → 표지 목록에 찍을 [영어 이름, 색 구분용 클래스]. 종류마다 띠 색이 달라요. */
+function wrKindTag_(kind){
+  const k=String(kind||'');
+  if(k==='문법드릴'||/pattern/i.test(k))return ['Pattern Drill','k-drill'];
+  if(k==='글쓰기'||/paragraph/i.test(k))return ['Paragraph Writing','k-para'];
+  if(k==='기사요약'||/article/i.test(k))return ['Article','k-art'];
+  if(/story/i.test(k))return ['Story Writing','k-story'];
+  if(k==='수행평가')return ['Exam','k-etc'];
+  return [k||'Writing','k-etc'];
+}
+/* 중등부 월별 표지(남색). 왼쪽 세로 띠 + 남색 숫자 상자 + 이름·반 표 + 글 목록. */
+const WR_COVER_MID_CSS='.wr-cvm{break-inside:avoid;page-break-inside:avoid;padding:0!important;background:#fff}.wr-cvm .cm{height:262mm;display:flex;overflow:hidden;color:#1F2430;border:1px solid #E3E6EC;border-radius:6px}'+
+  ".wr-cvm .sp{flex:0 0 46px;background:#1B4A8A;border-right:7px solid #6C9AD0;color:#fff;display:flex;flex-direction:column;justify-content:space-between;align-items:center;padding:34px 0;font-family:Inter,sans-serif;font-weight:900}"+
+  '.wr-cvm .sp span{writing-mode:vertical-rl;white-space:nowrap}.wr-cvm .sp .a{font-size:22px;letter-spacing:.04em}.wr-cvm .sp .b{font-size:9.5px;letter-spacing:.3em;font-weight:700}'+
+  '.wr-cvm .bd{flex:1;min-width:0;display:flex;flex-direction:column;padding:34px 36px 30px 34px}'+
+  ".wr-cvm .mono{font-family:Inter,sans-serif;font-size:9.5px;font-weight:800;letter-spacing:.18em;color:#1B4A8A}"+
+  ".wr-cvm .top{display:flex;justify-content:space-between;align-items:center;min-height:72px}.wr-cvm .top .l{display:flex;align-items:center;gap:9px}.wr-cvm .top .l::before{content:'';width:20px;height:4px;background:#E07B2A;display:inline-block}.wr-cvm .logo{width:72px;height:72px;object-fit:contain}"+
+  ".wr-cvm .mk{margin-top:9mm;display:flex;align-items:flex-end;gap:16px}.wr-cvm .sq{width:200px;height:200px;background:#1B4A8A;border-bottom:8px solid #6C9AD0;color:#fff;display:flex;align-items:center;justify-content:center;font-family:Inter,sans-serif;font-weight:900;font-size:128px;letter-spacing:-.05em;line-height:1}.wr-cvm .sq.one{font-size:150px}"+
+  ".wr-cvm .wol .k{font-size:30px;font-weight:900;color:#1B4A8A;line-height:1.1}.wr-cvm .wol .mono{color:#4A5262;margin-top:6px}"+
+  ".wr-cvm .ttl{font-family:Inter,'Noto Sans KR',sans-serif;font-weight:900;font-size:58px;line-height:1.02;letter-spacing:-.03em;color:#1B4A8A;margin-top:8mm}.wr-cvm .ttl span{color:#6C9AD0}.wr-cvm .tag{font-size:13.5px;color:#4A5262;margin-top:12px}"+
+  ".wr-cvm .nm{margin-top:9mm;border-top:2px solid #1B4A8A;border-bottom:1px solid #1F2430;display:grid;grid-template-columns:2fr 1fr}.wr-cvm .nm .c{display:flex;align-items:center;gap:22px;padding:8px 2px}.wr-cvm .nm .c+.c{border-left:1px solid #D3D8E1;padding-left:12px}"+
+  ".wr-cvm .nm .k{font-family:Inter,sans-serif;font-size:8px;font-weight:800;letter-spacing:.14em;color:#6B7486;line-height:1.2}.wr-cvm .nm .k b{display:block;font-family:'Noto Sans KR';font-size:11px;letter-spacing:0;color:#1F2430}.wr-cvm .nm .v{font-size:16px;font-weight:800;white-space:nowrap;overflow:hidden}"+
+  ".wr-cvm .ch{margin-top:8mm;display:flex;align-items:baseline;gap:10px;font-size:14.5px;font-weight:900;border-bottom:1.5px solid #1F2430;padding-bottom:6px}.wr-cvm .ch .mono{font-size:8.5px;color:#6B7486}"+
+  ".wr-cvm .row{display:flex;align-items:center;gap:20px;padding:10px 0;border-bottom:1px solid #D3D8E1}.wr-cvm .row .no{flex:0 0 26px;font-family:Inter,sans-serif;font-weight:900;font-size:17px;color:#1B4A8A}"+
+  ".wr-cvm .row .tg{flex:0 0 128px;text-align:center;font-family:Inter,sans-serif;font-size:8.5px;font-weight:800;letter-spacing:.1em;padding:3px 4px;border:1.5px solid #1B4A8A;background:#1B4A8A;color:#fff;white-space:nowrap;overflow:hidden;text-transform:uppercase}"+
+  ".wr-cvm .row .tg.k-para{background:#E07B2A;border-color:#E07B2A}.wr-cvm .row .tg.k-art{background:#6C9AD0;border-color:#6C9AD0}.wr-cvm .row .tg.k-story{background:#fff;color:#1B4A8A}.wr-cvm .row .tg.k-etc{background:#fff;color:#6B7486;border-color:#8A93A5}"+
+  ".wr-cvm .row .tt{flex:1;font-size:14.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"+
+  ".wr-cvm .list.dense .row{padding:6px 0}.wr-cvm .list.dense .tt{font-size:13px}.wr-cvm .list.two{display:grid;grid-template-columns:1fr 1fr;column-gap:22px}.wr-cvm .list.two .row{gap:10px;min-width:0}.wr-cvm .list.two .tg{flex-basis:104px;font-size:7px;letter-spacing:.04em}.wr-cvm .more{font-size:11.5px;color:#6B7486;padding-top:6px;text-align:right}"+
+  ".wr-cvm .cm.cp .mk{margin-top:4mm}.wr-cvm .cm.cp .sq{width:132px;height:132px;font-size:84px}.wr-cvm .cm.cp .sq.one{font-size:98px}.wr-cvm .cm.cp .wol .k{font-size:24px}.wr-cvm .cm.cp .ttl{font-size:44px;margin-top:5mm}.wr-cvm .cm.cp .tag{margin-top:8px}.wr-cvm .cm.cp .nm{margin-top:6mm}.wr-cvm .cm.cp .ch{margin-top:6mm}"+
+  ".wr-cvm .ft{margin-top:auto;border-top:1px solid #D3D8E1;padding-top:9px;display:flex;justify-content:space-between}.wr-cvm .ft .mono{font-size:8px;color:#4A5262}.wr-cvm .ft b{color:#E07B2A;margin-left:12px}";
+function wrCoverMidPart_(ym,list){
+  const c=list[0];
+  const y=ym.slice(0,4),m=+ym.slice(5,7),en=WR_MONTHS_EN[m-1]||'';
+  const MAXR=18,shown=list.slice(0,MAXR);
+  const rows=shown.map((x,i)=>'<div class="row"><span class="no">'+String(i+1).padStart(2,'0')+'</span><span class="tg '+wrKindTag_(x._kind)[1]+'">'+escH(wrKindTag_(x._kind)[0])+'</span><span class="tt">'+escH(x.topic||'')+'</span></div>').join('');
+  return '<div class="wr-page wr-cvm"><div class="cm'+(shown.length>4?' cp':'')+'"><div class="sp"><span class="a">WRITING-LAB</span><span class="b">MONTHLY · REPORT</span></div><div class="bd">'+
+    '<div class="top"><div class="l mono">WRITING-LAB · MONTHLY REPORT</div>'+(c.logo?'<img class="logo" src="'+c.logo+'" alt="">':'')+'</div>'+
+    '<div class="mk"><div class="sq'+(m<10?' one':'')+'">'+m+'</div><div class="wol"><div class="k">월</div><div class="mono">'+en+' '+y+'</div></div></div>'+
+    '<div class="ttl">Monthly<br>Writing <span>Report</span></div><div class="tag">고쳐 쓴 문장만큼 단단해지는 나의 영어</div>'+
+    '<div class="nm"><div class="c"><div class="k">NAME<b>이름</b></div><div class="v">'+escH(c.name||'')+'</div></div><div class="c"><div class="k">CLASS<b>반</b></div><div class="v">'+escH(c.cls||'')+'</div></div></div>'+
+    '<div class="ch">이번 달에 담긴 글<span class="mono">CONTENTS</span></div>'+
+    '<div class="list'+(shown.length>4?' dense':'')+(shown.length>10?' two':'')+'">'+rows+'</div>'+(list.length>MAXR?'<div class="more">외 '+(list.length-MAXR)+'편</div>':'')+
+    '<div class="ft"><span class="mono">'+escH(String(c.academy||''))+(c.academy?' · ':'')+'WRITING LAB</span><span class="mono">'+y+'. '+String(m).padStart(2,'0')+'<b>MIDDLE SCHOOL</b></span></div>'+
+    '</div></div></div>';
+}
 /** 월별 표지 한 장(달을 골라 뽑을 때만). ym: "2026-10", list: 그 학생의 리포트 내용들(ctx). 로고는 그 학생 학원 것이 자동으로 들어가고,
  *  아래 "이번 달에 담긴 글"에 그 달 리포트 목록이 들어가요. */
 function wrCoverPart_(ym,list){
@@ -2773,7 +2818,7 @@ function wrCoverPart_(ym,list){
   const y=ym.slice(0,4),m=+ym.slice(5,7);
   const en=WR_MONTHS_EN[m-1]||'';
   const MAXR=18,shown=list.slice(0,MAXR);
-  const rows=shown.map((x,i)=>'<div class="cv-row"><span class="no">'+String(i+1).padStart(2,'0')+'</span><span class="tg">'+escH(x._kind||'Writing')+'</span><span class="tt">'+escH(x.topic||'')+'</span>'+'</div>').join('');
+  const rows=shown.map((x,i)=>'<div class="cv-row"><span class="no">'+String(i+1).padStart(2,'0')+'</span><span class="tg '+wrKindTag_(x._kind)[1]+'">'+escH(wrKindTag_(x._kind)[0])+'</span><span class="tt">'+escH(x.topic||'')+'</span>'+'</div>').join('');
   const elem=c.stage==='초등';
   return '<div class="wr-page wr-cover"><div class="cv'+(shown.length>3?' cp':'')+'">'+
     '<div class="cv-top"><div class="l"><i style="background:#F0796B"></i><i style="background:#3FBE87"></i><i style="background:#5AA5F0"></i><span class="cv-mono">WRITING-LAB · MONTHLY REPORT</span></div>'+(c.logo?'<img class="cv-logo" src="'+c.logo+'" alt="">':'')+'</div>'+
@@ -2788,11 +2833,11 @@ function wrCoverPart_(ym,list){
 /** coverLabel("2026-10" 같은 달)이 있으면 학생마다 맨 앞에 월별 표지를 한 장 넣어요. */
 async function wrCombineHtml_(ctxs,padOdd,coverLabel){
   const css0=((buildWritingReportHtml_(ctxs[0]).match(/<style>([\s\S]*?)<\/style>/)||[])[1]||'');
-  const css=css0+WR_COVER_CSS;
+  const css=css0+WR_COVER_CSS+WR_COVER_MID_CSS;
   if(coverLabel){
     const withCover=[];let k=0;
     while(k<ctxs.length){let e=k;while(e+1<ctxs.length&&ctxs[e+1]._sid===ctxs[k]._sid)e++;
-      withCover.push({_sid:ctxs[k]._sid,stage:ctxs[k].stage,_cover:wrCoverPart_(coverLabel,ctxs.slice(k,e+1))});
+      withCover.push({_sid:ctxs[k]._sid,stage:ctxs[k].stage,_cover:(ctxs[k].stage==='초등'?wrCoverPart_:wrCoverMidPart_)(coverLabel,ctxs.slice(k,e+1))});
       for(let j=k;j<=e;j++)withCover.push(ctxs[j]);k=e+1;}
     ctxs=withCover;
   }
@@ -2821,8 +2866,10 @@ async function wrCombineHtml_(ctxs,padOdd,coverLabel){
   }else body=parts.join('');
   return '<!doctype html><html><head><meta charset="utf-8"><title>Writing Report</title>'+WR_FONTS+'<style>'+css+'.wr-page+.wr-page,.wr-blank+.wr-page{break-before:page;page-break-before:always}.wr-blank{break-before:page;page-break-before:always;height:2px;color:transparent;overflow:hidden}.noprint .wr-blank{display:none}</style></head><body>'+body+'<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div></body></html>';
 }
+/** 수행평가(수행대비) 글인지 — 기간별(월별) 리포트 묶음에는 넣지 않아요. */
+function isExamSubmission_(s){return !!s&&(String(s.chapter||'')==='Performance Assessment'||submissionTypeLabel(s)==='수행평가');}
 function periodReportEligible_(s){
-  return !!s&&String(s.chapter||'')!=='Rewriting'&&String(s.text||'').trim()&&submissionHasAnyFeedback(s);
+  return !!s&&String(s.chapter||'')!=='Rewriting'&&!isExamSubmission_(s)&&String(s.text||'').trim()&&submissionHasAnyFeedback(s);
 }
 /** opts: {title, loadSubs: async()=>제출물 전체(여러 학생이면 id별로 섞여 있어도 돼요)} */
 function openPeriodReportDialog_(opts){
@@ -2873,7 +2920,7 @@ function openPeriodReportDialog_(opts){
   let all=[],ready=false;
   const pick=()=>{
     const f=q('prFrom').value,t=q('prTo').value;
-    const inRange=all.filter(s=>{const d=String(s.datetime||'').slice(0,10);return d&&(!f||d>=f)&&(!t||d<=t)&&String(s.chapter||'')!=='Rewriting'&&String(s.text||'').trim();});
+    const inRange=all.filter(s=>{const d=String(s.datetime||'').slice(0,10);return d&&(!f||d>=f)&&(!t||d<=t)&&String(s.chapter||'')!=='Rewriting'&&!isExamSubmission_(s)&&String(s.text||'').trim();});
     const rwMode=q('prRw').value;
     const byId=new Map();all.forEach(x=>{const k=String(x.id);if(!byId.has(k))byId.set(k,[]);byId.get(k).push(x);});
     const hasRw=s=>{try{return !!writingReportPair_(s,byId.get(String(s.id))||[s]).rewrite;}catch(e){return false;}};
