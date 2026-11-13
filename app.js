@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-13c';
+const APP_VERSION='2026-11-13i';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2553,7 +2553,7 @@ function wrDateStr_(dt,sep){
 }
 const WR_FONTS=
   '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'+
-  '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;700;800;900&family=Jua&family=Noto+Sans+KR:wght@400;500;700;800;900&display=swap" rel="stylesheet">';
+  '<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@600;700;800;900&family=Jua&family=Noto+Sans+KR:wght@400;500;700;800;900&display=swap" rel="stylesheet">';
 function wrErrHtml_(e,tpl){
   const type=e.type||'wrong';
   const chip=type==='suggestion'?'<span class="chip s">제안</span>':type==='missing'?'<span class="chip m">빠진 표현</span>':'';
@@ -2661,7 +2661,7 @@ function buildWritingReportHtml_(ctx){
       '<div class="wr-h">'+String(k+1).padStart(2,'0')+'. 완성된 글</div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 완성된 글이 없어요)</p>')+'</div>'+
       '<div class="wr-h">'+String(k+2).padStart(2,'0')+'. 선생님 코멘트</div><div class="wr-cmt">'+cmtHtml+'</div>'+
       '<div class="wr-h">'+String(k+3).padStart(2,'0')+'. 문장별 첨삭</div><div class="wr-card2">'+sentsHtml+'</div>'+
-      '<div class="wr-par">부모님 확인<span>(서명)<i></i></span></div><div class="wr-foot">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div><div class="wr-foot-fix">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div>';
+      '<div class="wr-foot">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div><div class="wr-foot-fix">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div>';
   }
   return '<!doctype html><html><head><meta charset="utf-8"><title>'+title+'</title>'+WR_FONTS+'<style>'+WR_CSS_COMMON+(e?WR_CSS_ELEM:WR_CSS_MID)+'</style></head><body><div class="wr-page">'+body+'</div>'+printBtn+'</body></html>';
 }
@@ -2742,10 +2742,65 @@ async function wrMeasurePages_(css,partsHtml,stage){
   }finally{try{fr.remove();}catch(_){}}
 }
 /** ctxs: 같은 양식의 리포트 내용들(학생별로 이어져 있어요). padOdd면 쪽수가 홀수로 끝나는 학생 다음에 빈 면을 하나 넣어서, 양면 인쇄에서 다음 학생이 앞면에서 시작하게 해요. */
-async function wrCombineHtml_(ctxs,padOdd){
-  const htmls=ctxs.map(buildWritingReportHtml_);
-  const css=(htmls[0].match(/<style>([\s\S]*?)<\/style>/)||[])[1]||'';
-  const parts=htmls.map((h,i)=>{
+/** 기간별 리포트의 학생별 표지 한 장. label: "2026년 10월" 같은 기간 이름, list: 그 학생의 리포트 내용들(ctx). */
+const WR_COVER_CSS='.wr-cover{break-inside:avoid;page-break-inside:avoid}.wr-cover .cv{position:relative;height:255mm;display:flex;flex-direction:column;color:#2B2926}'+
+  ".wr-cover .cv-mono{font-family:'DM Mono',ui-monospace,Consolas,monospace;letter-spacing:.2em;font-size:11px;font-weight:500;color:#6E675A}"+
+  '.wr-cover .cv-top{display:flex;align-items:center;justify-content:space-between;min-height:88px}.wr-cover .cv-top .l{display:flex;align-items:center;gap:6px}.wr-cover .cv-top i{width:11px;height:11px;border-radius:50%;display:inline-block}.wr-cover .cv-top .cv-mono{margin-left:8px}'+
+  '.wr-cover .cv-logo{width:88px;height:88px;object-fit:contain}'+
+  '.wr-cover .cv-mark{margin-top:11mm;display:flex;align-items:flex-end;gap:26px}.wr-cover .cv-circ{position:relative;width:236px;height:236px;flex:0 0 auto}'+
+  '.wr-cover .cv-circ b{position:absolute;width:150px;height:150px;border-radius:50%;opacity:.8}.wr-cover .cv-circ .c1{left:0;top:24px;background:#FFB3A6}.wr-cover .cv-circ .c2{left:86px;top:0;background:#93DCAC}.wr-cover .cv-circ .c3{left:47px;top:86px;background:#9FC8F5}'+
+  ".wr-cover .cv-num{position:absolute;left:-8px;top:42px;width:260px;text-align:center;font-family:Jua,'Noto Sans KR',sans-serif;font-size:150px;line-height:1;color:#2B2926}.wr-cover .cv-num.sm{font-size:132px;top:52px}"+
+  ".wr-cover .cv-wol{padding-bottom:10px}.wr-cover .cv-wol .k{font-family:Jua,'Noto Sans KR',sans-serif;font-size:40px;line-height:1.1}.wr-cover .cv-wol .cv-mono{margin-top:8px;font-size:12.5px}"+
+  ".wr-cover .cv-title{font-family:Jua,'Noto Sans KR',sans-serif;font-size:66px;line-height:1.12;margin-top:7mm}.wr-cover .cv-tag{font-size:15px;color:#4A4640;margin-top:10px}"+
+  '.wr-cover .cv-box{margin-top:8mm;border:1.5px solid #DDD6C8;border-radius:16px;background:#fff;padding:20px 20px 16px;display:flex;gap:16px;align-items:flex-end;font-family:Jua,\'Noto Sans KR\',sans-serif;font-size:15px;color:#6E675A}'+
+  '.wr-cover .cv-box .f{display:flex;align-items:flex-end;gap:8px}.wr-cover .cv-box .f.n{flex:2}.wr-cover .cv-box .f.c{flex:1}.wr-cover .cv-box .v{flex:1;border-bottom:1.5px solid #D5CFC3;font-family:\'Noto Sans KR\',sans-serif;font-weight:500;font-size:17px;color:#2B2926;padding:0 4px 5px;min-height:30px;white-space:nowrap;overflow:hidden}'+
+  ".wr-cover .cv-ch{margin-top:8mm;display:flex;align-items:baseline;gap:10px;font-family:Jua,'Noto Sans KR',sans-serif;font-size:20px}.wr-cover .cv-ch .cv-mono{font-size:10px;color:#9A917F}"+
+  '.wr-cover .cv-list{margin-top:8px;border:1.5px solid #DDD6C8;border-radius:16px;background:#fff;padding:4px 20px}'+
+  '.wr-cover .cv-row{display:flex;align-items:center;gap:16px;padding:11px 0;border-bottom:1px solid #E6E0D4}.wr-cover .cv-row:last-child{border-bottom:0}'+
+  ".wr-cover .cv-row .no{flex:0 0 30px;font-family:Jua,sans-serif;font-size:18px}.wr-cover .cv-row .tg{flex:0 0 96px;text-align:center;font-family:Jua,'Noto Sans KR',sans-serif;font-size:11.5px;border-radius:999px;padding:2px 6px;background:#DCEBFB;color:#1B4A8A;white-space:nowrap;overflow:hidden}.wr-cover .cv-row .tg.rw{background:#D8F3E2;color:#1C7A4D}"+
+  ".wr-cover .cv-row .tt{flex:1;font-size:15.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.wr-cover .cv-row .rw2{flex:0 0 auto;font-family:Jua,'Noto Sans KR',sans-serif;font-size:11px;border-radius:999px;padding:2px 9px;background:#D8F3E2;color:#1C7A4D}"+
+  '.wr-cover .cv-list.dense .cv-row{padding:6px 0}.wr-cover .cv-list.dense .tt{font-size:13.5px}.wr-cover .cv-list.dense .no{font-size:15px}.wr-cover .cv-more{font-size:12px;color:#8A8274;padding:6px 0 8px;text-align:right}'+
+  // 글이 많을 때(4편 이상)는 위쪽(숫자·제목)을 줄여서 목록 자리를 넓혀요. 11편부터는 목록을 두 줄(2단)로 놓아요.
+  '.wr-cover .cv{overflow:hidden}.wr-cover .cv.cp .cv-mark{margin-top:3mm;gap:18px}.wr-cover .cv.cp .cv-circ{width:150px;height:150px}.wr-cover .cv.cp .cv-circ b{width:96px;height:96px}.wr-cover .cv.cp .cv-circ .c1{left:0;top:15px}.wr-cover .cv.cp .cv-circ .c2{left:55px;top:0}.wr-cover .cv.cp .cv-circ .c3{left:30px;top:55px}'+
+  '.wr-cover .cv.cp .cv-num{left:-6px;top:27px;width:166px;font-size:94px}.wr-cover .cv.cp .cv-num.sm{font-size:84px;top:33px}.wr-cover .cv.cp .cv-wol{padding-bottom:4px}.wr-cover .cv.cp .cv-wol .k{font-size:30px}'+
+  '.wr-cover .cv.cp .cv-title{font-size:48px;margin-top:4mm}.wr-cover .cv.cp .cv-tag{font-size:13.5px;margin-top:6px}.wr-cover .cv.cp .cv-box{margin-top:5mm;padding:14px 20px 12px}.wr-cover .cv.cp .cv-ch{margin-top:5mm;font-size:18px}'+
+  '.wr-cover .cv-list.two{display:grid;grid-template-columns:1fr 1fr;column-gap:22px}.wr-cover .cv-list.two .cv-row{gap:9px;min-width:0}.wr-cover .cv-list.two .tg{flex-basis:78px;font-size:10px}.wr-cover .cv-list.two .rw2{display:none}.wr-cover .cv-list.two .cv-more{grid-column:1/-1}'+
+  '.wr-cover .cv-foot{margin-top:auto;border-top:1px solid #DDD6C8;padding-top:10px;display:flex;justify-content:space-between}.wr-cover .cv-foot .cv-mono{font-size:9.5px;color:#9A917F}';
+const WR_MONTHS_EN=['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
+/** 월별 표지 한 장(달을 골라 뽑을 때만). ym: "2026-10", list: 그 학생의 리포트 내용들(ctx). 로고는 그 학생 학원 것이 자동으로 들어가고,
+ *  아래 "이번 달에 담긴 글"에 그 달 리포트 목록이 들어가요. */
+function wrCoverPart_(ym,list){
+  const c=list[0];
+  const y=ym.slice(0,4),m=+ym.slice(5,7);
+  const en=WR_MONTHS_EN[m-1]||'';
+  const MAXR=18,shown=list.slice(0,MAXR);
+  const rows=shown.map((x,i)=>'<div class="cv-row"><span class="no">'+String(i+1).padStart(2,'0')+'</span><span class="tg">'+escH(x._kind||'Writing')+'</span><span class="tt">'+escH(x.topic||'')+'</span>'+'</div>').join('');
+  const elem=c.stage==='초등';
+  return '<div class="wr-page wr-cover"><div class="cv'+(shown.length>3?' cp':'')+'">'+
+    '<div class="cv-top"><div class="l"><i style="background:#F0796B"></i><i style="background:#3FBE87"></i><i style="background:#5AA5F0"></i><span class="cv-mono">WRITING-LAB · MONTHLY REPORT</span></div>'+(c.logo?'<img class="cv-logo" src="'+c.logo+'" alt="">':'')+'</div>'+
+    '<div class="cv-mark"><div class="cv-circ"><b class="c1"></b><b class="c2"></b><b class="c3"></b><div class="cv-num'+(m>=10?' sm':'')+'">'+m+'</div></div><div class="cv-wol"><div class="k">월</div><div class="cv-mono">'+en+' '+y+'</div></div></div>'+
+    '<div class="cv-title">Monthly<br>Writing Report</div><div class="cv-tag">한 문장씩, 내 영어가 자라는 기록</div>'+
+    '<div class="cv-box"><div class="f n">이름<span class="v">'+escH(c.name||'')+'</span></div><div class="f c">반<span class="v">'+escH(c.cls||'')+'</span></div></div>'+
+    '<div class="cv-ch">이번 달에 담긴 글<span class="cv-mono">CONTENTS</span></div>'+
+    '<div class="cv-list'+(shown.length>3?' dense':'')+(shown.length>10?' two':'')+'">'+rows+(list.length>MAXR?'<div class="cv-more">외 '+(list.length-MAXR)+'편</div>':'')+'</div>'+
+    '<div class="cv-foot"><span class="cv-mono">'+(elem?'':escH(String(c.academy||''))+(c.academy?' · ':'')+'WRITING LAB')+'</span><span class="cv-mono">'+y+'. '+String(m).padStart(2,'0')+'</span></div>'+
+    '</div></div>';
+}
+/** coverLabel("2026-10" 같은 달)이 있으면 학생마다 맨 앞에 월별 표지를 한 장 넣어요. */
+async function wrCombineHtml_(ctxs,padOdd,coverLabel){
+  const css0=((buildWritingReportHtml_(ctxs[0]).match(/<style>([\s\S]*?)<\/style>/)||[])[1]||'');
+  const css=css0+WR_COVER_CSS;
+  if(coverLabel){
+    const withCover=[];let k=0;
+    while(k<ctxs.length){let e=k;while(e+1<ctxs.length&&ctxs[e+1]._sid===ctxs[k]._sid)e++;
+      withCover.push({_sid:ctxs[k]._sid,stage:ctxs[k].stage,_cover:wrCoverPart_(coverLabel,ctxs.slice(k,e+1))});
+      for(let j=k;j<=e;j++)withCover.push(ctxs[j]);k=e+1;}
+    ctxs=withCover;
+  }
+  let footKept=false;
+  const parts=ctxs.map((c)=>{
+    if(c._cover)return c._cover;
+    const h=buildWritingReportHtml_(c);const i=footKept?1:0;footKept=true;
     const a=h.indexOf('<div class="wr-page">'),b=h.lastIndexOf('<div class="noprint">');
     let part=h.slice(a,b);
     if(i>0)part=part.replace(/<div class="wr-foot-fix">[\s\S]*?<\/div>/,''); // 고정 하단 문구는 첫 리포트 것만 남겨요(겹쳐 찍히지 않게)
@@ -2786,6 +2841,7 @@ function openPeriodReportDialog_(opts){
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">끝나는 날<input type="date" class="in" id="prTo" value="'+today+'" style="padding:8px 10px;border-radius:10px"></label></div>'+
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684;margin-top:10px">Re-Writing 여부<select class="in" id="prRw" style="padding:8px 10px;border-radius:10px;font-size:14px"><option value="all">전체 (Re-Writing 안 한 글도 포함)</option><option value="done">Re-Writing 완료한 글만</option><option value="todo">Re-Writing 안 한 글만</option></select></label>'+
     '<div style="font-size:12.5px;font-weight:700;color:#6b7684;margin:12px 0 4px">양면 인쇄용 빈 면</div><select id="prDuplex" class="in" style="padding:9px;font-size:13.5px;border-radius:10px"><option value="report">글마다 — 홀수 쪽으로 끝나는 리포트 다음에 빈 면 (리포트마다 새 종이에서 시작)</option><option value="student">학생마다 — 한 학생의 리포트는 이어서, 다음 학생만 새 종이에서 시작</option><option value="none">넣지 않음 (단면 인쇄)</option></select>'+
+    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:12px;cursor:pointer"><input type="checkbox" id="prCover" checked> 월별 표지 넣기 — "달 고르기"로 한 달을 골랐을 때만 학생마다 맨 앞에 들어가요 (로고·이름·반·글 목록 자동)</label>'+
     '<div id="prInfo" class="hint" style="margin:12px 0;min-height:38px">제출 기록을 불러오는 중…</div>'+
     '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" id="prCancel" type="button">닫기</button><button class="btn green" id="prGo" type="button" disabled>리포트 만들기 · 인쇄</button></div>';
   ov.appendChild(box);document.body.appendChild(ov);
@@ -2803,7 +2859,7 @@ function openPeriodReportDialog_(opts){
   const syncMonth=()=>{const f=q('prFrom').value,t=q('prTo').value;const ym=f.slice(0,7);const ms=q('prMonth');
     ms.value=(ym&&Array.from(ms.options).some(o=>o.value===ym)&&monthRange(ym)[0]===f&&monthRange(ym)[1]===t)?ym:'';};
   // 지난번에 고른 기간·조건을 기억해뒀다가 다시 열 때 그대로 보여줘요(인쇄하고 돌아와도 초기화되지 않게).
-  const saveState=()=>{try{store.set('ewl2_prState',JSON.stringify({from:q('prFrom').value,to:q('prTo').value,rw:q('prRw').value,duplex:q('prDuplex').value}));}catch(e){}};
+  const saveState=()=>{try{store.set('ewl2_prState',JSON.stringify({from:q('prFrom').value,to:q('prTo').value,rw:q('prRw').value,duplex:q('prDuplex').value,cover:q('prCover').checked}));}catch(e){}};
   try{
     const sv=JSON.parse(store.get('ewl2_prState')||'null');
     if(sv){
@@ -2811,6 +2867,7 @@ function openPeriodReportDialog_(opts){
       if(/^\d{4}-\d\d-\d\d$/.test(sv.to||''))q('prTo').value=sv.to;
       if(['all','done','todo'].includes(sv.rw))q('prRw').value=sv.rw;
       if(['report','student','none'].includes(sv.duplex))q('prDuplex').value=sv.duplex;
+      if(sv.cover===false)q('prCover').checked=false;
     }else{const r=monthRange(first.slice(0,7));q('prFrom').value=r[0];q('prTo').value=r[1];}
   }catch(e){}
   syncMonth();
@@ -2832,12 +2889,13 @@ function openPeriodReportDialog_(opts){
     q('prGo').disabled=!p.ok.length;
   };
   q('prFrom').onchange=q('prTo').onchange=()=>{syncMonth();saveState();refresh();};
-  q('prRw').onchange=()=>{saveState();refresh();};q('prDuplex').onchange=saveState;
+  q('prRw').onchange=()=>{saveState();refresh();};q('prDuplex').onchange=saveState;q('prCover').onchange=saveState;
   q('prMonth').onchange=()=>{const ym=q('prMonth').value;if(ym){const r=monthRange(ym);q('prFrom').value=r[0];q('prTo').value=r[1];}saveState();refresh();};
   (async()=>{try{all=await opts.loadSubs();}catch(e){all=[];}ready=true;refresh();})();
   q('prGo').onclick=async()=>{
     const p=pick();if(!p.ok.length)return;
     const duplex=q('prDuplex').value==='none'?'':q('prDuplex').value;
+    const coverLabel=(q('prCover').checked&&q('prMonth').value)?q('prMonth').value:''; // 달을 골라 뽑을 때만 표지를 넣어요
     close();
     const cfg=await fetchReportConfig();
     // 학생별(이름순)로 묶고, 한 학생 안에서는 낸 날짜 순으로 이어 붙여요.
@@ -2851,6 +2909,8 @@ function openPeriodReportDialog_(opts){
     ordered.forEach(s=>{
       const ctx=wrCtxFor_(s,s.name||'',s.academy||'',byStu.get(String(s.id))||[s],null,cfg);
       ctx._sid=String(s.id);
+      try{ctx._kind=submissionTypeLabel(s)||'';}catch(e){ctx._kind='';}
+      try{ctx._rw=!!writingReportPair_(s,byStu.get(String(s.id))||[s]).rewrite;}catch(e){}
       (groups[ctx.stage]=groups[ctx.stage]||[]).push(ctx);
     });
     // 양식(초등/중등)이 다르면 CSS가 달라서 양식마다 따로 인쇄해요.
@@ -2858,7 +2918,7 @@ function openPeriodReportDialog_(opts){
     for(let i=0;i<stages.length;i++){
       const st=stages[i];
       if(i>0&&!confirm('다음은 '+st+' 양식 리포트 '+groups[st].length+'개예요. 인쇄 화면을 열까요?'))break;
-      await printHtmlDoc_(()=>wrCombineHtml_(groups[st],duplex),'리포트 '+groups[st].length+'개를 만드는 중이에요…');
+      await printHtmlDoc_(()=>wrCombineHtml_(groups[st],duplex,coverLabel),'리포트 '+groups[st].length+'개를 만드는 중이에요…');
     }
   };
 }
