@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-13b';
+const APP_VERSION='2026-11-13c';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2781,6 +2781,7 @@ function openPeriodReportDialog_(opts){
   const box=document.createElement('div');
   box.style.cssText='background:#fff;border-radius:16px;padding:22px 24px;max-width:460px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.3)';
   box.innerHTML='<div style="font-size:18px;font-weight:800;margin-bottom:4px">📅 기간별 리포트</div><div class="hint" style="margin-bottom:12px">'+escH(opts.title||'')+'</div>'+
+    '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684;margin-bottom:10px">달 고르기<select class="in" id="prMonth" style="padding:8px 10px;border-radius:10px;font-size:14px"></select></label>'+
     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"><label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">시작일<input type="date" class="in" id="prFrom" value="'+first+'" style="padding:8px 10px;border-radius:10px"></label>'+
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">끝나는 날<input type="date" class="in" id="prTo" value="'+today+'" style="padding:8px 10px;border-radius:10px"></label></div>'+
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684;margin-top:10px">Re-Writing 여부<select class="in" id="prRw" style="padding:8px 10px;border-radius:10px;font-size:14px"><option value="all">전체 (Re-Writing 안 한 글도 포함)</option><option value="done">Re-Writing 완료한 글만</option><option value="todo">Re-Writing 안 한 글만</option></select></label>'+
@@ -2791,6 +2792,28 @@ function openPeriodReportDialog_(opts){
   const q=id=>box.querySelector('#'+id);
   const close=()=>{try{ov.remove();}catch(_){}};
   q('prCancel').onclick=close;ov.addEventListener('mousedown',e=>{if(e.target===ov)close();});
+  // 달 고르기: 최근 18개월 중 하나를 고르면 그 달 1일~말일로 기간이 맞춰져요. 날짜를 직접 바꾸면 "직접 입력"이 돼요.
+  {
+    const ms=q('prMonth');
+    const add=(v,l)=>{const o=document.createElement('option');o.value=v;o.textContent=l;ms.appendChild(o);};
+    add('','직접 입력 (아래 날짜대로)');
+    for(let i=0;i<18;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);add(d.getFullYear()+'-'+z(d.getMonth()+1),d.getFullYear()+'년 '+(d.getMonth()+1)+'월'+(i===0?' (이번 달)':i===1?' (지난달)':''));}
+  }
+  const monthRange=ym=>{const y=+ym.slice(0,4),m=+ym.slice(5,7);return [ym+'-01',ym+'-'+z(new Date(y,m,0).getDate())];};
+  const syncMonth=()=>{const f=q('prFrom').value,t=q('prTo').value;const ym=f.slice(0,7);const ms=q('prMonth');
+    ms.value=(ym&&Array.from(ms.options).some(o=>o.value===ym)&&monthRange(ym)[0]===f&&monthRange(ym)[1]===t)?ym:'';};
+  // 지난번에 고른 기간·조건을 기억해뒀다가 다시 열 때 그대로 보여줘요(인쇄하고 돌아와도 초기화되지 않게).
+  const saveState=()=>{try{store.set('ewl2_prState',JSON.stringify({from:q('prFrom').value,to:q('prTo').value,rw:q('prRw').value,duplex:q('prDuplex').value}));}catch(e){}};
+  try{
+    const sv=JSON.parse(store.get('ewl2_prState')||'null');
+    if(sv){
+      if(/^\d{4}-\d\d-\d\d$/.test(sv.from||''))q('prFrom').value=sv.from;
+      if(/^\d{4}-\d\d-\d\d$/.test(sv.to||''))q('prTo').value=sv.to;
+      if(['all','done','todo'].includes(sv.rw))q('prRw').value=sv.rw;
+      if(['report','student','none'].includes(sv.duplex))q('prDuplex').value=sv.duplex;
+    }else{const r=monthRange(first.slice(0,7));q('prFrom').value=r[0];q('prTo').value=r[1];}
+  }catch(e){}
+  syncMonth();
   let all=[],ready=false;
   const pick=()=>{
     const f=q('prFrom').value,t=q('prTo').value;
@@ -2808,7 +2831,9 @@ function openPeriodReportDialog_(opts){
     q('prInfo').innerHTML=p.ok.length?('학생 <b>'+stuCnt+'명</b> · 리포트 <b>'+p.ok.length+'개</b>가 만들어져요.'+(p.skipped?' <span style="color:#92400e">(첨삭이 아직 없는 글 '+p.skipped+'개는 빼요)</span>':'')+(p.rwSkipped?' <span style="color:#92400e">(Re-Writing 조건에 안 맞는 글 '+p.rwSkipped+'개는 빼요)</span>':'')+(p.ok.length>150?'<br><span style="color:#b91c1c">리포트가 많아서 만드는 데 시간이 걸릴 수 있어요. 기간이나 조건을 좁히면 더 빨라요.</span>':'')):'이 기간에 만들 수 있는 리포트가 없어요.'+(p.skipped?' (첨삭이 아직 없는 글 '+p.skipped+'개)':'');
     q('prGo').disabled=!p.ok.length;
   };
-  q('prFrom').onchange=refresh;q('prTo').onchange=refresh;q('prRw').onchange=refresh;
+  q('prFrom').onchange=q('prTo').onchange=()=>{syncMonth();saveState();refresh();};
+  q('prRw').onchange=()=>{saveState();refresh();};q('prDuplex').onchange=saveState;
+  q('prMonth').onchange=()=>{const ym=q('prMonth').value;if(ym){const r=monthRange(ym);q('prFrom').value=r[0];q('prTo').value=r[1];}saveState();refresh();};
   (async()=>{try{all=await opts.loadSubs();}catch(e){all=[];}ready=true;refresh();})();
   q('prGo').onclick=async()=>{
     const p=pick();if(!p.ok.length)return;
@@ -4581,7 +4606,11 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
       });
       const pgBot=pagerEl_(studentsOut.length,hpage,LIST_PAGE_SIZE,goH);if(pgBot)box.appendChild(pgBot);
     };
-    (fAcademy?[fAcademy.sel,fSchool.sel,fGrade.sel,fCls.sel,fType.sel]:[fSchool.sel,fGrade.sel,fCls.sel,fType.sel]).forEach(sel=>sel.addEventListener('change',()=>{hpage=0;render();}));
+    // 고른 조건(학원·학교·학년·반·컨텐츠)을 기억해뒀다가, 다른 화면에 다녀오거나 인쇄하고 돌아와도 그대로 다시 골라줘요.
+    const fSels={academy:fAcademy?fAcademy.sel:null,school:fSchool.sel,grade:fGrade.sel,cls:fCls.sel,type:fType.sel};
+    try{const sv=JSON.parse(store.get('ewl2_thFilters')||'{}');if(sv&&sv.user===String(USER.id||USER.name||''))Object.keys(fSels).forEach(k=>{const sel=fSels[k];if(sel&&sv[k]&&Array.from(sel.options).some(o=>o.value===sv[k]))sel.value=sv[k];});}catch(e){}
+    const saveF=()=>{try{const o={user:String(USER.id||USER.name||'')};Object.keys(fSels).forEach(k=>{if(fSels[k])o[k]=fSels[k].value;});store.set('ewl2_thFilters',JSON.stringify(o));}catch(e){}};
+    Object.values(fSels).filter(Boolean).forEach(sel=>sel.addEventListener('change',()=>{hpage=0;saveF();render();}));
     render();
     renderReady=true;
   })();
