@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-10-24d';
+const APP_VERSION='2026-10-24g';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -312,7 +312,7 @@ const P_be1={ id:'L1C1U1', title:'be동사의 긍정문',
   {k:'그 컴퓨터는 새것이다.',a:'The computer is new.',h:'computer / new',alt:[]},
   {k:'나의 할아버지는 건강하시다.',a:'My grandfather is healthy.',h:'grandfather / healthy',alt:[]}
  ],
- task:{prompt:'be동사로 <b>나를 소개하는 문장 7개</b>를 써요. (이름·나이·나는 어떤 사람인지)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'be동사(am/are/is) 사용',test:t=>/\b(am|are|is)\b/i.test(t)||/'m\b|'re\b/i.test(t)||/\b(he|she|it|this|that|there|here)'s\b/i.test(t)},{label:'I am(=I\'m) 으로 시작하는 문장 포함',test:t=>/\bi ?a?m\b|i'm/i.test(t)}],sample:'I am Sujin. I am fourteen years old. I am a happy student. I am tall for my age. I am kind to my friends. I am good at drawing. I am proud of my family.'}
+ task:{prompt:'be동사로 <b>나를 소개하는 문장 10개</b>를 써요. (이름·나이·나는 어떤 사람인지)',conds:[{label:'be동사(am/are/is) 사용',test:t=>/\b(am|are|is)\b/i.test(t)||/'m\b|'re\b/i.test(t)||/\b(he|she|it|this|that|there|here)'s\b/i.test(t)},{label:'I am(=I\'m) 으로 시작하는 문장 포함',test:t=>/\bi ?a?m\b|i'm/i.test(t)}],sample:'I am Sujin. I am fourteen years old. I am a happy student. I am tall for my age. I am kind to my friends. I am good at drawing. I am proud of my family.'}
 };
 
 const P_be2={ id:'L1C1U2', title:'be동사의 부정문과 의문문',
@@ -396,7 +396,7 @@ const P_can={ id:'L1C4U1', title:'조동사의 기본 형태와 can/may (능력�
   {k:'그녀는 지금 전화할 수 없다.',a:"She can't call now.",h:'call / now',alt:['She cannot call now.']},
   {k:'우리는 영어로 편지를 쓸 수 있다.',a:'We can write a letter in English.',h:'write a letter / in English',alt:[]}
  ],
- task:{prompt:'<b>내가 할 수 있는 것과 없는 것</b>을 써요. (can 문장과 can\'t 문장을 섞어서 총 7문장 이상)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'can 사용',test:t=>/\bcan\b/i.test(t)},{label:"can't(cannot) 사용",test:t=>/can(['’]?t|not)\b/i.test(t)}],sample:"I can swim. I can play the piano. I can ride a bike. I can cook simple food. I can speak a little English. I can't drive a car. I can't ski well."}
+ task:{prompt:'<b>내가 할 수 있는 것과 없는 것</b>을 써요. (can 문장과 can\'t 문장을 섞어서 총 10문장 이상)',conds:[{label:'can 사용',test:t=>/\bcan\b/i.test(t)},{label:"can't(cannot) 사용",test:t=>/can(['’]?t|not)\b/i.test(t)}],sample:"I can swim. I can play the piano. I can ride a bike. I can cook simple food. I can speak a little English. I can't drive a car. I can't ski well."}
 };
 
 const P_do1={ id:'L1C2U1', title:'일반동사의 현재형',
@@ -430,7 +430,7 @@ const P_do1={ id:'L1C2U1', title:'일반동사의 현재형',
   {k:'톰은 수학을 공부한다.',a:'Tom studies math.',h:'Tom / study / math',alt:[]},{k:'나는 그 노래를 안다.',a:'I know the song.',h:'know',alt:[]},
   {k:'그녀는 개를 한 마리 가지고 있다.',a:'She has a dog.',h:'have',alt:[]}
  ],
- task:{prompt:'일반동사로 <b>나의 하루 일과 7문장</b>을 써요. (3인칭 단수 주어면 -s 잊지 않기!)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'일반동사(현재형) 사용',test:t=>/\b(go|goes|play|plays|eat|eats|like|likes|study|studies|watch|watches|read|reads|drink|drinks|have|has|do|does|get|gets|wake|wakes|wash|washes|run|runs|meet|meets)\b/i.test(t)},{label:'주어로 시작하는 문장(I/We/My... )',test:t=>/\b(i|we|my|he|she|they)\b/i.test(t)}],sample:'I get up at seven. I wash my face and brush my teeth. I eat breakfast with my family. I go to school by bus. I study English in the morning. I play soccer after school. I do my homework before dinner.'}
+ task:{prompt:'일반동사로 <b>나의 하루 일과 10문장</b>을 써요. (3인칭 단수 주어면 -s 잊지 않기!)',conds:[{label:'일반동사(현재형) 사용',test:t=>/\b(go|goes|play|plays|eat|eats|like|likes|study|studies|watch|watches|read|reads|drink|drinks|have|has|do|does|get|gets|wake|wakes|wash|washes|run|runs|meet|meets)\b/i.test(t)},{label:'주어로 시작하는 문장(I/We/My... )',test:t=>/\b(i|we|my|he|she|they)\b/i.test(t)}],sample:'I get up at seven. I wash my face and brush my teeth. I eat breakfast with my family. I go to school by bus. I study English in the morning. I play soccer after school. I do my homework before dinner.'}
 };
 
 const P_do2={ id:'L1C2U2', title:'일반동사의 과거형',
@@ -464,7 +464,7 @@ const P_do2={ id:'L1C2U2', title:'일반동사의 과거형',
   {k:'우리는 그 소식을 들었다.',a:'We heard the news.',h:'hear',alt:[]},{k:'그는 문을 열었다.',a:'He opened the door.',h:'open',alt:[]},
   {k:'나는 일찍 일어났다.',a:'I got up early.',h:'get up / early',alt:[]}
  ],
- task:{prompt:'<b>지난 주말에 한 일 7문장</b>을 과거형으로 써요.',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'과거형 동사 사용(-ed 또는 불규칙)',test:t=>/\b(\w+ed|went|ate|saw|did|had|made|came|wrote|bought|won|sang|drank|drew|met|took|ran|got|read|heard|felt|found|gave|told|said)\b/i.test(t)},{label:'과거 시간 표현(yesterday / last / ago) 포함',test:t=>/\b(yesterday|last|ago)\b/i.test(t)}],sample:'Last weekend, I went to the park. I played with my friends. We had a great time. We ate ice cream together. I saw a beautiful sunset. I took some pictures. I went home late in the evening.'}
+ task:{prompt:'<b>지난 주말에 한 일 10문장</b>을 과거형으로 써요.',conds:[{label:'과거형 동사 사용(-ed 또는 불규칙)',test:t=>/\b(\w+ed|went|ate|saw|did|had|made|came|wrote|bought|won|sang|drank|drew|met|took|ran|got|read|heard|felt|found|gave|told|said)\b/i.test(t)},{label:'과거 시간 표현(yesterday / last / ago) 포함',test:t=>/\b(yesterday|last|ago)\b/i.test(t)}],sample:'Last weekend, I went to the park. I played with my friends. We had a great time. We ate ice cream together. I saw a beautiful sunset. I took some pictures. I went home late in the evening.'}
 };
 
 const P_do3={ id:'L1C2U3', title:'일반동사의 부정문과 의문문',
@@ -498,7 +498,7 @@ const P_do3={ id:'L1C2U3', title:'일반동사의 부정문과 의문문',
   {k:'그는 방을 청소하니?',a:'Does he clean his room?',h:'clean his room',alt:[]},{k:'나는 매운 것을 먹지 않는다.',a:"I don't eat spicy food.",h:'eat spicy food',alt:[]},
   {k:'너는 그 소식을 들었니?',a:'Did you hear the news?',h:'hear the news',alt:[]}
  ],
- task:{prompt:'친구에게 <b>묻고 싶은 질문과 내가 하지 않는 것</b>을 7문장으로 써요.',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'의문문(Do/Does/Did) 1개 이상',test:t=>/\b(do|does|did)\b/i.test(t)&&/\?/.test(t)},{label:"부정문(don't/doesn't/didn't) 1개 이상",test:t=>/(don't|doesn't|didn't|do not|does not|did not)/i.test(t)}],sample:"Do you like sports? I don't like horror movies. Did you watch the game yesterday? Do you play any instruments? I don't eat spicy food. Does your family have a pet? I didn't finish my homework yet."}
+ task:{prompt:'친구에게 <b>묻고 싶은 질문과 내가 하지 않는 것</b>을 10문장으로 써요.',conds:[{label:'의문문(Do/Does/Did) 1개 이상',test:t=>/\b(do|does|did)\b/i.test(t)&&/\?/.test(t)},{label:"부정문(don't/doesn't/didn't) 1개 이상",test:t=>/(don't|doesn't|didn't|do not|does not|did not)/i.test(t)}],sample:"Do you like sports? I don't like horror movies. Did you watch the game yesterday? Do you play any instruments? I don't eat spicy food. Does your family have a pet? I didn't finish my homework yet."}
 };
 
 const P_prog={ id:'L1C3U1', title:'현재진행형',
@@ -532,7 +532,7 @@ const P_prog={ id:'L1C3U1', title:'현재진행형',
   {k:'그들은 수영하고 있다.',a:'They are swimming.',h:'swim',alt:[]},{k:'그는 문을 열고 있다.',a:'He is opening the door.',h:'open the door',alt:[]},
   {k:'나는 지금 요리하고 있다.',a:'I am cooking now.',h:'cook / now',alt:[]}
  ],
- task:{prompt:'<b>지금 교실(또는 집)의 모습</b>을 현재진행형으로 7문장 써요.',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'be + 동사-ing 형태 사용',test:t=>/\b(am|are|is)\s+\w+ing\b/i.test(t)||/('m|'re)\s+\w+ing\b/i.test(t)||/\b(he|she|it|this|that|there|here)'s\s+\w+ing\b/i.test(t)},{label:'-ing 동사 2개 이상',test:t=>(t.match(/\w+ing\b/gi)||[]).length>=2}],sample:'I am writing in my notebook. My friend is reading a book. The teacher is talking to us. Some students are listening carefully. The sun is shining through the window. A bird is singing outside. We are having a good class.'}
+ task:{prompt:'<b>지금 교실(또는 집)의 모습</b>을 현재진행형으로 10문장 써요.',conds:[{label:'be + 동사-ing 형태 사용',test:t=>/\b(am|are|is)\s+\w+ing\b/i.test(t)||/('m|'re)\s+\w+ing\b/i.test(t)||/\b(he|she|it|this|that|there|here)'s\s+\w+ing\b/i.test(t)},{label:'-ing 동사 2개 이상',test:t=>(t.match(/\w+ing\b/gi)||[]).length>=2}],sample:'I am writing in my notebook. My friend is reading a book. The teacher is talking to us. Some students are listening carefully. The sun is shining through the window. A bird is singing outside. We are having a good class.'}
 };
 
 const P_future={ id:'L1C3U2', title:'미래 표현 (will / be going to)',
@@ -566,7 +566,7 @@ const P_future={ id:'L1C3U2', title:'미래 표현 (will / be going to)',
   {k:'나는 열심히 공부할 것이다.',a:'I will study hard.',h:'study hard',alt:['I am going to study hard.']},{k:'너는 파티에 갈 거니?',a:'Will you go to the party?',h:'go to the party',alt:[]},
   {k:'그들은 영화를 볼 것이다.',a:'They are going to watch a movie.',h:'watch a movie',alt:['They will watch a movie.']}
  ],
- task:{prompt:'<b>이번 주말(또는 방학) 계획</b>을 7문장으로 써요. (will 또는 be going to)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'will 또는 be going to 사용',test:t=>/\bwill\b/i.test(t)||/going to/i.test(t)||/'ll\b/i.test(t)},{label:'미래 시간 표현(tomorrow/next/this weekend) 포함',test:t=>/(tomorrow|next|this weekend|tonight|someday|in the future)/i.test(t)}],sample:'This weekend, I am going to visit my grandparents. I will help them in the garden. We are going to have a big dinner. I will bring them some flowers. My cousins are going to come too. We will play games together. I am going to take a lot of pictures.'}
+ task:{prompt:'<b>이번 주말(또는 방학) 계획</b>을 10문장으로 써요. (will 또는 be going to)',conds:[{label:'will 또는 be going to 사용',test:t=>/\bwill\b/i.test(t)||/going to/i.test(t)||/'ll\b/i.test(t)},{label:'미래 시간 표현(tomorrow/next/this weekend) 포함',test:t=>/(tomorrow|next|this weekend|tonight|someday|in the future)/i.test(t)}],sample:'This weekend, I am going to visit my grandparents. I will help them in the garden. We are going to have a big dinner. I will bring them some flowers. My cousins are going to come too. We will play games together. I am going to take a lot of pictures.'}
 };
 
 const P_must={ id:'L1C4U2', title:'must / have to / should',
@@ -600,7 +600,7 @@ const P_must={ id:'L1C4U2', title:'must / have to / should',
   {k:'우리는 안전벨트를 매야 한다.',a:'We must wear a seat belt.',h:'wear a seat belt',alt:['We have to wear a seat belt.']},{k:'너는 매일 운동하는 게 좋다.',a:'You should exercise every day.',h:'exercise every day',alt:[]},
   {k:'나는 지금 집에 가야 한다.',a:'I have to go home now.',h:'go home',alt:['I must go home now.']}
  ],
- task:{prompt:'<b>우리 반 규칙</b> 또는 <b>건강을 위한 조언</b>을 7문장으로 써요. (must / should / have to)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'must / should / have to 사용',test:t=>/\b(must|should|have to|has to)\b/i.test(t)},{label:'You 또는 We 주어 포함',test:t=>/\b(you|we)\b/i.test(t)}],sample:"We should be kind to each other. You must not run in the classroom. We have to clean our classroom every day. You should listen to the teacher. We must not talk loudly in the library. You have to raise your hand to speak. We should help our classmates."}
+ task:{prompt:'<b>우리 반 규칙</b> 또는 <b>건강을 위한 조언</b>을 10문장으로 써요. (must / should / have to)',conds:[{label:'must / should / have to 사용',test:t=>/\b(must|should|have to|has to)\b/i.test(t)},{label:'You 또는 We 주어 포함',test:t=>/\b(you|we)\b/i.test(t)}],sample:"We should be kind to each other. You must not run in the classroom. We have to clean our classroom every day. You should listen to the teacher. We must not talk loudly in the library. You have to raise your hand to speak. We should help our classmates."}
 };
 
 const P_noun={ id:'L1C5U1', title:'명사 / 관사',
@@ -634,7 +634,7 @@ const P_noun={ id:'L1C5U1', title:'명사 / 관사',
   {k:'그는 한 시간 동안 잤다.',a:'He slept for an hour.',h:'an hour',alt:[]},{k:'아이들이 노래하고 있다.',a:'The children are singing.',h:'children',alt:[]},
   {k:'나는 연필 한 자루가 필요하다.',a:'I need a pencil.',h:'pencil',alt:[]}
  ],
- task:{prompt:'<b>내 방에 있는 물건 7문장</b>을 써요. (a/an/the, 복수형에 주의!)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'a 또는 an 사용',test:t=>/\b(a|an)\b/i.test(t)},{label:'복수형(-s) 명사 포함',test:t=>/\b\w+s\b/i.test(t)}],sample:'There is a desk in my room. I have many books on the shelf. The window is next to my bed. There is a small lamp on the desk. I have a few posters on the wall. The closet is full of clothes. There are two pillows on my bed.'}
+ task:{prompt:'<b>내 방에 있는 물건 10문장</b>을 써요. (a/an/the, 복수형에 주의!)',conds:[{label:'a 또는 an 사용',test:t=>/\b(a|an)\b/i.test(t)},{label:'복수형(-s) 명사 포함',test:t=>/\b\w+s\b/i.test(t)}],sample:'There is a desk in my room. I have many books on the shelf. The window is next to my bed. There is a small lamp on the desk. I have a few posters on the wall. The closet is full of clothes. There are two pillows on my bed.'}
 };
 
 const P_there={ id:'L1C5U2', title:'There is / are',
@@ -668,7 +668,7 @@ const P_there={ id:'L1C5U2', title:'There is / are',
   {k:'상자 안에 장난감이 많이 있다.',a:'There are many toys in the box.',h:'many toys',alt:[]},{k:'근처에 식당이 있니?',a:'Is there a restaurant near here?',h:'restaurant',alt:[]},
   {k:'정원에 나무가 한 그루 있다.',a:'There is a tree in the garden.',h:'tree / garden',alt:[]}
  ],
- task:{prompt:'<b>우리 교실에 있는 것 7문장</b>을 There is/are 로 써요.',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'There is 또는 There are 사용',test:t=>/there\s+(is|are)/i.test(t)},{label:'There are(복수) 문장 1개 이상',test:t=>/there\s+are/i.test(t)}],sample:'There is a big blackboard in our classroom. There are many desks and chairs. There is a clock on the wall. There are some plants near the window. There is a bookshelf in the corner. There are colorful posters on the wall. There is a computer on the teacher\'s desk.'}
+ task:{prompt:'<b>우리 교실에 있는 것 10문장</b>을 There is/are 로 써요.',conds:[{label:'There is 또는 There are 사용',test:t=>/there\s+(is|are)/i.test(t)},{label:'There are(복수) 문장 1개 이상',test:t=>/there\s+are/i.test(t)}],sample:'There is a big blackboard in our classroom. There are many desks and chairs. There is a clock on the wall. There are some plants near the window. There is a bookshelf in the corner. There are colorful posters on the wall. There is a computer on the teacher\'s desk.'}
 };
 
 const P_pron={ id:'L1C6U1', title:'인칭대명사',
@@ -702,7 +702,7 @@ const P_pron={ id:'L1C6U1', title:'인칭대명사',
   {k:'이 자전거는 그녀의 것이다.',a:'This bike is hers.',h:'bike / hers',alt:[]},{k:'우리는 우리의 선생님을 좋아한다.',a:'We like our teacher.',h:'our teacher',alt:[]},
   {k:'그는 너를 기다리고 있다.',a:'He is waiting for you.',h:'wait for',alt:[]}
  ],
- task:{prompt:'<b>내 친구를 소개하는 글 7문장</b>을 써요. (he/she + his/her + him/her 활용)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'대명사(he/she/they/him/her 등) 사용',test:t=>/\b(he|she|they|him|her|them|us)\b/i.test(t)},{label:'소유격(my/his/her/their) 포함',test:t=>/\b(my|his|her|their|our)\b/i.test(t)}],sample:'This is my friend Mina. She is very kind. I like her a lot. Her hobby is playing the guitar. His name is Jiho, and he is her brother. I often visit their house. Their family is very friendly.'}
+ task:{prompt:'<b>내 친구를 소개하는 글 10문장</b>을 써요. (he/she + his/her + him/her 활용)',conds:[{label:'대명사(he/she/they/him/her 등) 사용',test:t=>/\b(he|she|they|him|her|them|us)\b/i.test(t)},{label:'소유격(my/his/her/their) 포함',test:t=>/\b(my|his|her|their|our)\b/i.test(t)}],sample:'This is my friend Mina. She is very kind. I like her a lot. Her hobby is playing the guitar. His name is Jiho, and he is her brother. I often visit their house. Their family is very friendly.'}
 };
 
 const P_this={ id:'L1C6U2', title:'지시대명사와 it',
@@ -736,7 +736,7 @@ const P_this={ id:'L1C6U2', title:'지시대명사와 it',
   {k:'저것은 무엇이니?',a:'What is that?',h:'what',alt:[]},{k:'봄이다.',a:'It is spring.',h:'spring',alt:[]},
   {k:'이 사람들은 나의 이웃이다.',a:'These people are my neighbors.',h:'neighbors',alt:[]}
  ],
- task:{prompt:'<b>사진 속 장면을 설명하는 글 7문장</b>을 써요. (this/that/these/those + 날씨·시간 it)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'this/that/these/those 중 사용',test:t=>/\b(this|that|these|those)\b/i.test(t)},{label:'날씨·시간을 나타내는 It 문장 1개 포함',test:t=>/\bit is\b/i.test(t)}],sample:'This is my family photo. These are my sisters. It is a sunny day in the picture. That is our old house behind us. Those are the flowers my mom planted. It is around noon in the photo. This is one of my favorite memories.'}
+ task:{prompt:'<b>사진 속 장면을 설명하는 글 10문장</b>을 써요. (this/that/these/those + 날씨·시간 it)',conds:[{label:'this/that/these/those 중 사용',test:t=>/\b(this|that|these|those)\b/i.test(t)},{label:'날씨·시간을 나타내는 It 문장 1개 포함',test:t=>/\bit is\b/i.test(t)}],sample:'This is my family photo. These are my sisters. It is a sunny day in the picture. That is our old house behind us. Those are the flowers my mom planted. It is around noon in the photo. This is one of my favorite memories.'}
 };
 
 const P_some={ id:'L1C6U3', title:'one, some, any',
@@ -770,7 +770,7 @@ const P_some={ id:'L1C6U3', title:'one, some, any',
   {k:'우리는 우유가 조금도 없다.',a:"We don't have any milk.",h:'milk',alt:[]},{k:'이 펜은 안 나온다. 다른 것을 줘.',a:'This pen does not work. Give me another one.',h:'another one',alt:["This pen doesn't work. Give me another one."]},
   {k:'질문 있으신가요?',a:'Do you have any questions?',h:'questions',alt:[]}
  ],
- task:{prompt:'<b>우리 집 냉장고에 있는 것/없는 것 7문장</b>을 써요. (some / any)',conds:[{label:'문장 10개 이상',test:t=>sc(t)>=10},{label:'문장마다 단어 7개 이상',test:t=>{const ss=splitSentences(t).filter(Boolean);return ss.length>0&&ss.every(s=>countWords(s)>=7);}},{label:'some 사용',test:t=>/\bsome\b/i.test(t)},{label:'any(부정문 또는 의문문) 사용',test:t=>/\bany\b/i.test(t)}],sample:'There is some milk in the refrigerator. There are some eggs, too. But there isn\'t any juice. There is some cheese on the shelf. There aren\'t any apples left. Is there any bread? There are some vegetables in the drawer.'}
+ task:{prompt:'<b>우리 집 냉장고에 있는 것/없는 것 10문장</b>을 써요. (some / any)',conds:[{label:'some 사용',test:t=>/\bsome\b/i.test(t)},{label:'any(부정문 또는 의문문) 사용',test:t=>/\bany\b/i.test(t)}],sample:'There is some milk in the refrigerator. There are some eggs, too. But there isn\'t any juice. There is some cheese on the shelf. There aren\'t any apples left. Is there any bread? There are some vegetables in the drawer.'}
 };
 
 /* 레벨/챕터/포인트 구조 (표준 목차). ready:true 인 point 만 학습 가능 */
@@ -831,7 +831,7 @@ let LEVELS_DATA=[];
 // 문법 드릴(Pattern Drill) "조건 영작"의 전체 분량 기준 — 코드에 고정된 숫자가 아니라, 스프레드시트
 // '설정' 탭(PATTERN_DRILL_MIN_WORDS·PATTERN_DRILL_MIN_SENTENCES)에서 매번 새로 받아와서 채워요.
 // 서버에서 못 받아오면(네트워크 오류 등) 이 기본값(100단어·8문장)으로 계속 동작해요.
-let DRILL_MIN_WORDS=100,DRILL_MIN_SENTENCES=8;
+let DRILL_MIN_WORDS=100,DRILL_MIN_SENTENCES=10;
 function applyLevelsData(){
   if(!Array.isArray(LEVELS_DATA)||!LEVELS_DATA.length)return;
   const bySeq=LEVELS_DATA.slice().sort((a,b)=>(a.seq||0)-(b.seq||0));
@@ -1582,6 +1582,9 @@ function viewHome(){const _homeBody=w=>{
     const reportBtn=el('button','btn ghost','📊 첨삭·Re-Writing 종합 리포트');reportBtn.type='button';reportBtn.style.cssText='padding:6px 14px;font-size:12.5px;white-space:nowrap;background:#fff';
     reportBtn.onclick=()=>openRewriteReportPicker(TEACHER_PREVIEW);
     banner.appendChild(reportBtn);
+    const periodBtn=el('button','btn ghost','📅 기간별 리포트 (한 번에 인쇄)');periodBtn.type='button';periodBtn.style.cssText='padding:6px 14px;font-size:12.5px;white-space:nowrap;background:#fff';
+    periodBtn.onclick=()=>{const tp=TEACHER_PREVIEW;openPeriodReportDialog_({title:tp.studentName+' 학생',loadSubs:async()=>(tp.subs||[]).map(x=>Object.assign({},x,{id:x.id||tp.studentId,name:x.name||tp.studentName}))});};
+    banner.appendChild(periodBtn);
     w.appendChild(banner);
   }
   const hero=el('div','hero');
@@ -2661,10 +2664,27 @@ function buildWritingReportHtml_(ctx){
   return '<!doctype html><html><head><meta charset="utf-8"><title>'+title+'</title>'+WR_FONTS+'<style>'+WR_CSS_COMMON+(e?WR_CSS_ELEM:WR_CSS_MID)+'</style></head><body><div class="wr-page">'+body+'</div>'+printBtn+'</body></html>';
 }
 /** 제출물 하나(원본 또는 다시쓰기)로 Writing Report를 새 창에 열어줘요. 양식(초등/중등)·로고는 학원 설정을 따라요. */
-async function printWritingReport(s,studentName,studentId,academyName,siblings,forceStage){
-  /* 새 탭을 따로 열지 않고, 화면에 안 보이는 iframe에 리포트를 그린 뒤 바로 인쇄 창을 띄워요(버튼 한 번으로 인쇄 화면까지). */
+/** 제출물 하나로 리포트에 들어갈 내용(ctx)을 만들어요. 한 장짜리 인쇄와 기간별 묶음 인쇄가 같이 써요. */
+function wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg){
+  const pair=writingReportPair_(s,siblings);
+  const base=pair.original||s,rw=pair.rewrite;
+  const acad=String(s.academy||academyName||'').trim();
+  const stage=forceStage||reportStageFor_(Object.assign({},s,{academy:acad}),cfg);
+  const ac=reportAcademyCfg_(cfg,acad);
+  const rubric=parseRubricEval(s.rubric)||parseRubricEval(base.rubric)||autoComputeRubric(base);
+  const topicName=s.point||s.chapter||'';
+  const st=stage==='초등'&&String(base.chapter||s.chapter||'')==='Story Writing'?findStoryTopicByTitle_(topicName):null;
+  const pics=st?(st.pics||[]).filter(p=>p.imageUrl):[];
+  const finalSrc=rw||(submissionTypeLabel(s)==='Re-Writing'?s:null);
+  return {stage,logo:ac.logo||ACADEMY_LOGOS[acad]||'',academy:acad,name:studentName||s.name||'',cls:s.cls||'',
+    level:(rubric&&rubric.writingLevel)||'',date:wrDateStr_(base.datetime||s.datetime,stage==='초등'?'. ':'.'),
+    topic:topicName,rubric,sentences:writingReportSentences_(base),
+    finalText:writingReportFinal_(base)||(finalSrc?String(finalSrc.final||finalSrc.text||''):String(base.text||'')),comment:writingReportComment_([base,rw]),pics};
+}
+/** 안 보이는 iframe에 HTML을 그린 뒤 바로 인쇄 창을 띄워요(새 탭 없이). makeHtml은 완성된 HTML 문자열을 돌려주는 (비동기) 함수예요. */
+async function printHtmlDoc_(makeHtml,waitMsg){
   const note=document.createElement('div');
-  note.textContent='리포트를 만드는 중이에요…';
+  note.textContent=waitMsg||'리포트를 만드는 중이에요…';
   note.style.cssText='position:fixed;left:50%;top:24px;transform:translateX(-50%);background:#1B2A49;color:#fff;padding:10px 20px;border-radius:10px;font-size:14px;font-weight:700;z-index:99999;box-shadow:0 4px 14px rgba(0,0,0,.25)';
   document.body.appendChild(note);
   const frame=document.createElement('iframe');
@@ -2674,33 +2694,106 @@ async function printWritingReport(s,studentName,studentId,academyName,siblings,f
   const cleanup=()=>{try{note.remove();}catch(_){}try{frame.remove();}catch(_){}};
   const win=frame.contentWindow;
   try{
-    const cfg=await fetchReportConfig();
-    const pair=writingReportPair_(s,siblings);
-    const base=pair.original||s,rw=pair.rewrite;
-    const acad=String(s.academy||academyName||'').trim();
-    const stage=forceStage||reportStageFor_(Object.assign({},s,{academy:acad}),cfg);
-    const ac=reportAcademyCfg_(cfg,acad);
-    const rubric=parseRubricEval(s.rubric)||parseRubricEval(base.rubric)||autoComputeRubric(base);
-    const topicName=s.point||s.chapter||'';
-    const st=stage==='초등'&&String(base.chapter||s.chapter||'')==='Story Writing'?findStoryTopicByTitle_(topicName):null;
-    const pics=st?(st.pics||[]).filter(p=>p.imageUrl):[];
-    const finalSrc=rw||(submissionTypeLabel(s)==='Re-Writing'?s:null);
-    const ctx={stage,logo:ac.logo||ACADEMY_LOGOS[acad]||'',academy:acad,name:studentName||s.name||'',cls:s.cls||'',
-      level:(rubric&&rubric.writingLevel)||'',date:wrDateStr_(base.datetime||s.datetime,stage==='초등'?'. ':'.'),
-      topic:topicName,rubric,sentences:writingReportSentences_(base),
-      finalText:writingReportFinal_(base)||(finalSrc?String(finalSrc.final||finalSrc.text||''):String(base.text||'')),comment:writingReportComment_([base,rw]),pics};
-    win.document.open();win.document.write(buildWritingReportHtml_(ctx));win.document.close();
+    const html=await makeHtml();
+    win.document.open();win.document.write(html);win.document.close();
     // 글꼴·그림이 다 불러와진 뒤에 인쇄해야 모양이 안 깨져요.
     const d=win.document;
-    try{if(d.fonts&&d.fonts.ready)await Promise.race([d.fonts.ready,new Promise(r=>setTimeout(r,4000))]);}catch(_){}
-    await Promise.all(Array.from(d.images||[]).map(im=>im.complete?null:new Promise(r=>{im.onload=im.onerror=r;setTimeout(r,4000);})));
+    try{if(d.fonts&&d.fonts.ready)await Promise.race([d.fonts.ready,new Promise(r=>setTimeout(r,6000))]);}catch(_){}
+    await Promise.all(Array.from(d.images||[]).map(im=>im.complete?null:new Promise(r=>{im.onload=im.onerror=r;setTimeout(r,6000);})));
     await new Promise(r=>setTimeout(r,250));
     note.remove();
     win.focus();
-    win.addEventListener('afterprint',()=>setTimeout(cleanup,500));
-    setTimeout(cleanup,10*60*1000); // 혹시 afterprint가 안 오는 브라우저를 위해
-    win.print();
+    await new Promise(res=>{
+      let done=false;const fin=()=>{if(done)return;done=true;setTimeout(()=>{cleanup();res();},500);};
+      win.addEventListener('afterprint',fin);
+      setTimeout(fin,10*60*1000); // 혹시 afterprint가 안 오는 브라우저를 위해
+      win.print();
+    });
   }catch(e){cleanup();alert('리포트를 만들지 못했어요: '+(e&&e.message||e));}
+}
+/** 제출물 하나(원본 또는 다시쓰기)로 Writing Report를 바로 인쇄 창으로 열어줘요. 양식(초등/중등)·로고는 학원 설정을 따라요. */
+async function printWritingReport(s,studentName,studentId,academyName,siblings,forceStage){
+  return printHtmlDoc_(async()=>{
+    const cfg=await fetchReportConfig();
+    return buildWritingReportHtml_(wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg));
+  });
+}
+/* ===== 기간별 리포트 묶음 — 정한 기간에 낸 글마다 Writing Report를 만들어서, 학생별로 쭉 이어 한 번에 인쇄·PDF 저장해요(매달 학부모님께 보낼 때 쓰세요) ===== */
+function wrCombineHtml_(htmls){
+  const css=(htmls[0].match(/<style>([\s\S]*?)<\/style>/)||[])[1]||'';
+  const pages=htmls.map((h,i)=>{
+    const a=h.indexOf('<div class="wr-page">'),b=h.lastIndexOf('<div class="noprint">');
+    let part=h.slice(a,b);
+    if(i>0)part=part.replace(/<div class="wr-foot-fix">[\s\S]*?<\/div>/,''); // 고정 하단 문구는 첫 리포트 것만 남겨요(겹쳐 찍히지 않게)
+    return part;
+  });
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Writing Report</title>'+WR_FONTS+'<style>'+css+'.wr-page+.wr-page{break-before:page;page-break-before:always}</style></head><body>'+pages.join('')+'<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div></body></html>';
+}
+function periodReportEligible_(s){
+  return !!s&&String(s.chapter||'')!=='Rewriting'&&String(s.text||'').trim()&&submissionHasAnyFeedback(s);
+}
+/** opts: {title, loadSubs: async()=>제출물 전체(여러 학생이면 id별로 섞여 있어도 돼요)} */
+function openPeriodReportDialog_(opts){
+  const z=x=>String(x).padStart(2,'0');
+  const now=new Date();
+  const today=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate());
+  const first=now.getFullYear()+'-'+z(now.getMonth()+1)+'-01';
+  const ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(20,24,40,.45);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px';
+  const box=document.createElement('div');
+  box.style.cssText='background:#fff;border-radius:16px;padding:22px 24px;max-width:460px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.3)';
+  box.innerHTML='<div style="font-size:18px;font-weight:800;margin-bottom:4px">📅 기간별 리포트</div><div class="hint" style="margin-bottom:12px">'+escH(opts.title||'')+'</div>'+
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"><label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">시작일<input type="date" class="in" id="prFrom" value="'+first+'" style="padding:8px 10px;border-radius:10px"></label>'+
+    '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">끝나는 날<input type="date" class="in" id="prTo" value="'+today+'" style="padding:8px 10px;border-radius:10px"></label></div>'+
+    '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684;margin-top:10px">Re-Writing 여부<select class="in" id="prRw" style="padding:8px 10px;border-radius:10px;font-size:14px"><option value="all">전체 (Re-Writing 안 한 글도 포함)</option><option value="done">Re-Writing 완료한 글만</option><option value="todo">Re-Writing 안 한 글만</option></select></label>'+
+    '<div id="prInfo" class="hint" style="margin:12px 0;min-height:38px">제출 기록을 불러오는 중…</div>'+
+    '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" id="prCancel" type="button">닫기</button><button class="btn green" id="prGo" type="button" disabled>리포트 만들기 · 인쇄</button></div>';
+  ov.appendChild(box);document.body.appendChild(ov);
+  const q=id=>box.querySelector('#'+id);
+  const close=()=>{try{ov.remove();}catch(_){}};
+  q('prCancel').onclick=close;ov.addEventListener('mousedown',e=>{if(e.target===ov)close();});
+  let all=[],ready=false;
+  const pick=()=>{
+    const f=q('prFrom').value,t=q('prTo').value;
+    const inRange=all.filter(s=>{const d=String(s.datetime||'').slice(0,10);return d&&(!f||d>=f)&&(!t||d<=t)&&String(s.chapter||'')!=='Rewriting'&&String(s.text||'').trim();});
+    const rwMode=q('prRw').value;
+    const byId=new Map();all.forEach(x=>{const k=String(x.id);if(!byId.has(k))byId.set(k,[]);byId.get(k).push(x);});
+    const hasRw=s=>{try{return !!writingReportPair_(s,byId.get(String(s.id))||[s]).rewrite;}catch(e){return false;}};
+    const ok=inRange.filter(periodReportEligible_).filter(s=>rwMode==='all'||(rwMode==='done')===hasRw(s));
+    const fbOk=inRange.filter(periodReportEligible_).length;
+    return {ok,skipped:inRange.length-fbOk,rwSkipped:fbOk-ok.length};
+  };
+  const refresh=()=>{
+    if(!ready)return;
+    const p=pick();const stuCnt=new Set(p.ok.map(s=>String(s.id))).size;
+    q('prInfo').innerHTML=p.ok.length?('학생 <b>'+stuCnt+'명</b> · 리포트 <b>'+p.ok.length+'개</b>가 만들어져요.'+(p.skipped?' <span style="color:#92400e">(첨삭이 아직 없는 글 '+p.skipped+'개는 빼요)</span>':'')+(p.rwSkipped?' <span style="color:#92400e">(Re-Writing 조건에 안 맞는 글 '+p.rwSkipped+'개는 빼요)</span>':'')+(p.ok.length>150?'<br><span style="color:#b91c1c">리포트가 많아서 만드는 데 시간이 걸릴 수 있어요. 기간이나 조건을 좁히면 더 빨라요.</span>':'')):'이 기간에 만들 수 있는 리포트가 없어요.'+(p.skipped?' (첨삭이 아직 없는 글 '+p.skipped+'개)':'');
+    q('prGo').disabled=!p.ok.length;
+  };
+  q('prFrom').onchange=refresh;q('prTo').onchange=refresh;q('prRw').onchange=refresh;
+  (async()=>{try{all=await opts.loadSubs();}catch(e){all=[];}ready=true;refresh();})();
+  q('prGo').onclick=async()=>{
+    const p=pick();if(!p.ok.length)return;
+    close();
+    const cfg=await fetchReportConfig();
+    // 학생별(이름순)로 묶고, 한 학생 안에서는 낸 날짜 순으로 이어 붙여요.
+    const byStu=new Map();
+    all.forEach(s=>{const k=String(s.id);if(!byStu.has(k))byStu.set(k,[]);byStu.get(k).push(s);});
+    const ordered=p.ok.slice().sort((a,b)=>{
+      const na=String(a.name||a.id),nb=String(b.name||b.id);
+      return na!==nb?na.localeCompare(nb,'ko'):String(a.datetime||'').localeCompare(String(b.datetime||''));
+    });
+    const groups={};
+    ordered.forEach(s=>{
+      const ctx=wrCtxFor_(s,s.name||'',s.academy||'',byStu.get(String(s.id))||[s],null,cfg);
+      (groups[ctx.stage]=groups[ctx.stage]||[]).push(ctx);
+    });
+    const stages=Object.keys(groups);
+    for(let i=0;i<stages.length;i++){
+      const st=stages[i];
+      if(i>0&&!confirm('다음은 '+st+' 양식 리포트 '+groups[st].length+'개예요. 인쇄 화면을 열까요?'))break;
+      await printHtmlDoc_(async()=>wrCombineHtml_(groups[st].map(buildWritingReportHtml_)),'리포트 '+groups[st].length+'개를 만드는 중이에요…');
+    }
+  };
 }
 
 /** 로고 이미지 파일 → 작게 줄인 이미지 데이터(data URL). SVG는 그대로, 나머지는 긴 변 360px로 줄여요. */
@@ -4392,13 +4485,25 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
     opt0(fGrade.sel,'학년 전체');sortStageGrades(uniqSorted(all.concat(roster).map(s=>stageGrade(s.school,s.schoolGrade)))).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fGrade.sel.appendChild(o);});
     opt0(fCls.sel,'반 전체');uniqSorted(all.concat(roster).map(s=>s.cls)).forEach(v=>{const o=el('option');o.value=v;o.textContent=v;fCls.sel.appendChild(o);});
     filterBox.style.display='flex';
+    {
+      const pb=el('button','btn ghost','📅 기간별 리포트 (지금 보이는 학생들)');pb.type='button';pb.style.cssText='align-self:flex-end;padding:8px 14px;font-size:13px';
+      pb.onclick=()=>{
+        const ids=new Set(lastOutIds);
+        openPeriodReportDialog_({title:'지금 목록에 보이는 학생 '+ids.size+'명 (위의 학원·학교·학년·반 조건이 그대로 적용돼요)',loadSubs:async()=>{
+          const r=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+          const d=await r.json();
+          return overlayRoster_((d&&d.ok?d.submissions:[])||[],roster).filter(x=>ids.has(String(x.id)));
+        }});
+      };
+      filterBox.appendChild(pb);
+    }
     if(inactiveIds.size){
       const lab=el('label');lab.style.cssText='display:flex;align-items:center;gap:6px;font-size:13px;color:#6b7684;align-self:flex-end;padding-bottom:8px;cursor:pointer';
       const cb=el('input');cb.type='checkbox';cb.onchange=()=>{showInactive=cb.checked;hpage=0;render();};
       lab.appendChild(cb);lab.appendChild(document.createTextNode('휴원·퇴원 학생도 보기 ('+inactiveIds.size+'명)'));
       filterBox.appendChild(lab);
     }
-    let hpage=0;
+    let hpage=0,lastOutIds=[];
     const render=()=>{
       Array.from(box.children).slice(1).forEach(c=>c.remove());
       const fa=fAcademy?fAcademy.sel.value:'',fs=fSchool.sel.value,fg=fGrade.sel.value,fc=fCls.sel.value,ft=fType.sel.value;
@@ -4417,6 +4522,7 @@ function viewTeacherHome(){clearTeacherNav();tryAutoGradeMigration();teacherMoun
         counts[r.id]={id:r.id,name:r.name,academy:r.academy,school:r.school,schoolGrade:r.schoolGrade,cls:r.cls,count:0,lastAt:''};
       });
       const studentsOut=Object.values(counts).sort((a,b)=>b.lastAt<a.lastAt?-1:1);
+      lastOutIds=studentsOut.map(x=>String(x.id));
       if(!studentsOut.length){box.appendChild(el('div','hint','조건에 맞는 제출 내역이 없어요.'));return;}
       if(hpage*LIST_PAGE_SIZE>=studentsOut.length)hpage=Math.max(0,Math.ceil(studentsOut.length/LIST_PAGE_SIZE)-1);
       const goH=(p)=>{hpage=p;render();try{box.scrollIntoView({block:'start'});}catch(e){}};
@@ -7275,9 +7381,12 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
     // DRILL_MIN_SENTENCES는 loadLiveContent()에서 채워져요) — 숫자를 바꾸고 싶으면 코드 수정 없이 그 탭의
     // 값만 고치면 돼요. 다만 이 조건들도(다른 조건들과 마찬가지로) 화면에 충족 여부만 보여줄 뿐 제출
     // 자체를 막지는 않아요 — 분량이 부족해도 학생은 언제든 제출할 수 있어요.
-    const drillConds=(P.task.conds||[]).map(cn=>({label:cn.label,test:testWithContractions(cn.test)})).concat([
+    // 문장 수 기준은 '전체 문장 수 10개 이상' 하나로 통일하고(문제마다 따로 붙은 '문장 N개 이상'이 겹쳐 나오던 것을 없애요),
+    // 아이들이 어려워해서 '문장마다 단어 7개 이상' 같은 문장당 단어 수 조건은 뺐어요(서버에서 받아온 컨텐츠에 들어 있어도 걸러요).
+    const DRILL_SENT_NEED=Math.max(10,DRILL_MIN_SENTENCES);
+    const drillConds=(P.task.conds||[]).filter(cn=>!/문장\s*마다\s*단어\s*\d+\s*개\s*이상/.test(String(cn.label||''))&&!/^\s*(?:전체\s*)?문장(?:\s*수)?\s*\d+\s*(?:개|문장)\s*이상\s*$/.test(String(cn.label||''))).map(cn=>({label:cn.label,test:testWithContractions(cn.test)})).concat([
       {label:'전체 단어 수 '+DRILL_MIN_WORDS+'단어 이상',test:t=>countWords(t)>=DRILL_MIN_WORDS},
-      {label:'전체 문장 수 '+DRILL_MIN_SENTENCES+'개 이상',test:t=>sc(t)>=DRILL_MIN_SENTENCES}
+      {label:'전체 문장 수 '+DRILL_SENT_NEED+'개 이상',test:t=>sc(t)>=DRILL_SENT_NEED}
     ]);
     const ul=el('ul','conds');drillConds.forEach(cn=>{const li=el('li',null,'<span class="mk">·</span>'+cn.label);li._c=cn;ul.appendChild(li);});right.appendChild(ul);
     const fx=el('div','fx');right.appendChild(fx);
