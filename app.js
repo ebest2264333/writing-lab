@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-20d';
+const APP_VERSION='2026-11-20e';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -6817,6 +6817,8 @@ function viewStudentForm(existing){teacherMount(w=>{
     inp=el('input','in');inp.type='text';inp.style.cssText='padding:10px;font-size:14px;border-radius:10px';
     if(f.ph)inp.placeholder=f.ph;
     if(existing&&existing[f.key]!==undefined)inp.value=existing[f.key];
+    // 새 학생을 추가할 때는 로그인한 선생님에게 배정된 학원을 기본값으로 채워둬요(전체 관리자도 자기 학원이 있으면 미리 채워지고, 필요하면 바꿀 수 있어요).
+    else if(!existing&&f.key==='academy'&&USER.academy)inp.value=USER.academy;
     }
     if(f.key==='academy'&&lockAcademy){inp.value=USER.academy||'';inp.disabled=true;inp.style.background='#f2f2f0';}
     wrap.appendChild(inp);
