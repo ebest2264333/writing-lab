@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-20f';
+const APP_VERSION='2026-11-20g';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2989,7 +2989,8 @@ function openPeriodReportDialog_(opts){
     '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:8px;cursor:pointer"><input type="checkbox" id="prEng"> 영어 이름만 표시 (한글 이름 빼기)</label>'+
     '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:8px;cursor:pointer"><input type="checkbox" id="prDrill"> Pattern Drill 글에 문제 풀이 결과(맞은 것·틀린 것 전체)와 조건 영작 넣기</label>'+
     '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:12px;cursor:pointer"><input type="checkbox" id="prCover" checked> 월별 표지 넣기 — "달 고르기"로 한 달을 골랐을 때만 학생마다 맨 앞에 들어가요 (로고·이름·반·글 목록 자동)</label>'+
-    '<div id="prInfo" class="hint" style="margin:12px 0;min-height:38px">제출 기록을 불러오는 중…</div>'+
+    '<div id="prInfo" class="hint" style="margin:12px 0 6px;min-height:38px">제출 기록을 불러오는 중…</div>'+
+    '<div id="prList" style="margin-bottom:12px"></div>'+
     '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" id="prCancel" type="button">닫기</button><button class="btn green" id="prGo" type="button" disabled>리포트 만들기 · 인쇄</button></div>';
   ov.appendChild(box);document.body.appendChild(ov);
   const q=id=>box.querySelector('#'+id);
@@ -3019,21 +3020,51 @@ function openPeriodReportDialog_(opts){
   }catch(e){}
   syncMonth();
   let all=[],ready=false;
+  // 잘못 올라온 글처럼 이번 리포트에 넣고 싶지 않은 글은 아래 목록에서 체크를 풀어 뺄 수 있어요(이 창을 닫으면 초기화돼요).
+  const excluded=new Set();let listOpen=false;
+  const keyOf=s=>String(s.subId||[s.id,s.datetime,s.chapter,s.point].join('|'));
   const pick=()=>{
     const f=q('prFrom').value,t=q('prTo').value;
     const inRange=all.filter(s=>{const d=String(s.datetime||'').slice(0,10);return d&&(!f||d>=f)&&(!t||d<=t)&&String(s.chapter||'')!=='Rewriting'&&!isExamSubmission_(s)&&String(s.text||'').trim();});
     const rwMode=q('prRw').value;
     const byId=new Map();all.forEach(x=>{const k=String(x.id);if(!byId.has(k))byId.set(k,[]);byId.get(k).push(x);});
     const hasRw=s=>{try{return !!writingReportPair_(s,byId.get(String(s.id))||[s]).rewrite;}catch(e){return false;}};
-    const ok=inRange.filter(periodReportEligible_).filter(s=>rwMode==='all'||(rwMode==='done')===hasRw(s));
+    const okAll=inRange.filter(periodReportEligible_).filter(s=>rwMode==='all'||(rwMode==='done')===hasRw(s));
+    const ok=okAll.filter(s=>!excluded.has(keyOf(s))); // 목록에서 체크를 푼 글은 리포트에서 빼요
     const fbOk=inRange.filter(periodReportEligible_).length;
-    return {ok,skipped:inRange.length-fbOk,rwSkipped:fbOk-ok.length};
+    return {ok,okAll,skipped:inRange.length-fbOk,rwSkipped:fbOk-okAll.length};
   };
-  const refresh=()=>{
+  const renderList=(p)=>{
+    const lst=q('prList');lst.innerHTML='';
+    if(!p.okAll.length)return;
+    const det=document.createElement('details');det.open=listOpen;
+    det.addEventListener('toggle',()=>{listOpen=det.open;});
+    const sm=document.createElement('summary');sm.style.cssText='cursor:pointer;font-size:13px;font-weight:700;color:#2563eb';
+    sm.textContent='글 골라서 빼기 (체크를 풀면 리포트에서 빠져요)';
+    det.appendChild(sm);
+    const bar=document.createElement('div');bar.style.cssText='display:flex;gap:8px;margin:8px 0 4px';
+    const mkb=(t,fn)=>{const b=document.createElement('button');b.type='button';b.className='btn ghost';b.textContent=t;b.style.cssText='padding:4px 10px;font-size:12px';b.onclick=fn;return b;};
+    const wrap=document.createElement('div');wrap.style.cssText='max-height:220px;overflow:auto;border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px';
+    const cbs=[];
+    p.okAll.slice().sort((a,b)=>{const na=String(a.name||a.id),nb=String(b.name||b.id);return na!==nb?na.localeCompare(nb,'ko'):String(a.datetime||'').localeCompare(String(b.datetime||''));}).forEach(sub=>{
+      const lab=document.createElement('label');lab.style.cssText='display:flex;align-items:flex-start;gap:8px;font-size:12.5px;padding:4px 0;cursor:pointer;border-bottom:1px solid #f3f4f6';
+      const cb=document.createElement('input');cb.type='checkbox';cb.checked=!excluded.has(keyOf(sub));cb.style.marginTop='2px';
+      cb.onchange=()=>{if(cb.checked)excluded.delete(keyOf(sub));else excluded.add(keyOf(sub));refresh(true);};
+      cbs.push([cb,sub]);
+      const tx=document.createElement('span');
+      tx.textContent=(sub.name||sub.id)+' · '+String(sub.datetime||'').slice(0,10)+' · '+(sub.point||sub.chapter||'');
+      lab.appendChild(cb);lab.appendChild(tx);wrap.appendChild(lab);
+    });
+    bar.appendChild(mkb('전체 선택',()=>{excluded.clear();cbs.forEach(x=>{x[0].checked=true;});refresh(true);}));
+    bar.appendChild(mkb('전체 해제',()=>{cbs.forEach(x=>{excluded.add(keyOf(x[1]));x[0].checked=false;});refresh(true);}));
+    det.appendChild(bar);det.appendChild(wrap);lst.appendChild(det);
+  };
+  const refresh=(noList)=>{
     if(!ready)return;
     const p=pick();const stuCnt=new Set(p.ok.map(s=>String(s.id))).size;
     q('prInfo').innerHTML=p.ok.length?('학생 <b>'+stuCnt+'명</b> · 리포트 <b>'+p.ok.length+'개</b>가 만들어져요.'+(p.skipped?' <span style="color:#92400e">(첨삭이 아직 없는 글 '+p.skipped+'개는 빼요)</span>':'')+(p.rwSkipped?' <span style="color:#92400e">(Re-Writing 조건에 안 맞는 글 '+p.rwSkipped+'개는 빼요)</span>':'')+(p.ok.length>150?'<br><span style="color:#b91c1c">리포트가 많아서 만드는 데 시간이 걸릴 수 있어요. 기간이나 조건을 좁히면 더 빨라요.</span>':'')):'이 기간에 만들 수 있는 리포트가 없어요.'+(p.skipped?' (첨삭이 아직 없는 글 '+p.skipped+'개)':'');
     q('prGo').disabled=!p.ok.length;
+    if(noList!==true)renderList(p);
   };
   q('prFrom').onchange=q('prTo').onchange=()=>{syncMonth();saveState();refresh();};
   q('prRw').onchange=()=>{saveState();refresh();};q('prDuplex').onchange=saveState;q('prCover').onchange=saveState;q('prDrill').onchange=saveState;q('prEng').onchange=saveState;
