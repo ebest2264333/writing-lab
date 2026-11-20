@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-20b';
+const APP_VERSION='2026-11-20d';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2799,7 +2799,7 @@ async function printWritingReport(s,studentName,studentId,academyName,siblings,f
       const c=document.createElement('input');c.type='checkbox';c.id=id;c.checked=!!checked;
       l.appendChild(c);l.appendChild(document.createTextNode(label));body.appendChild(l);return c;
     };
-    let engSaved=false;try{engSaved=store.get('ewl2_wrEng')==='1';}catch(e){}
+    let engSaved=false;
     const eng=mk('wrEngOnly','영어 이름만 표시 (한글 이름 빼기)',engSaved);
     let drill=null;
     if(hasDrill){
@@ -2809,7 +2809,7 @@ async function printWritingReport(s,studentName,studentId,academyName,siblings,f
     const row=el('div');row.style.cssText='display:flex;gap:8px;margin-top:14px;flex-wrap:wrap';
     const yes=el('button','btn blue','인쇄');yes.type='button';yes.style.cssText='padding:8px 16px;font-size:13.5px';
     const no=el('button','btn ghost','닫기');no.type='button';no.style.cssText='padding:8px 16px;font-size:13.5px';
-    yes.onclick=()=>{try{store.set('ewl2_wrEng',eng.checked?'1':'0');}catch(e){}closeGenericModal();go(drill?drill.checked:false,eng.checked);};
+    yes.onclick=()=>{closeGenericModal();go(drill?drill.checked:false,eng.checked);};
     no.onclick=()=>closeGenericModal();
     row.appendChild(yes);row.appendChild(no);body.appendChild(row);
   });
@@ -3014,7 +3014,7 @@ function openPeriodReportDialog_(opts){
       if(/^\d{4}-\d\d-\d\d$/.test(sv.to||''))q('prTo').value=sv.to;
       if(['all','done','todo'].includes(sv.rw))q('prRw').value=sv.rw;
       if(['report','student','none'].includes(sv.duplex))q('prDuplex').value=sv.duplex;
-      if(sv.cover===false)q('prCover').checked=false;if(sv.drill===true)q('prDrill').checked=true;if(sv.eng===true)q('prEng').checked=true;
+      if(sv.cover===false)q('prCover').checked=false;if(sv.drill===true)q('prDrill').checked=true;
     }else{const r=monthRange(first.slice(0,7));q('prFrom').value=r[0];q('prTo').value=r[1];}
   }catch(e){}
   syncMonth();
@@ -6685,7 +6685,9 @@ function viewStudentManage(){teacherMount(w=>{
     try{
       const res=await fetch(SUBMIT_URL+'?view=studentList');
       const data=await res.json();
-      if(data&&data.ok)students=data.students||[];
+      if(data&&data.ok){students=data.students||[];
+        // 이름·학교 등을 방금 고쳤을 수 있어서, 다른 화면(제출 목록·리포트 학생 목록 등)이 쓰는 전역 명단도 같이 최신으로 맞춰요.
+        ROSTER=students.slice();try{saveRosterCache(ROSTER,TEACHERS,CLASS_LEVELS);}catch(e2){}}
     }catch(e){}
     // 학원별 관리자(isAcademyAdmin)는 전체 관리자와 달리 자기 학원 학생만 봐야 해서, 여기서
     // 미리 걸러둬요(학원 선택 필터도 안 보여줘요 — 어차피 하나뿐이라 고를 필요가 없어요).
