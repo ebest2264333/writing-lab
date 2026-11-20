@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-20j';
+const APP_VERSION='2026-11-20k';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2828,14 +2828,17 @@ async function wrWaitFonts_(d){
   try{
     await T(Promise.all(Array.from(d.querySelectorAll('link[rel="stylesheet"]')).map(l=>l.sheet?null:new Promise(r=>{l.addEventListener('load',r);l.addEventListener('error',r);}))),6000);
     if(!d.fonts||!d.fonts.load)return;
-    const txt=String(d.body.textContent||'').replace(/\s+/g,' ').slice(0,20000);
+    const txt=Array.from(new Set(Array.from(String(d.body.textContent||'').replace(/\s+/g,'')))).join('')+' '; // 쓰인 글자를 빠짐없이(중복 없이) 모아요
     const specs=['400 16px "Noto Sans KR"','500 16px "Noto Sans KR"','700 16px "Noto Sans KR"','800 16px "Noto Sans KR"','900 16px "Noto Sans KR"','600 16px Inter','700 16px Inter','800 16px Inter','900 16px Inter','16px Jua','400 16px "DM Mono"','500 16px "DM Mono"'];
-    await T(Promise.all(specs.map(sp=>d.fonts.load(sp,txt).catch(()=>[]))),8000);
-    if(d.fonts.ready)await T(d.fonts.ready,4000);
+    await T(Promise.all(specs.map(sp=>d.fonts.load(sp,txt).catch(()=>[]))),20000);
+    if(d.fonts.ready)await T(d.fonts.ready,10000);
   }catch(_){}
 }
-async function wrMeasurePages_(css,partsHtml,stage){
-  const mid=stage!=='초등';
+/** 블록(리포트 하나, 또는 학생 한 명 분량)마다 인쇄하면 몇 쪽이 되는지 재요. blocks: HTML 문자열 배열 → 쪽수 배열.
+ *  예전엔 블록마다 새 iframe을 만들고 글꼴을 매번 다시 받았는데, 인터넷이 느리면 글꼴이 덜 받아진 채로(임시 글꼴로) 재서
+ *  실제 인쇄와 쪽수가 달라졌어요(빈 면이 엉뚱하게 들어가거나 빠짐). 이제 iframe 하나에 모든 내용을 한꺼번에 넣고 글꼴을
+ *  끝까지 받은 다음, 같은 화면에서 블록을 하나씩 바꿔 넣으며 재요. */
+async function wrMeasurePages_(css,blocks,stage){
   const wMm=210,hMm=297; // 두 양식 모두 용지 여백을 @page가 아니라 .wr-page 안쪽 여백(padding)으로 넣어서, 인쇄 창의 '여백' 설정과 상관없이 같은 쪽수가 나와요.
   const px=mm=>mm/25.4*96;
   const fr=document.createElement('iframe');
@@ -2845,12 +2848,21 @@ async function wrMeasurePages_(css,partsHtml,stage){
   try{
     const d=fr.contentDocument;
     const mcss=css.replace(/@page\s*\{[^}]*\}/g,'').replace(/@media print\{/g,'@media all{'); // 인쇄용 규칙을 화면에도 적용해서 잴 수 있게
+    const partsHtml=blocks.join('');
     d.open();d.write('<!doctype html><html><head><meta charset="utf-8">'+WR_FONTS+'<style>'+mcss+'html,body{margin:0!important;padding:0!important;background:#fff!important}.wr-foot-fix{display:none!important}.wr-page+.wr-page{break-before:page}#mc{width:'+px(wMm)+'px;height:'+px(hMm)+'px;column-width:'+px(wMm)+'px;column-gap:0;column-fill:auto;overflow:visible}</style></head><body><div id="mc">'+partsHtml+'</div></body></html>');d.close();
+    const waitImgs=()=>Promise.all(Array.from(d.images||[]).map(im=>im.complete?null:new Promise(r=>{im.onload=im.onerror=r;setTimeout(r,8000);})));
     await wrWaitFonts_(d);
-    await Promise.all(Array.from(d.images||[]).map(im=>im.complete?null:new Promise(r=>{im.onload=im.onerror=r;setTimeout(r,5000);})));
-    await new Promise(r=>setTimeout(r,150));
+    await waitImgs();
+    await new Promise(r=>setTimeout(r,200));
     const mc=d.getElementById('mc');
-    return Math.max(1,Math.round(mc.scrollWidth/px(wMm)));
+    const out=[];
+    for(const b of blocks){
+      mc.innerHTML=b;
+      await waitImgs();
+      void mc.offsetHeight; // 바꿔 넣은 내용으로 레이아웃을 바로 다시 계산해요
+      out.push(Math.max(1,Math.round(mc.scrollWidth/px(wMm))));
+    }
+    return out;
   }finally{try{fr.remove();}catch(_){}}
 }
 /** ctxs: 같은 양식의 리포트 내용들(학생별로 이어져 있어요). padOdd면 쪽수가 홀수로 끝나는 학생 다음에 빈 면을 하나 넣어서, 양면 인쇄에서 다음 학생이 앞면에서 시작하게 해요. */
@@ -2972,14 +2984,18 @@ async function wrCombineHtml_(ctxs,padOdd,coverLabel){
     // padOdd: 'report'면 리포트(글)마다, 'student'(또는 true)면 학생(_sid)별로 묶어서 쪽수를 재고, 홀수면 그 뒤에 빈 면을 끼워요.
     const perReport=padOdd==='report';
     const stage=ctxs[0].stage;
-    let k=0;
+    const ranges=[];let k=0;
     while(k<ctxs.length){
       let e=k;while(!perReport&&e+1<ctxs.length&&ctxs[e+1]._sid===ctxs[k]._sid)e++;
-      const block=parts.slice(k,e+1).join('');
-      let n=1;try{n=await wrMeasurePages_(css,block,stage);}catch(_){n=2;}
-      body+=block+((n%2===1&&e<ctxs.length-1)?'<div class="wr-blank">&nbsp;</div>':'');
-      k=e+1;
+      ranges.push([k,e]);k=e+1;
     }
+    const blocks=ranges.map(([a,e])=>parts.slice(a,e+1).join(''));
+    let counts=null;try{counts=await wrMeasurePages_(css,blocks,stage);}catch(_){counts=null;}
+    try{console.log('[Writing Report] 블록별 쪽수:',counts);}catch(_){}
+    blocks.forEach((block,i)=>{
+      const n=counts?counts[i]:2; // 잴 수 없으면 빈 면을 넣지 않아요
+      body+=block+((n%2===1&&i<blocks.length-1)?'<div class="wr-blank">&nbsp;</div>':'');
+    });
   }else body=parts.join('');
   return '<!doctype html><html><head><meta charset="utf-8"><title>Writing Report</title>'+WR_FONTS+'<style>'+css+'.wr-page+.wr-page,.wr-blank+.wr-page{break-before:page;page-break-before:always}.wr-blank{break-before:page;page-break-before:always;height:2px;color:transparent;overflow:hidden}.noprint .wr-blank{display:none}</style></head><body>'+body+'<div class="noprint"><button onclick="window.print()">인쇄하기 · PDF 만들기</button></div></body></html>';
 }
