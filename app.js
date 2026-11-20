@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-20k';
+const APP_VERSION='2026-11-20m';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -7724,10 +7724,12 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
     if(it.h)b.appendChild(el('div','frame','단어: '+it.h));
     const inp=el('input','in');inp.placeholder='영어로 문장을 완성하세요.';b.appendChild(inp);
     const fx=el('div','fx');b.appendChild(fx);b.appendChild(el('div','enter-tip','Enter = 채점 · 채점 후 Enter 한 번 더 = 다음'));
-    let checked=false,correct=false,pending=false;const ansList=[it.a].concat(it.alt||[]);
+    let checked=false,correct=false,pending=false,aiReason='',byAi=false;const ansList=[it.a].concat(it.alt||[]);
     const finalize=()=>{inp.classList.remove('ok','no');inp.classList.add(correct?'ok':'no');
-      fx.className='fx '+(correct?'ok':'no');fx.innerHTML=correct?'정답이에요! (Enter=다음)':('아쉬워요(대소문자·문장부호도 정확해야 해요). 모범답안: <b>'+it.a+'</b> (오답노트에 담겨요)');checked=true;pending=false;
-      if(!it._graded){it._graded=true;if(correct)RES.compose.ok++;else RES.wrong.push({type:'영작',ko:it.k,a:it.a,user:inp.value});RES.all.push({type:'영작',ko:it.k,a:it.a,user:inp.value,correct:correct});progress.composeCorrect.push(correct);saveProgressNow();}};
+      fx.className='fx '+(correct?'ok':'no');
+      fx.innerHTML=correct?(byAi?'정답이에요! 모범답안과 표현은 달라도 문법과 뜻이 맞아요. (Enter=다음)<br><span style="font-weight:500">모범답안: '+escH(it.a)+'</span>':'정답이에요! (Enter=다음)')
+        :('아쉬워요(대소문자·문장부호·띄어쓰기도 정확해야 해요).'+(aiReason?' '+escH(aiReason):'')+' 모범답안: <b>'+it.a+'</b> (오답노트에 담겨요)');checked=true;pending=false;
+      if(!it._graded){it._graded=true;if(correct)RES.compose.ok++;else RES.wrong.push({type:'영작',ko:it.k,a:it.a,user:inp.value,h:it.h||'',point:P.title||''});RES.all.push({type:'영작',ko:it.k,a:it.a,user:inp.value,correct:correct});progress.composeCorrect.push(correct);saveProgressNow();}};
     // 글자 그대로(normStrict) 똑같으면 바로 정답 처리하고(빠르고 공짜), 다를 때만(=애매할 때만) AI한테
     // "표현이 달라도 뜻이 같은지" 한 번 더 물어봐요 — 정확히 같은 답이 아니어도 같은 뜻으로 쓰인 단어면
     // 맞게 인정해달라는 요청으로 추가했어요.
@@ -7735,12 +7737,9 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
       if(pending)return;
       const typed=inp.value;
       if(ansList.some(x=>sameAnswer(typed,x))){correct=true;finalize();return;}
-      pending=true;fx.className='fx';fx.textContent='채점 중… (표현이 달라도 같은 뜻이면 AI가 확인해줘요)';
-      try{
-        const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'checkComposeAnswerAI',studentId:USER.id,korean:it.k,modelAnswer:it.a,studentAnswer:typed})});
-        let data=null;try{data=await res.json();}catch(e){}
-        correct=!!(data&&data.ok!==false&&data.result&&data.result.correct);
-      }catch(e){correct=false;}
+      pending=true;fx.className='fx';fx.textContent='채점 중… (모범답안과 표현이 달라도 문법·조건·형식이 맞으면 AI가 정답으로 인정해줘요)';
+      const r=await composeAiCheck_(it.k,it.a,typed,it.h,P.title);
+      correct=r.correct;aiReason=r.reason;byAi=r.correct;
       finalize();
     };
     inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!checked)check();else if(idx<slides.length-1)deckShow(idx+1);}});
@@ -7907,6 +7906,16 @@ function runDrill(P,opts){opts=opts||{};setWide(false);deckInit();
   })();
 }
 
+/** 영작 채점(Haiku): 모범답안과 글자가 달라도, 한국어 뜻을 전달하고 문법이 맞고 주어진 조건(단어 힌트·문법 포인트)을 지키면 정답이에요.
+ *  서버(checkComposeAnswerAI)가 실패하면 오답으로 처리해요(학생은 오답노트에서 다시 풀 수 있어요). */
+async function composeAiCheck_(korean,modelAnswer,typed,hint,grammarPoint){
+  try{
+    const res=await fetch(SUBMIT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'checkComposeAnswerAI',studentId:USER.id,korean,modelAnswer,studentAnswer:typed,hint:hint||'',grammarPoint:grammarPoint||''})});
+    let data=null;try{data=await res.json();}catch(e){}
+    const r=data&&data.ok!==false&&data.result;
+    return {correct:!!(r&&r.correct===true),reason:String((r&&r.reason)||'')};
+  }catch(e){return {correct:false,reason:''};}
+}
 function buildRedo(RES){ // insert redo slides right after the redo anchor (before task)
   const anchorIdx=slides.findIndex(s=>s._box&&s._box.querySelector('.badge.purple'));
   let insertAt=anchorIdx+1;
@@ -7918,8 +7927,13 @@ function buildRedo(RES){ // insert redo slides right after the redo anchor (befo
     b.appendChild(el('div','enter-tip','Enter = 채점 · 채점 후 Enter = 다음'));
     let tries=0,solved=false;const target=normStrict(w.a);
     const stage3=()=>{copyWrap.innerHTML='';const cb=el('div','copybox','따라 적기: '+w.a);copyWrap.appendChild(cb);hintbox.textContent='세 번째예요. 정답을 그대로 따라 적으면 통과!';};
-    const check=()=>{if(solved){if(idx<slides.length-1)deckShow(idx+1);return;}
-      tries++;const ok=sameAnswer(inp.value,w.a);
+    let busy=false;
+    const check=async()=>{if(solved){if(idx<slides.length-1)deckShow(idx+1);return;}
+      if(busy)return;
+      let ok=sameAnswer(inp.value,w.a);
+      // 영작은 다시 풀 때도 모범답안과 달라도 문법·조건이 맞으면 정답으로 인정해요(따라 적기 단계 전까지).
+      if(!ok&&w.type==='영작'&&tries<2&&inp.value.trim()){busy=true;fx.className='fx';fx.textContent='채점 중…';const r=await composeAiCheck_(w.ko,w.a,inp.value,w.h||'',w.point||'');ok=r.correct;busy=false;}
+      tries++;
       if(ok){solved=true;inp.classList.remove('no');inp.classList.add('ok');fx.className='fx ok';fx.textContent='잘했어요! (Enter=다음)';hintbox.textContent='';}
       else{inp.classList.add('no');fx.className='fx no';fx.textContent='다시 해봐요.';
         if(tries===1)hintbox.textContent='힌트: 첫 단어는 "'+w.a.split(' ')[0]+'" 로 시작해요.';
