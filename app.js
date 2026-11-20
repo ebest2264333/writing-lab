@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-20e';
+const APP_VERSION='2026-11-20f';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2708,7 +2708,7 @@ function buildWritingReportHtml_(ctx){
       '<div class="wr-in"><div class="wr-meta"><div class="row topic"><div class="c"><div class="k">TOPIC<b>주제</b></div><div class="v">'+escH(ctx.topic)+'</div></div></div>'+
       '<div class="row"><div class="c"><div class="k">NAME<b>이름</b></div><div class="v">'+escH(ctx.name)+'</div></div><div class="c"><div class="k">CLASS<b>반</b></div><div class="v">'+escH(ctx.cls||'-')+'</div></div><div class="c"><div class="k">LEVEL<b>레벨</b></div><div class="v">'+escH(ctx.level||'-')+'</div></div><div class="c"><div class="k">DATE<b>날짜</b></div><div class="v">'+escH(ctx.date)+'</div></div></div></div>'+
       finalHtml+scoreHtml+
-      (ctx.drill?hd('문제 풀이 결과','PATTERN DRILL')+wrDrillHtml_(ctx.drill)+(ctx.drill.task?hd('내가 쓴 글 (조건 영작)','MY WRITING')+'<div class="wr-task">'+wrParagraphs_(ctx.drill.task)+'</div>':''):'')+
+      (ctx.drill?hd('문제 풀이 결과','PATTERN DRILL')+wrDrillHtml_(ctx.drill):'')+
       (ctx.brain?hd('생각 지도 (마인드맵)','MIND MAP')+wrBrainHtml_(ctx.brain):'')+
       hd('문장별 첨삭','FEEDBACK')+sentsHtml+
       hd('선생님 코멘트','TEACHER\'S COMMENT')+'<div class="wr-cmt">'+cmtHtml+'</div></div>'+
@@ -2717,7 +2717,7 @@ function buildWritingReportHtml_(ctx){
     let no=0;const hd=t=>'<div class="wr-h">'+String(++no).padStart(2,'0')+'. '+t+'</div>';
     // 완성된 글이 리포트 맨 앞에 와요(번호도 01번). 나머지는 기존 순서 그대로예요.
     const finalHtml=hd('완성된 글')+'<div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 완성된 글이 없어요)</p>')+'</div>';
-    const drillHtml=ctx.drill?(hd('문제 풀이 결과')+wrDrillHtml_(ctx.drill)+(ctx.drill.task?hd('내가 쓴 글 (조건 영작)')+'<div class="wr-task">'+wrParagraphs_(ctx.drill.task)+'</div>':'')):'';
+    const drillHtml=ctx.drill?(hd('문제 풀이 결과')+wrDrillHtml_(ctx.drill)):'';
     const picsHtml=(ctx.pics&&ctx.pics.length)?(hd('그림 보고 쓰기')+'<div class="wr-pics">'+ctx.pics.map(p=>'<div class="p"><div><img src="'+escH(p.imageUrl)+'" style="object-position:'+escH(p.crop||'center center')+';transform:scale('+((Number(p.zoom)||100)/100)+')" alt=""></div></div>').join('')+'</div>'):'';
     const brainHtml=ctx.brain?(hd('생각 지도 (마인드맵)')+wrBrainHtml_(ctx.brain)):'';
     body='<div class="wr-head"><div><div class="dots"><i style="background:#E8736B"></i><i style="background:#3DB56F"></i><i style="background:#4C9BE8"></i></div><div class="eyebrow">WRITING-LAB · REPORT</div><h1>Writing Report</h1></div>'+wrLogoHtml_(ctx)+'</div>'+
