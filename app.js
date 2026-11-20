@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-20g';
+const APP_VERSION='2026-11-20i';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -21,7 +21,11 @@ function checkForNewVersion(){
     }
   }).catch(()=>{});
 }
-(function(){const reloadBtn=document.getElementById('updateReloadBtn');if(reloadBtn)reloadBtn.onclick=()=>location.reload();})();
+(function(){const reloadBtn=document.getElementById('updateReloadBtn');if(reloadBtn)reloadBtn.onclick=async()=>{
+  /* 그냥 새로고침하면 브라우저가 저장해 둔 옛 app.js를 다시 써서 배너가 계속 떠요. 먼저 새 파일을 강제로 받아 저장해 두고 새로고침해요. */
+  try{const base=(ROUTE_PATHMODE?ROUTE_BASE:'');await Promise.all(['app.js','style.css','index.html'].map(f=>fetch(base+f,{cache:'reload'})));}catch(e){}
+  location.reload();
+};})();
 setInterval(checkForNewVersion,5*60*1000); // 5분마다 확인
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible')checkForNewVersion(); });
 
@@ -2771,7 +2775,7 @@ async function printHtmlDoc_(makeHtml,waitMsg){
     win.document.open();win.document.write(html);win.document.close();
     // 글꼴·그림이 다 불러와진 뒤에 인쇄해야 모양이 안 깨져요.
     const d=win.document;
-    try{if(d.fonts&&d.fonts.ready)await Promise.race([d.fonts.ready,new Promise(r=>setTimeout(r,6000))]);}catch(_){}
+    await wrWaitFonts_(d);
     await Promise.all(Array.from(d.images||[]).map(im=>im.complete?null:new Promise(r=>{im.onload=im.onerror=r;setTimeout(r,6000);})));
     await new Promise(r=>setTimeout(r,250));
     note.remove();
@@ -2816,6 +2820,20 @@ async function printWritingReport(s,studentName,studentId,academyName,siblings,f
 }
 /* ===== 기간별 리포트 묶음 — 정한 기간에 낸 글마다 Writing Report를 만들어서, 학생별로 쭉 이어 한 번에 인쇄·PDF 저장해요(매달 학부모님께 보낼 때 쓰세요) ===== */
 /** 리포트 묶음이 인쇄하면 몇 쪽이 될지 미리 재요. 같은 쪽 나누기 엔진을 쓰는 '단 나누기(columns)'로 A4 한 쪽 크기를 흉내 내서 세요. */
+/** 리포트 문서(d)에 쓰인 글꼴이 "실제 글자 모양"까지 다 받아질 때까지 기다려요.
+ *  구글 폰트(Noto Sans KR)는 글자 범위별로 잘게 나뉘어 있어서, 글자를 그리기 전에는 아직 안 받아진 상태예요.
+ *  그 상태로 쪽수를 재거나 인쇄하면 임시 글꼴로 계산돼서 줄 수가 달라지고, 빈 면이 빠지거나 더 들어갔어요. */
+async function wrWaitFonts_(d){
+  const T=(p,ms)=>Promise.race([p,new Promise(r=>setTimeout(r,ms))]);
+  try{
+    await T(Promise.all(Array.from(d.querySelectorAll('link[rel="stylesheet"]')).map(l=>l.sheet?null:new Promise(r=>{l.addEventListener('load',r);l.addEventListener('error',r);}))),6000);
+    if(!d.fonts||!d.fonts.load)return;
+    const txt=String(d.body.textContent||'').replace(/\s+/g,' ').slice(0,20000);
+    const specs=['400 16px "Noto Sans KR"','500 16px "Noto Sans KR"','700 16px "Noto Sans KR"','800 16px "Noto Sans KR"','900 16px "Noto Sans KR"','600 16px Inter','700 16px Inter','800 16px Inter','900 16px Inter','16px Jua','400 16px "DM Mono"','500 16px "DM Mono"'];
+    await T(Promise.all(specs.map(sp=>d.fonts.load(sp,txt).catch(()=>[]))),8000);
+    if(d.fonts.ready)await T(d.fonts.ready,4000);
+  }catch(_){}
+}
 async function wrMeasurePages_(css,partsHtml,stage){
   const mid=stage!=='초등';
   const wMm=mid?190:210,hMm=mid?269:297;
@@ -2828,7 +2846,7 @@ async function wrMeasurePages_(css,partsHtml,stage){
     const d=fr.contentDocument;
     const mcss=css.replace(/@page\s*\{[^}]*\}/g,'').replace(/@media print\{/g,'@media all{'); // 인쇄용 규칙을 화면에도 적용해서 잴 수 있게
     d.open();d.write('<!doctype html><html><head><meta charset="utf-8">'+WR_FONTS+'<style>'+mcss+'html,body{margin:0!important;padding:0!important;background:#fff!important}.wr-foot-fix{display:none!important}.wr-page+.wr-page{break-before:page}#mc{width:'+px(wMm)+'px;height:'+px(hMm)+'px;column-width:'+px(wMm)+'px;column-gap:0;column-fill:auto;overflow:visible}</style></head><body><div id="mc">'+partsHtml+'</div></body></html>');d.close();
-    try{if(d.fonts&&d.fonts.ready)await Promise.race([d.fonts.ready,new Promise(r=>setTimeout(r,5000))]);}catch(_){}
+    await wrWaitFonts_(d);
     await Promise.all(Array.from(d.images||[]).map(im=>im.complete?null:new Promise(r=>{im.onload=im.onerror=r;setTimeout(r,5000);})));
     await new Promise(r=>setTimeout(r,150));
     const mc=d.getElementById('mc');
