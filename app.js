@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-13s';
+const APP_VERSION='2026-11-20a';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2629,6 +2629,64 @@ function wrLogoHtml_(ctx){
   if(ctx.logo)return '<div class="logo"><img src="'+escH(ctx.logo)+'" alt="logo"></div>';
   return ctx.academy?('<div class="logo txt" style="'+(ctx.stage==='초등'?'color:#6E675A':'color:#fff')+'">'+escH(ctx.academy)+'</div>'):'';
 }
+/* ===== Writing Report 추가 섹션: Pattern Drill 문제 풀이 결과·조건 영작 / Paragraph Writing 마인드맵 ===== */
+/** Pattern Drill 제출물의 문항별 결과(wrongReport)를 종류별(개념 확인·단어 배열·영작)로 나눠 맞은 것·틀린 것 모두 정리해요. 결과가 없으면 null. */
+function wrDrillData_(sub){
+  const arr=parseWrongReport(sub&&sub.wrongReport);
+  if(!arr.length)return null;
+  const order=[['퀴즈','개념 확인'],['배열','단어 배열'],['영작','영작']];
+  const groups=order.map(([t,l])=>{
+    const seen={};
+    const items=arr.filter(w=>w&&w.type===t).filter(w=>{const k=w.ko+'|'+w.user+'|'+w.correct;if(seen[k])return false;seen[k]=1;return true;})
+      .map(w=>({ok:!!w.correct,q:String(w.ko||''),user:String(w.user||''),a:String(w.a||'')}));
+    return {label:l,items,ok:items.filter(x=>x.ok).length};
+  }).filter(g=>g.items.length);
+  if(!groups.length)return null;
+  return {groups,task:String((sub&&(sub.taskText||sub.text))||'').trim()};
+}
+/** Paragraph Writing 마인드맵(제출할 때 brainNotes로 저장돼요)을 [{role,lines:[[한국어,영어],...]}]로 바꿔요. 비어 있으면 null. */
+function wrBrainData_(sub){
+  let b=null;try{b=sub&&sub.brainNotes?JSON.parse(sub.brainNotes):null;}catch(e){b=null;}
+  if(!b||typeof b!=='object')return null;
+  const t=x=>String(x||'').trim();
+  const out=HBLAYERS.map(L=>{
+    const o=b[L.key]||{};
+    const lines=L.kind==='single'?[[t(o.ko),t(o.en)]]:[[t(o.ideaKo),t(o.ideaEn)],[t(o.detailKo),t(o.detailEn)]];
+    return {key:L.key,role:L.role,lines:lines.filter(l=>l[0]||l[1])};
+  });
+  return out.some(x=>x.lines.length)?out:null;
+}
+function wrDrillHtml_(d){
+  const sum='<div class="wr-dsum">'+d.groups.map(g=>'<div class="b"><div class="k">'+escH(g.label)+'</div><div class="v">'+g.ok+'<small> / '+g.items.length+'</small></div></div>').join('')+'</div>';
+  const rows=d.groups.map(g=>'<div class="wr-dg"><div class="wr-dw-h">'+escH(g.label)+' <span>'+g.ok+' / '+g.items.length+'</span></div><div class="wr-dl">'+
+    g.items.map((w,i)=>'<div class="wr-dw'+(w.ok?' ok':' no')+'"><span class="m">'+(w.ok?'✓':'✕')+'</span><span class="i">'+(i+1)+'</span><div class="c"><div class="q">'+escH(w.q)+'</div><div class="a">'+
+      (w.ok?'<span class="r">'+escH(w.user||w.a)+'</span>':'<span class="u">'+escH(w.user||'(답 없음)')+'</span><span class="arr">→</span><span class="r">'+escH(w.a)+'</span>')+'</div></div></div>').join('')+'</div></div>').join('');
+  return '<div class="wr-drill">'+sum+rows+'</div>';
+}
+function wrBrainHtml_(b){
+  const cls={topic:'bt',s1:'s1',s2:'s2',s3:'s3',concl:'bb'};
+  return '<div class="wr-brain">'+b.filter(x=>x.lines.length).map(x=>'<div class="n '+cls[x.key]+'"><div class="r">'+escH(x.role)+'</div>'+x.lines.map(l=>'<div class="l">'+(l[1]?'<span class="en">'+escH(l[1])+'</span>':'')+(l[0]?'<span class="ko">'+escH(l[0])+'</span>':'')+'</div>').join('')+'</div>').join('')+'</div>';
+}
+const WR_CSS_EXTRA_COMMON=
+  ".wr-dsum{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:6px;break-inside:avoid}.wr-dsum .b{padding:10px 14px}.wr-dsum .k{font-size:12.5px;font-weight:700}.wr-dsum .v{font-size:26px;font-weight:800;line-height:1.2;margin-top:2px}.wr-dsum .v small{font-size:13px;font-weight:700;opacity:.6}"+
+  ".wr-dw-h{font-size:13.5px;font-weight:800;margin:14px 0 4px;break-after:avoid;page-break-after:avoid}.wr-dw-h span{font-size:12px;opacity:.7;margin-left:6px}"+
+  ".wr-dl{display:grid;grid-template-columns:1fr 1fr;column-gap:22px}"+
+  ".wr-dw{display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #E7E1D4;break-inside:avoid;page-break-inside:avoid}.wr-dw .m{flex:0 0 20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;margin-top:1px}"+
+  ".wr-dw.ok .m{background:#BFE8CF;color:#0E6B3A}.wr-dw.no .m{background:#F9C9C4;color:#B3261E}.wr-dw .i{flex:0 0 18px;font-size:11.5px;font-weight:800;color:#9A917F;margin-top:2px}"+
+  ".wr-dw .c{flex:1;min-width:0}.wr-dw .q{font-size:13.5px;font-weight:600}.wr-dw .a{font-size:13px;margin-top:2px;display:flex;flex-wrap:wrap;gap:7px;align-items:center}.wr-dw .u{color:#C62828;text-decoration:line-through}.wr-dw .r{color:#0E6B3A;font-weight:800}.wr-dw .arr{color:#8A93A5}"+
+  ".wr-task{padding:14px 18px;font-size:15px;line-height:1.85;break-inside:avoid}.wr-task p{margin:0 0 6px}"+
+  ".wr-brain{display:grid;grid-template-columns:1fr 1fr;gap:10px}.wr-brain .n{padding:11px 14px;break-inside:avoid;page-break-inside:avoid}.wr-brain .n.bt,.wr-brain .n.bb{grid-column:1/-1}.wr-brain .r{font-size:12.5px;font-weight:800;margin-bottom:4px}.wr-brain .l{margin-top:4px;line-height:1.55}.wr-brain .en{display:block;font-size:14.5px;font-weight:700}.wr-brain .ko{display:block;font-size:12.5px;color:#6B7486}";
+const WR_CSS_EXTRA_ELEM=
+  ".wr-dsum .b{border:1.5px solid #DDD6C8;border-radius:14px;background:#FFFDF9}.wr-dsum .k{font-family:Jua,'Noto Sans KR',sans-serif;font-weight:400;color:#6E675A;font-size:14px}.wr-dsum .v{font-family:Jua,sans-serif;font-weight:400}"+
+  ".wr-drill{background:#fff;border:1.5px solid #DDD6C8;border-radius:16px;padding:14px 16px 8px}.wr-dw-h{font-family:Jua,'Noto Sans KR',sans-serif;font-weight:400;font-size:15.5px;color:#6E675A}"+
+  ".wr-task{background:#fff;border:1.5px solid #DDD6C8;border-radius:16px}"+
+  ".wr-brain .n{border-radius:14px;border:1.5px solid #DDD6C8;background:#fff}.wr-brain .r{font-family:Jua,'Noto Sans KR',sans-serif;font-weight:400;font-size:14.5px}"+
+  ".wr-brain .n.bt,.wr-brain .n.bb{background:#FFF4DF;border-color:#EBC98A}.wr-brain .n.bt .r,.wr-brain .n.bb .r{color:#9A6A12}.wr-brain .n.s1{border-color:#F2B2AA}.wr-brain .n.s1 .r{color:#C4483D}.wr-brain .n.s2{border-color:#B9D99A}.wr-brain .n.s2 .r{color:#5F9235}.wr-brain .n.s3{border-color:#D5B79C}.wr-brain .n.s3 .r{color:#7C4D24}";
+const WR_CSS_EXTRA_MID=
+  ".wr-dsum .b{border-top:3px solid #1B4A8A;background:#EAF1FA}.wr-dsum .k{color:#1F2430}.wr-dsum .v{font-family:Inter,sans-serif;color:#1B4A8A}"+
+  ".wr-dw{border-bottom-color:#D3D8E1}.wr-dw-h{color:#1B4A8A;border-bottom:1px solid #1B4A8A;padding-bottom:3px}.wr-dw .i{color:#7BA3D6}"+
+  ".wr-task{border:1.5px solid #D3D8E1;border-left:4px solid #1B4A8A}"+
+  ".wr-brain .n{border:1px solid #D3D8E1;border-left:4px solid #1B4A8A;background:#fff}.wr-brain .r{color:#1B4A8A}.wr-brain .n.bt,.wr-brain .n.bb{background:#EAF1FA}";
 function buildWritingReportHtml_(ctx){
   const e=ctx.stage==='초등';
   const sentsHtml=wrSentencesHtml_(ctx.sentences,ctx.stage);
@@ -2638,7 +2696,8 @@ function buildWritingReportHtml_(ctx){
   let body;
   if(!e){
     const r=ctx.rubric;
-    const scoreHtml=r?('<div class="wr-h"><span class="n">01</span><span class="t">성적 요약</span><span class="e">SCORE</span></div>'+
+    let no=0;const hd=(t,en)=>'<div class="wr-h"><span class="n">'+String(++no).padStart(2,'0')+'</span><span class="t">'+t+'</span><span class="e">'+en+'</span></div>';
+    const scoreHtml=r?(hd('성적 요약','SCORE')+
       '<div class="wr-score"><div>'+
         [['과제 완성',r.taskGrade,r.taskScore],['형식',r.formatGrade,r.formatScore]].map(x=>
           '<div class="bar"><div class="bh"><span>'+x[0]+'</span><b>'+escH(String(x[1]||'-'))+' · '+escH(String(x[2]!=null?x[2]:'-'))+' / 10</b></div><div class="tr"><div class="fl" style="width:'+Math.max(0,Math.min(100,(Number(x[2])||0)*10))+'%;background:'+wrGradeColor_(x[1])+'"></div></div></div>').join('')+
@@ -2647,26 +2706,31 @@ function buildWritingReportHtml_(ctx){
       '<div class="wr-in"><div class="wr-meta"><div class="row topic"><div class="c"><div class="k">TOPIC<b>주제</b></div><div class="v">'+escH(ctx.topic)+'</div></div></div>'+
       '<div class="row"><div class="c"><div class="k">NAME<b>이름</b></div><div class="v">'+escH(ctx.name)+'</div></div><div class="c"><div class="k">CLASS<b>반</b></div><div class="v">'+escH(ctx.cls||'-')+'</div></div><div class="c"><div class="k">LEVEL<b>레벨</b></div><div class="v">'+escH(ctx.level||'-')+'</div></div><div class="c"><div class="k">DATE<b>날짜</b></div><div class="v">'+escH(ctx.date)+'</div></div></div></div>'+
       scoreHtml+
-      '<div class="wr-h"><span class="n">'+(r?'02':'01')+'</span><span class="t">문장별 첨삭</span><span class="e">FEEDBACK</span></div>'+sentsHtml+
-      (ctx.finalText?('<div class="wr-h"><span class="n">'+(r?'03':'02')+'</span><span class="t">완성된 글</span><span class="e">FINAL DRAFT</span></div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+wrParagraphs_(ctx.finalText)+'</div>'):'')+
-      '<div class="wr-h"><span class="n">'+(r?(ctx.finalText?'04':'03'):(ctx.finalText?'03':'02'))+'</span><span class="t">선생님 코멘트</span><span class="e">TEACHER\'S COMMENT</span></div><div class="wr-cmt">'+cmtHtml+'</div></div>'+
+      (ctx.drill?hd('문제 풀이 결과','PATTERN DRILL')+wrDrillHtml_(ctx.drill)+(ctx.drill.task?hd('내가 쓴 글 (조건 영작)','MY WRITING')+'<div class="wr-task">'+wrParagraphs_(ctx.drill.task)+'</div>':''):'')+
+      (ctx.brain?hd('생각 지도 (마인드맵)','MIND MAP')+wrBrainHtml_(ctx.brain):'')+
+      hd('문장별 첨삭','FEEDBACK')+sentsHtml+
+      (ctx.finalText?(hd('완성된 글','FINAL DRAFT')+'<div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+wrParagraphs_(ctx.finalText)+'</div>'):'')+
+      hd('선생님 코멘트','TEACHER\'S COMMENT')+'<div class="wr-cmt">'+cmtHtml+'</div></div>'+
       '<div class="wr-foot"><span>'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</span><b>MIDDLE SCHOOL</b></div>';
   }else{
-    const picsHtml=(ctx.pics&&ctx.pics.length)?('<div class="wr-h">01. 그림 보고 쓰기</div><div class="wr-pics">'+ctx.pics.map(p=>'<div class="p"><div><img src="'+escH(p.imageUrl)+'" style="object-position:'+escH(p.crop||'center center')+';transform:scale('+((Number(p.zoom)||100)/100)+')" alt=""></div></div>').join('')+'</div>'):'';
-    const k=ctx.pics&&ctx.pics.length?1:0;
+    let no=0;const hd=t=>'<div class="wr-h">'+String(++no).padStart(2,'0')+'. '+t+'</div>';
+    const drillHtml=ctx.drill?(hd('문제 풀이 결과')+wrDrillHtml_(ctx.drill)+(ctx.drill.task?hd('내가 쓴 글 (조건 영작)')+'<div class="wr-task">'+wrParagraphs_(ctx.drill.task)+'</div>':'')):'';
+    const picsHtml=(ctx.pics&&ctx.pics.length)?(hd('그림 보고 쓰기')+'<div class="wr-pics">'+ctx.pics.map(p=>'<div class="p"><div><img src="'+escH(p.imageUrl)+'" style="object-position:'+escH(p.crop||'center center')+';transform:scale('+((Number(p.zoom)||100)/100)+')" alt=""></div></div>').join('')+'</div>'):'';
+    const brainHtml=ctx.brain?(hd('생각 지도 (마인드맵)')+wrBrainHtml_(ctx.brain)):'';
     body='<div class="wr-head"><div><div class="dots"><i style="background:#E8736B"></i><i style="background:#3DB56F"></i><i style="background:#4C9BE8"></i></div><div class="eyebrow">WRITING-LAB · REPORT</div><h1>Writing Report</h1></div>'+wrLogoHtml_(ctx)+'</div>'+
       '<div class="wr-card"><div class="r topic"><span class="k">주제</span><span class="v">'+escH(ctx.topic)+'</span></div><div class="r g"><div><span class="k">이름</span><span class="v">'+escH(ctx.name)+'</span></div><div><span class="k">반</span><span class="v">'+escH(ctx.cls||'-')+'</span></div><div><span class="k">레벨</span><span class="v">'+escH((ctx.level||'-').replace(/^Level\s*/i,''))+'</span></div><div><span class="k">날짜</span><span class="v">'+escH(ctx.date)+'</span></div></div></div>'+
-      picsHtml+
-      '<div class="wr-h">'+String(k+1).padStart(2,'0')+'. 완성된 글</div><div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 완성된 글이 없어요)</p>')+'</div>'+
-      '<div class="wr-h">'+String(k+2).padStart(2,'0')+'. 선생님 코멘트</div><div class="wr-cmt">'+cmtHtml+'</div>'+
-      '<div class="wr-h">'+String(k+3).padStart(2,'0')+'. 문장별 첨삭</div><div class="wr-card2">'+sentsHtml+'</div>'+
+      drillHtml+picsHtml+brainHtml+
+      hd('완성된 글')+'<div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 완성된 글이 없어요)</p>')+'</div>'+
+      hd('선생님 코멘트')+'<div class="wr-cmt">'+cmtHtml+'</div>'+
+      hd('문장별 첨삭')+'<div class="wr-card2">'+sentsHtml+'</div>'+
       '<div class="wr-foot">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div><div class="wr-foot-fix">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div>';
   }
-  return '<!doctype html><html><head><meta charset="utf-8"><title>'+title+'</title>'+WR_FONTS+'<style>'+WR_CSS_COMMON+(e?WR_CSS_ELEM:WR_CSS_MID)+'</style></head><body><div class="wr-page">'+body+'</div>'+printBtn+'</body></html>';
+  return '<!doctype html><html><head><meta charset="utf-8"><title>'+title+'</title>'+WR_FONTS+'<style>'+WR_CSS_COMMON+(e?WR_CSS_ELEM:WR_CSS_MID)+WR_CSS_EXTRA_COMMON+(e?WR_CSS_EXTRA_ELEM:WR_CSS_EXTRA_MID)+'</style></head><body><div class="wr-page">'+body+'</div>'+printBtn+'</body></html>';
 }
 /** 제출물 하나(원본 또는 다시쓰기)로 Writing Report를 새 창에 열어줘요. 양식(초등/중등)·로고는 학원 설정을 따라요. */
 /** 제출물 하나로 리포트에 들어갈 내용(ctx)을 만들어요. 한 장짜리 인쇄와 기간별 묶음 인쇄가 같이 써요. */
-function wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg){
+function wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg,opts){
+  opts=opts||{};
   const pair=writingReportPair_(s,siblings);
   const base=pair.original||s,rw=pair.rewrite;
   const acad=String(s.academy||academyName||'').trim();
@@ -2680,7 +2744,8 @@ function wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg){
   return {stage,logo:ac.logo||ACADEMY_LOGOS[acad]||'',academy:acad,name:studentName||s.name||'',cls:s.cls||'',
     level:(rubric&&rubric.writingLevel)||'',date:wrDateStr_(base.datetime||s.datetime,stage==='초등'?'. ':'.'),
     topic:topicName,rubric,sentences:writingReportSentences_(base),
-    finalText:writingReportFinal_(base)||(finalSrc?String(finalSrc.final||finalSrc.text||''):String(base.text||'')),comment:writingReportComment_([base,rw]),pics};
+    finalText:writingReportFinal_(base)||(finalSrc?String(finalSrc.final||finalSrc.text||''):String(base.text||'')),comment:writingReportComment_([base,rw]),pics,
+    drill:opts.withDrill?wrDrillData_(base):null,brain:wrBrainData_(base)};
 }
 /** 안 보이는 iframe에 HTML을 그린 뒤 바로 인쇄 창을 띄워요(새 탭 없이). makeHtml은 완성된 HTML 문자열을 돌려주는 (비동기) 함수예요. */
 async function printHtmlDoc_(makeHtml,waitMsg){
@@ -2714,9 +2779,20 @@ async function printHtmlDoc_(makeHtml,waitMsg){
 }
 /** 제출물 하나(원본 또는 다시쓰기)로 Writing Report를 바로 인쇄 창으로 열어줘요. 양식(초등/중등)·로고는 학원 설정을 따라요. */
 async function printWritingReport(s,studentName,studentId,academyName,siblings,forceStage){
-  return printHtmlDoc_(async()=>{
+  const go=withDrill=>printHtmlDoc_(async()=>{
     const cfg=await fetchReportConfig();
-    return buildWritingReportHtml_(wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg));
+    return buildWritingReportHtml_(wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg,{withDrill}));
+  });
+  // Pattern Drill 글이면 "문제 풀이 결과 + 조건 영작"을 리포트 앞에 넣을지 골라요.
+  const base=writingReportPair_(s,siblings).original||s;
+  if(!wrDrillData_(base))return go(false);
+  openGenericModal('Writing Report 인쇄',(body)=>{
+    body.appendChild(el('div','hint','이 글은 Pattern Drill이에요. 학생이 푼 문제(개념 확인·단어 배열·영작)의 맞은 것·틀린 것 전체와 조건 영작으로 쓴 글을 리포트 앞에 넣을까요?'));
+    const row=el('div');row.style.cssText='display:flex;gap:8px;margin-top:14px;flex-wrap:wrap';
+    const yes=el('button','btn blue','문제 풀이 결과 넣기');yes.type='button';yes.style.cssText='padding:8px 16px;font-size:13.5px';
+    const no=el('button','btn ghost','빼고 인쇄');no.type='button';no.style.cssText='padding:8px 16px;font-size:13.5px';
+    yes.onclick=()=>{closeGenericModal();go(true);};no.onclick=()=>{closeGenericModal();go(false);};
+    row.appendChild(yes);row.appendChild(no);body.appendChild(row);
   });
 }
 /* ===== 기간별 리포트 묶음 — 정한 기간에 낸 글마다 Writing Report를 만들어서, 학생별로 쭉 이어 한 번에 인쇄·PDF 저장해요(매달 학부모님께 보낼 때 쓰세요) ===== */
@@ -2891,6 +2967,7 @@ function openPeriodReportDialog_(opts){
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">끝나는 날<input type="date" class="in" id="prTo" value="'+today+'" style="padding:8px 10px;border-radius:10px"></label></div>'+
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684;margin-top:10px">Re-Writing 여부<select class="in" id="prRw" style="padding:8px 10px;border-radius:10px;font-size:14px"><option value="all">전체 (Re-Writing 안 한 글도 포함)</option><option value="done">Re-Writing 완료한 글만</option><option value="todo">Re-Writing 안 한 글만</option></select></label>'+
     '<div style="font-size:12.5px;font-weight:700;color:#6b7684;margin:12px 0 4px">양면 인쇄용 빈 면</div><select id="prDuplex" class="in" style="padding:9px;font-size:13.5px;border-radius:10px"><option value="report">글마다 — 홀수 쪽으로 끝나는 리포트 다음에 빈 면 (리포트마다 새 종이에서 시작)</option><option value="student">학생마다 — 한 학생의 리포트는 이어서, 다음 학생만 새 종이에서 시작</option><option value="none">넣지 않음 (단면 인쇄)</option></select>'+
+    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:8px;cursor:pointer"><input type="checkbox" id="prDrill"> Pattern Drill 글에 문제 풀이 결과(맞은 것·틀린 것 전체)와 조건 영작 넣기</label>'+
     '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:12px;cursor:pointer"><input type="checkbox" id="prCover" checked> 월별 표지 넣기 — "달 고르기"로 한 달을 골랐을 때만 학생마다 맨 앞에 들어가요 (로고·이름·반·글 목록 자동)</label>'+
     '<div id="prInfo" class="hint" style="margin:12px 0;min-height:38px">제출 기록을 불러오는 중…</div>'+
     '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" id="prCancel" type="button">닫기</button><button class="btn green" id="prGo" type="button" disabled>리포트 만들기 · 인쇄</button></div>';
@@ -2909,7 +2986,7 @@ function openPeriodReportDialog_(opts){
   const syncMonth=()=>{const f=q('prFrom').value,t=q('prTo').value;const ym=f.slice(0,7);const ms=q('prMonth');
     ms.value=(ym&&Array.from(ms.options).some(o=>o.value===ym)&&monthRange(ym)[0]===f&&monthRange(ym)[1]===t)?ym:'';};
   // 지난번에 고른 기간·조건을 기억해뒀다가 다시 열 때 그대로 보여줘요(인쇄하고 돌아와도 초기화되지 않게).
-  const saveState=()=>{try{store.set('ewl2_prState',JSON.stringify({from:q('prFrom').value,to:q('prTo').value,rw:q('prRw').value,duplex:q('prDuplex').value,cover:q('prCover').checked}));}catch(e){}};
+  const saveState=()=>{try{store.set('ewl2_prState',JSON.stringify({from:q('prFrom').value,to:q('prTo').value,rw:q('prRw').value,duplex:q('prDuplex').value,cover:q('prCover').checked,drill:q('prDrill').checked}));}catch(e){}};
   try{
     const sv=JSON.parse(store.get('ewl2_prState')||'null');
     if(sv){
@@ -2917,7 +2994,7 @@ function openPeriodReportDialog_(opts){
       if(/^\d{4}-\d\d-\d\d$/.test(sv.to||''))q('prTo').value=sv.to;
       if(['all','done','todo'].includes(sv.rw))q('prRw').value=sv.rw;
       if(['report','student','none'].includes(sv.duplex))q('prDuplex').value=sv.duplex;
-      if(sv.cover===false)q('prCover').checked=false;
+      if(sv.cover===false)q('prCover').checked=false;if(sv.drill===true)q('prDrill').checked=true;
     }else{const r=monthRange(first.slice(0,7));q('prFrom').value=r[0];q('prTo').value=r[1];}
   }catch(e){}
   syncMonth();
@@ -2939,13 +3016,14 @@ function openPeriodReportDialog_(opts){
     q('prGo').disabled=!p.ok.length;
   };
   q('prFrom').onchange=q('prTo').onchange=()=>{syncMonth();saveState();refresh();};
-  q('prRw').onchange=()=>{saveState();refresh();};q('prDuplex').onchange=saveState;q('prCover').onchange=saveState;
+  q('prRw').onchange=()=>{saveState();refresh();};q('prDuplex').onchange=saveState;q('prCover').onchange=saveState;q('prDrill').onchange=saveState;
   q('prMonth').onchange=()=>{const ym=q('prMonth').value;if(ym){const r=monthRange(ym);q('prFrom').value=r[0];q('prTo').value=r[1];}saveState();refresh();};
   (async()=>{try{all=await opts.loadSubs();}catch(e){all=[];}ready=true;refresh();})();
   q('prGo').onclick=async()=>{
     const p=pick();if(!p.ok.length)return;
     const duplex=q('prDuplex').value==='none'?'':q('prDuplex').value;
     const coverLabel=(q('prCover').checked&&q('prMonth').value)?q('prMonth').value:''; // 달을 골라 뽑을 때만 표지를 넣어요
+    const withDrill=q('prDrill').checked;
     close();
     const cfg=await fetchReportConfig();
     // 학생별(이름순)로 묶고, 한 학생 안에서는 낸 날짜 순으로 이어 붙여요.
@@ -2957,7 +3035,7 @@ function openPeriodReportDialog_(opts){
     });
     const groups={};
     ordered.forEach(s=>{
-      const ctx=wrCtxFor_(s,s.name||'',s.academy||'',byStu.get(String(s.id))||[s],null,cfg);
+      const ctx=wrCtxFor_(s,s.name||'',s.academy||'',byStu.get(String(s.id))||[s],null,cfg,{withDrill:withDrill});
       ctx._sid=String(s.id);
       try{ctx._kind=submissionTypeLabel(s)||'';}catch(e){ctx._kind='';}
       try{ctx._rw=!!writingReportPair_(s,byStu.get(String(s.id))||[s]).rewrite;}catch(e){}
@@ -8120,7 +8198,7 @@ function runParagraph(topic){setWide(true);deckInit();
       const build=()=>{const now=new Date(),z=x=>String(x).padStart(2,'0');const dt=now.getFullYear()+'-'+z(now.getMonth()+1)+'-'+z(now.getDate())+' '+z(now.getHours())+':'+z(now.getMinutes());const lv=LEVELS.find(l=>l.id===topic.level)||LEVELS[0];
         const breakdown=Object.values(g.R).map(r=>r.label+' '+r.score+'/'+r.max).join(' · ');
         const prepStr=fmtDur(prepMs),writeStr=fmtDur(writeMs);
-        const payload={book:lv.book,chapter:'Paragraph Writing',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Paragraph Writing',topic.title),datetime:dt,quiz:'',arrange:'',compose:'',task:'Paragraph 제출',final:ST.final||ST.draft,total:g.total+'/100',score:g.total,grade:g.grade,rubric:breakdown,prepTime:prepStr,writeTime:writeStr,progress:'Paragraph '+topic.title+' 완료 · '+g.total+'점('+g.grade+') · 글감학습 '+prepStr+' · 글쓰기 '+writeStr};
+        const payload={book:lv.book,chapter:'Paragraph Writing',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Paragraph Writing',topic.title),datetime:dt,quiz:'',arrange:'',compose:'',task:'Paragraph 제출',final:ST.final||ST.draft,total:g.total+'/100',score:g.total,grade:g.grade,rubric:breakdown,prepTime:prepStr,writeTime:writeStr,brainNotes:Object.keys(ST.brain||{}).length?JSON.stringify(ST.brain):'',progress:'Paragraph '+topic.title+' 완료 · '+g.total+'점('+g.grade+') · 글감학습 '+prepStr+' · 글쓰기 '+writeStr};
         const txt=['English Writing Lab · Paragraph Writing (Hamburger)','주제: '+topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'글감 학습 시간: '+prepStr,'브레인스토밍~글쓰기 시간: '+writeStr,'','[완성본]',ST.final||ST.draft||'(작성 없음)','','── 자동 채점 ──','총점 '+g.total+'/100 ('+g.grade+')',breakdown].join('\n');return{payload,txt};};
       dl.onclick=()=>{const {txt}=build();const blob=new Blob(['\ufeff'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='글_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
       sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
