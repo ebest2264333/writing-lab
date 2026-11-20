@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-20i';
+const APP_VERSION='2026-11-20j';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2587,7 +2587,7 @@ const WR_CSS_COMMON=
   ".wr-note{font-size:13px;color:#4A5262;margin-top:9px;line-height:1.7;display:flex;gap:8px;align-items:flex-start}"+
   ".wr-legend{break-after:avoid;page-break-after:avoid;display:flex;gap:14px;justify-content:flex-end;font-size:11.5px;font-weight:700;margin:-4px 0 8px}.wr-empty{padding:14px 4px;color:#6B7486;font-size:14px}"+
   ".noprint{text-align:center;margin:22px 0 4px}.noprint button{padding:11px 26px;font-size:14px;font-weight:800;border:none;border-radius:8px;background:#1B2A49;color:#fff;cursor:pointer}"+
-  "@page{size:A4;margin:14mm 10mm}@media print{body{background:#fff;padding:0}.wr-page{max-width:100%;box-shadow:none}.noprint{display:none}.wr-final,.wr-cmt,.wr-err,.wr-par,.wr-score,.wr-card{break-inside:avoid;page-break-inside:avoid}/* 맨 아래 '학원이름 · WRITING LAB' 줄이 공간이 모자라 혼자 새 페이지로 넘어가지 않게, 바로 위 내용에 붙여서 마지막 페이지 맨 아래에 두고 여백도 줄여요. */.wr-page{padding-bottom:0!important}.wr-foot{margin-top:6px!important;margin-bottom:0!important;padding-bottom:0!important;break-before:avoid;page-break-before:avoid;break-inside:avoid}.wr-par{break-after:avoid;page-break-after:avoid;margin-top:12px!important}}";
+  "@page{size:A4;margin:0}@media print{body{background:#fff;padding:0}.wr-page{max-width:100%;box-shadow:none;padding:14mm 10mm!important;-webkit-box-decoration-break:clone;box-decoration-break:clone}.noprint{display:none}.wr-final,.wr-cmt,.wr-err,.wr-par,.wr-score,.wr-card{break-inside:avoid;page-break-inside:avoid}/* 맨 아래 '학원이름 · WRITING LAB' 줄이 공간이 모자라 혼자 새 페이지로 넘어가지 않게, 바로 위 내용에 붙여서 마지막 페이지 맨 아래에 두고 여백도 줄여요. */.wr-foot{margin-top:6px!important;margin-bottom:0!important;padding-bottom:0!important;break-before:avoid;page-break-before:avoid;break-inside:avoid}.wr-par{break-after:avoid;page-break-after:avoid;margin-top:12px!important}}";
 const WR_CSS_MID=
   ".wr-hero{background:#1B4A8A;padding:28px 34px 26px;color:#fff;position:relative;border-bottom:14px solid #7BA3D6}"+
   ".wr-hero .eyebrow{font-family:Inter,sans-serif;font-size:11px;font-weight:700;letter-spacing:.18em;display:flex;align-items:center;gap:10px}"+
@@ -2836,7 +2836,7 @@ async function wrWaitFonts_(d){
 }
 async function wrMeasurePages_(css,partsHtml,stage){
   const mid=stage!=='초등';
-  const wMm=mid?190:210,hMm=mid?269:297;
+  const wMm=210,hMm=297; // 두 양식 모두 용지 여백을 @page가 아니라 .wr-page 안쪽 여백(padding)으로 넣어서, 인쇄 창의 '여백' 설정과 상관없이 같은 쪽수가 나와요.
   const px=mm=>mm/25.4*96;
   const fr=document.createElement('iframe');
   fr.setAttribute('aria-hidden','true');
