@@ -1,20 +1,14 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="UTF-8">
-<title>English Writing Lab</title>
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>이동 중…</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <script>
-/* GitHub Pages는 …/writing-lab/exam 처럼 실제 파일이 없는 주소로 들어오면 이 파일(404.html)을 보여줘요.
-   여기서 곧바로 …/writing-lab/?r=exam 으로 보내면, index.html 이 주소창을 다시 …/writing-lab/exam 으로 바꿔서
-   해당 화면을 열어줘요. (저장소 이름이 writing-lab 하나 깊이라서 segment=1 이에요.) */
+// /EBEST/words/make 처럼 파일이 따로 없는 주소로 들어오면, 앱(index.html)이 그 화면을 열도록 /EBEST/?go=words/make 로 보내준다.
+// (github.io 프로젝트 주소는 첫 칸(/EBEST)이 저장소 이름이라 그대로 두고, 나머지를 go 로 넘긴다)
 (function(){
-  var segment=1,l=window.location;
-  var parts=l.pathname.split('/');
-  var base=parts.slice(0,1+segment).join('/')+'/';
-  var rest=parts.slice(1+segment).join('/');
-  l.replace(l.protocol+'//'+l.host+base+'?r='+encodeURIComponent(rest)+l.hash);
+  var segs=location.pathname.split('/').filter(Boolean);
+  var baseSegs=[];
+  if(/\.github\.io$/i.test(location.hostname) && segs.length) baseSegs=[segs.shift()];
+  var base='/'+baseSegs.join('/'); if(base.charAt(base.length-1)!=='/') base+='/';
+  location.replace(base+'?go='+encodeURIComponent(segs.join('/'))+location.hash);
 })();
-</script>
-</head>
-<body></body>
-</html>
+</script></head><body style="font-family:sans-serif;color:#666;padding:24px">이동 중…</body></html>

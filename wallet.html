@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>내 학원 통장</title>
+<style>
+:root{--bg:#f4f6fb;--card:#fff;--ink:#1c2433;--sub:#6b7690;--line:#e3e8f2;--in:#0e9f6e;--out:#d6453d;--acc:#4f46e5}
+@media (prefers-color-scheme:dark){:root{--bg:#10131c;--card:#1a1f2d;--ink:#eef1f8;--sub:#9aa5bd;--line:#2a3144;--in:#34d399;--out:#f87171;--acc:#818cf8}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Pretendard','Malgun Gothic',system-ui,sans-serif;min-height:100vh}
+.wrap{max-width:460px;margin:0 auto;padding:18px 16px 40px}
+.hello{font-size:.95rem;color:var(--sub);margin:6px 2px 12px}
+.hello{margin:8px 2px 14px}.hello .en{color:var(--ink);font-size:1.7rem;font-weight:900;letter-spacing:-.01em}.hello .ko{color:#9aa5bd;font-size:.82rem;font-weight:400;margin-left:4px}
+.bal{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;border-radius:20px;padding:22px 20px;box-shadow:0 8px 24px rgba(79,70,229,.3)}
+.bal .l{font-size:.82rem;opacity:.85}
+.bal .n{font-size:2.6rem;font-weight:900;margin-top:4px;letter-spacing:-.02em}
+.balwrap{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.jar{width:104px;flex:none;text-align:center}.jar svg,.jar img{width:104px;height:auto;display:block;filter:drop-shadow(0 4px 8px rgba(0,0,0,.25))}
+.bal .n small{font-size:1rem;font-weight:700;margin-left:4px;opacity:.9}
+.list{background:var(--card);border:1px solid var(--line);border-radius:16px;margin-top:16px;padding:6px 14px}
+.list h2{font-size:.92rem;margin:12px 0 4px}
+.row{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.row .d{font-size:.78rem;color:var(--sub);min-width:42px}
+.row .r{flex:1;font-size:.95rem}
+.row .a{font-weight:900;font-size:1.02rem}
+.in{color:var(--in)}.out{color:var(--out)}
+.empty,.msg{color:var(--sub);text-align:center;padding:24px 8px;font-size:.92rem;line-height:1.6}
+.foot{margin-top:14px;text-align:center;font-size:.76rem;color:var(--sub)}
+button{margin-top:10px;border:0;background:var(--acc);color:#fff;border-radius:10px;padding:9px 16px;font-size:.9rem;font-weight:700;cursor:pointer}
+</style></head>
+<body><div class="wrap" id="app"><div class="msg">불러오는 중…</div></div>
+<script>
+// 학원 화폐 통장 — 학생이 QR을 찍으면 열리는 화면(읽기 전용). 학원 관리 화면이 서버에 올려둔 wallet/<코드> 한 칸만 읽는다.
+var VER='v1119a'; // 화면 버전 — 맨 아래에 작게 표시 (새 파일이 열렸는지 확인용)
+var DB='https://ebest-b41ce-default-rtdb.asia-southeast1.firebasedatabase.app';
+var T=(new URLSearchParams(location.search).get('t')||'').trim();
+var app=document.getElementById('app');
+
+// ── 선생님 입출금 (대시보드에 로그인된 브라우저에서만 나타남) ──
+// 같은 주소의 저장공간에 대시보드 로그인 기록이 있으면, 숨은 대시보드 창을 열어 그 기능으로 적립/사용을 기록한다. 학생 폰에는 로그인 기록이 없어서 아무것도 안 보인다. (&view=1 을 붙이면 숨김)
+var STF={on:false,type:'in',amt:'',why:'',busy:false,who:''}, _fr=null, _pend={};
+try{ var _s=JSON.parse(localStorage.getItem('academy-dash-v2')||'null');
+  if(T && _s && _s.login && !/[?&]view=1/.test(location.search)){
+    _fr=document.createElement('iframe'); _fr.src='index.html?bridge=1'; _fr.setAttribute('aria-hidden','true'); _fr.style.cssText='position:absolute;width:1px;height:1px;border:0;opacity:0;pointer-events:none;left:-9999px';
+    document.body.appendChild(_fr);
+    window.addEventListener('message',function(e){ if(e.origin!==location.origin) return; var m=e.data; if(!m||m.wlr!==1) return;
+      if(m.ready){ if(!STF.on && !STF._asked){ STF._asked=1; bridge({op:'hello'}).then(function(r){ if(r&&r.ok){ STF.on=true; STF.who=r.who||''; stfDraw(); } }); } return; }
+      var f=_pend[m.id]; if(f){ delete _pend[m.id]; f(m); } });
+  } }catch(e){}
+var _bid=0;
+function bridge(o){ return new Promise(function(res){ var id=++_bid; o.wlq=1; o.id=id; o.token=T; _pend[id]=res; try{ _fr.contentWindow.postMessage(o,location.origin); }catch(e){ res(null); } setTimeout(function(){ if(_pend[id]){ delete _pend[id]; res(null); } },25000); }); }
+function stfDraw(){
+  var el=document.getElementById('stf'); if(!el || !STF.on) return;
+  var inn=STF.type==='in', c=inn?'var(--in)':'var(--out)';
+  var bt=function(on,col){ return 'flex:1;padding:13px 0;border-radius:12px;border:2px solid '+(on?col:'var(--line)')+';background:'+(on?col:'var(--card)')+';color:'+(on?'#fff':'var(--ink)')+';font-size:1rem;font-weight:800;font-family:inherit;margin:0'; };
+  var chip='flex:1;min-width:48px;padding:8px 0;border-radius:10px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);font-weight:800;font-family:inherit;margin:0';
+  el.innerHTML='<div style="margin-top:14px;background:var(--card);border:1.5px dashed var(--acc);border-radius:16px;padding:14px">'+
+    '<div style="font-weight:800;font-size:.9rem;margin-bottom:10px">🧑‍🏫 선생님 입출금 <span style="font-weight:400;color:var(--sub);font-size:.74rem">('+esc(STF.who)+' 로그인 · 학생 화면에는 안 보여요)</span></div>'+
+    '<div style="display:flex;gap:8px"><button style="'+bt(inn,'#0e9f6e')+'" onclick="stfType(\'in\')">＋ 적립</button><button style="'+bt(!inn,'#d6453d')+'" onclick="stfType(\'out\')">－ 사용</button></div>'+
+    '<input id="stfA" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="금액" value="'+esc(STF.amt)+'" oninput="STF.amt=this.value" style="width:100%;box-sizing:border-box;margin-top:10px;padding:13px;border:2px solid var(--line);border-radius:12px;font-size:1.4rem;font-weight:800;text-align:center;background:var(--card);color:var(--ink);font-family:inherit">'+
+    '<div style="display:flex;gap:6px;margin-top:8px">'+[1,5,10,50,100].map(function(n){ return '<button style="'+chip+'" onclick="stfAdd('+n+')">+'+n+'</button>'; }).join('')+'<button style="'+chip+';flex:0 0 auto;padding:8px 12px" onclick="STF.amt=\'\';stfDraw()">지움</button></div>'+
+    '<input id="stfW" type="text" placeholder="사유 (안 적어도 돼요 — 비우면 담당 과목으로 기록)" value="'+esc(STF.why)+'" oninput="STF.why=this.value" style="width:100%;box-sizing:border-box;margin-top:8px;padding:11px;border:1.5px solid var(--line);border-radius:12px;font-size:.9rem;background:var(--card);color:var(--ink);font-family:inherit">'+
+    '<button id="stfGo" style="width:100%;margin-top:10px;padding:15px;border:0;border-radius:14px;background:'+c+';color:#fff;font-size:1.1rem;font-weight:900;font-family:inherit" onclick="stfGo()">'+(STF.busy?'기록 중…':(inn?'＋ 적립 기록':'－ 사용 기록'))+'</button></div>';
+}
+function stfType(t){ STF.type=t; stfDraw(); }
+function stfAdd(n){ STF.amt=String((parseInt(STF.amt,10)||0)+n); stfDraw(); }
+function stfGo(){
+  if(STF.busy) return; var a=String(STF.amt||'').replace(/[^0-9]/g,''); if(!(Number(a)>0)){ alert('금액을 입력해주세요.'); return; }
+  STF.busy=true; stfDraw();
+  bridge({op:'add',type:STF.type,amount:a,reason:STF.why}).then(function(r){
+    STF.busy=false;
+    if(!r){ stfDraw(); alert('응답이 없어요. 잠시 후 다시 눌러주세요. (대시보드를 연 상태로 로그인되어 있는지 확인해주세요)'); return; }
+    if(r.err){ stfDraw(); alert(r.err); return; }
+    STF.amt=''; STF.why=''; load(); });
+}
+
+// 화면 폭에 맞춰 통째로 키운다 — 폰의 '데스크톱 사이트' 보기나 태블릿처럼 화면이 넓게 잡혀도 카드가 화면을 꽉 채운다(일반 폰은 그대로)
+function fit(){ var phone=false; try{ phone=(navigator.maxTouchPoints>0)&&Math.min(screen.width,screen.height)<800; }catch(e){} var z=phone?Math.max(1,Math.min(window.innerWidth/420,2.8)):1; app.style.zoom=z; }
+fit(); window.addEventListener('resize',fit); window.addEventListener('orientationchange',fit);
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function sym(d){ return d.u==='코인'?'<svg viewBox="0 0 24 24" width="0.9em" height="0.9em" style="vertical-align:-.1em"><circle cx="12" cy="12" r="11" fill="#fbbf24" stroke="#b36b00" stroke-width="1.6"/><circle cx="12" cy="12" r="7" fill="none" stroke="#d98a0b" stroke-width="1.5"/><text x="12" y="16" font-size="10" font-weight="900" text-anchor="middle" fill="#a85f00" font-family="Arial,sans-serif">C</text></svg>':esc(d.s||''); }
+function fmt(n){return Number(n||0).toLocaleString('ko-KR');}
+function md(d){var p=String(d||'').split('-');return p.length>=3?(Number(p[1])+'/'+Number(p[2])):esc(d);}
+function show(html){app.innerHTML=html;}
+function load(){
+  if(!/^[a-z0-9]{16,48}$/.test(T)){ show('<div class="msg">QR 주소가 올바르지 않아요.<br>선생님께 QR을 다시 받아주세요.</div>'); return; }
+  JIMG={};
+  fetch(DB+'/wallet/'+encodeURIComponent(T)+'.json',{cache:'no-store'}).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status); return r.json();
+  }).then(function(d){
+    if(!d){ show('<div class="msg">이 QR은 더 이상 쓸 수 없어요.<br>선생님께 새 QR을 받아주세요.</div>'); return; }
+    ALL=(d.rec||[]); SHOWN=Math.min(SHOWN||10, Math.max(ALL.length,10)); DATA=d;
+    return fetch(DB+'/walletMeta/'+encodeURIComponent(d.ac||'')+'.json',{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; }).then(function(m){ AVG=(m&&m[d.u]!=null)?Number(m[d.u]):null; draw(); });
+  }).catch(function(e){
+    show('<div class="msg">내용을 불러오지 못했어요.<br>인터넷을 확인하고 다시 시도해주세요.<br><button onclick="load()">🔄 다시 시도</button><div style="margin-top:10px;font-size:.68rem;color:var(--sub)">'+VER+' · '+esc(e&&e.message||e)+'</div></div>');
+  });
+}
+var ALL=[],SHOWN=10,DATA=null,AVG=null;
+// 저금통 단계: 0이면 빈 병, 학원 전체 평균과 비교해서 1/3 · 1/2(평균 언저리) · 2/3 · 가득
+var LV_FRAC=[0,1/3,1/2,2/3,1], LV_TXT=['텅 비었어요','조금 모였어요','절반쯤 모였어요','거의 다 찼어요','가득 찼어요! 🎉'];
+function level(bal,avg){ if(!(bal>0)) return 0; if(!(avg>0)) return 2; var r=bal/avg; return r<0.67?1:(r<1.33?2:(r<2?3:4)); }
+var JIMG={}; // 선생님이 올려둔 저금통 그림(단위/단계 → 이미지 주소). 없으면 기본 그림(SVG)을 쓴다
+function jarHtml(lv,u){
+  var k=(u==='달러'?'dollar':'coin')+'/'+lv;
+  if(JIMG[k]) return '<img src="'+JIMG[k]+'" alt="">';
+  if(JIMG[k]===undefined){ JIMG[k]='';
+    fetch(DB+'/walletImg/'+k+'.json',{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; }).then(function(v){
+      if(typeof v==='string' && v.indexOf('data:image/')===0){ JIMG[k]=v; draw(); }
+    }).catch(function(){});
+  }
+  return jar(lv,u);
+}
+function jar(lv,unit){
+  var frac=LV_FRAC[lv], dollar=(unit==='달러');
+  var top=48, bot=182, H=bot-top, y=bot-frac*H;
+  var body='M40 40 Q40 34 54 34 H106 Q120 34 120 40 V160 Q120 182 98 182 H62 Q40 182 40 160 Z';
+  var pat=dollar
+   ? '<pattern id="pt" width="26" height="15" patternUnits="userSpaceOnUse"><rect width="26" height="15" fill="#2f9e5b"/><rect x="1.5" y="1.5" width="23" height="12" rx="2" fill="#4cc27a" stroke="#1e7d3a" stroke-width="1"/><circle cx="13" cy="7.5" r="3.6" fill="#2f9e5b"/><text x="13" y="10" font-size="7" font-weight="900" text-anchor="middle" fill="#e8fff0">$</text></pattern>'
+   : '<pattern id="pt" width="22" height="13" patternUnits="userSpaceOnUse"><rect width="22" height="13" fill="#d98a0b"/><ellipse cx="11" cy="6.5" rx="9.5" ry="5.6" fill="#fbbf24" stroke="#b36b00" stroke-width="1"/><ellipse cx="11" cy="6.5" rx="6" ry="3.4" fill="none" stroke="#f59e0b" stroke-width="1"/><circle cx="8" cy="5" r="1.2" fill="#fff6c8"/></pattern>';
+  var fill=frac>0?'<rect x="40" y="'+y+'" width="80" height="'+(bot-y)+'" fill="url(#pt)"/><ellipse cx="80" cy="'+y+'" rx="40" ry="5" fill="'+(dollar?'#7be0a0':'#ffe08a')+'" opacity=".85"/>':'';
+  var ticks=[1/3,1/2,2/3].map(function(f){ var ty=bot-f*H; return '<line x1="121" y1="'+ty+'" x2="128" y2="'+ty+'" stroke="#fff" stroke-width="1.6" opacity=".7"/>'; }).join('');
+  var stars=lv===4?'<g fill="#fff" opacity=".95"><path d="M18 52l2.4 5 5.4.8-3.9 3.8.9 5.4-4.8-2.6-4.8 2.6.9-5.4-3.9-3.8 5.4-.8z"/><path d="M142 90l1.8 3.8 4.1.6-3 2.9.7 4.1-3.6-1.9-3.6 1.9.7-4.1-3-2.9 4.1-.6z"/></g>':'';
+  var dust=lv===0?'<text x="80" y="150" font-size="12" text-anchor="middle" fill="#fff" opacity=".6">· · ·</text>':'';
+  return '<svg viewBox="0 0 160 190" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="저금통 '+LV_TXT[lv]+'"><defs>'+pat+'<clipPath id="cl"><path d="'+body+'"/></clipPath></defs>'+
+    '<rect x="46" y="6" width="68" height="18" rx="5" fill="#cfd6e6"/><rect x="50" y="22" width="60" height="14" rx="3" fill="#e5e9f5" opacity=".9"/>'+
+    '<path d="'+body+'" fill="rgba(255,255,255,.22)"/><g clip-path="url(#cl)">'+fill+'</g>'+
+    '<path d="'+body+'" fill="none" stroke="#fff" stroke-width="3" opacity=".9"/><path d="M50 52 V150" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".35"/>'+ticks+dust+stars+'</svg>';
+}
+
+function hwSafe(){ try{
+  var h=DATA&&DATA.hw; if(!h||!h.items||!h.items.length) return '';
+  return '<div class="list" style="margin-top:14px"><h2 style="margin:0 0 6px">📚 다음 수업 숙제 <span style="font-weight:400;color:var(--sub);font-size:.76rem">'+esc(h.cn||'')+'</span></h2>'+
+    h.items.map(function(x){
+      var body=x.none?'<span style="color:var(--sub)">숙제 없어요 🎉</span>':
+        (x.t?'<div style="white-space:pre-wrap;word-break:break-word">'+esc(x.t)+'</div>':'')+
+        (x.i?'<div style="margin-top:3px;white-space:pre-wrap;word-break:break-word"><b style="color:var(--acc)">나만의 숙제</b> '+esc(x.i)+'</div>':'');
+      return '<div class="row" style="align-items:flex-start"><span class="d" style="min-width:58px;font-weight:700;color:var(--acc)">'+esc(x.due)+'</span><span class="r" style="font-size:.9rem">'+(x.s?'<b>'+esc(x.s)+'</b><br>':'')+body+'</span></div>';
+    }).join('')+'</div>';
+}catch(e){ return ''; } }
+function ttSafe(){ try{ return ttHtml(); }catch(e){ return '<div class="list" style="margin-top:14px"><div class="empty">시간표를 표시하지 못했어요. <span style="font-size:.7rem">('+esc(e&&e.message||e)+')</span></div></div>'; } }
+function ttHtml(){
+  var t=DATA&&DATA.tt; if(!t) return '<div class="list" style="margin-top:14px"><h2 style="margin:0 0 6px">📅 시간표</h2><div class="empty">시간표를 아직 받아오지 못했어요.<br>선생님께 다시 올려달라고 해주세요.</div></div>';
+  var today=['일','월','화','수','목','금','토'][new Date().getDay()];
+  // 이번 주 / 다음 주 두 벌이 올라와 있으면 오늘 날짜로 고른다 — 일요일부터는 다음 주 시간표
+  var range='', inWeek=true;
+  if(t.weeks){ var now=new Date(), g=now.getDay(), mon=new Date(now.getFullYear(),now.getMonth(),now.getDate()+(g===0?1:1-g));
+    var key=mon.getFullYear()+'-'+('0'+(mon.getMonth()+1)).slice(-2)+'-'+('0'+mon.getDate()).slice(-2);
+    var keys=Object.keys(t.weeks).sort(), pick=t.weeks[key];
+    if(!pick){ var le=keys.filter(function(k){ return k<=key; }); pick=t.weeks[le.length?le[le.length-1]:keys[0]]; }
+    if(pick){ t={cn:pick.cn||t.cn,days:pick.days,rows:pick.rows}; range=pick.range||''; }
+    inWeek=(g!==0);
+  }
+  if(!inWeek) today='';
+  var days=t.days||[], rows=t.rows||[]; if(!Array.isArray(rows)) rows=Object.keys(rows).map(function(k){ return rows[k]; }); // 서버는 빈 배열(수업 없는 칸)을 저장하지 않으므로 아래에서 요일 수만큼 다시 채워 읽는다
+  var body;
+  if(!days.length||!rows.length){ body='<div class="empty">등록된 시간표가 없어요.</div>'; }
+  else{
+    var th='padding:8px 4px;text-align:center;font-weight:800;border:1px solid var(--line);';
+    body='<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;table-layout:fixed;font-size:.82rem"><thead><tr><th style="'+th+'background:#2f6fd6;color:#fff;width:64px">Time</th>'+
+      days.map(function(d){ return '<th style="'+th+(d===today?'background:#ffd166;color:#4a3300':'background:#2f6fd6;color:#fff')+'">'+d+'</th>'; }).join('')+'</tr></thead><tbody>'+
+      rows.map(function(r){
+        var tp=r.test?'padding:2px 3px;font-size:.7rem;':'padding:6px 3px;';
+        var lab=r.test?'<b>TEST</b> <span style="color:var(--sub);font-size:.62rem">'+esc(r.t)+'</span>':'<b>'+esc(r.p)+'</b><br><span style="color:var(--sub);font-size:.7rem">'+esc(r.t)+'</span>';
+        return '<tr><td style="'+tp+'text-align:center;border:1px solid var(--line);background:'+(r.test?'#e6e8ec;color:#222':'var(--bg)')+';line-height:1.25">'+lab+'</td>'+
+          days.map(function(_,di){ return (r.c&&r.c[di])||[]; }).map(function(cell){
+            if(!cell.length) return '<td style="border:1px solid var(--line);'+(r.test?'background:#e6e8ec':'')+'"></td>';
+            return '<td style="'+tp+'text-align:center;border:1px solid var(--line);line-height:1.25;font-weight:800;'+(cell[0].bg?'background:'+cell[0].bg+';color:'+cell[0].fg:'')+'">'+
+              cell.map(function(x){ return '<div'+(cell.length>1&&x.bg?' style="background:'+x.bg+';color:'+x.fg+';padding:2px"':'')+'>'+esc(x.x)+'</div>'; }).join('')+'</td>'; }).join('')+'</tr>'; }).join('')+
+      '</tbody></table></div>';
+  }
+  return '<div class="list" style="margin-top:14px"><h2 style="margin:0 0 10px;text-align:center;background:linear-gradient(135deg,#2f6fd6,#4aa3f0);color:#fff;border-radius:12px;padding:10px 8px;font-size:1rem">☆ '+esc(t.cn)+(t.m?' '+esc(t.m)+'월':'')+' 시간표 ☆'+(range?'<div style="font-size:.72rem;font-weight:500;opacity:.9;margin-top:2px">'+esc(range)+' 주</div>':'')+'</h2>'+body+'</div>';
+}
+function more(n){ SHOWN=n?Math.min(ALL.length,SHOWN+n):ALL.length; draw(); }
+function draw(){
+  var d=DATA; { var recs=ALL.slice(0,SHOWN); var left=ALL.length-recs.length;
+    var upd=''; try{ upd=new Date(d.upd).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){}
+    show('<div class="hello">'+(d.e?'<b class="en">'+esc(d.e)+'</b> <span class="ko">'+esc(d.n)+'</span>':'<b class="en">'+esc(d.n)+'</b>')+'</div>'+
+      '<div class="bal balwrap"><div><div class="l">현재 잔액</div><div class="n">'+sym(d)+' '+fmt(d.bal)+'<small>'+esc(d.u||'')+'</small></div></div>'+
+      '<div class="jar">'+jarHtml(level(Number(d.bal),AVG),d.u)+'</div></div><div id="stf"></div>'+hwSafe()+ttSafe()+
+      '<div class="list"><h2>통장 내역 <span style="font-weight:400;color:var(--sub);font-size:.8rem">(최신순 · '+ALL.length+'건)</span></h2>'+
+      (recs.length?recs.map(function(x){ var inn=x.t==='in';
+        return '<div class="row"><span class="d">'+md(x.d)+'</span><span class="r">'+esc(x.r||'')+'</span><span class="a '+(inn?'in':'out')+'">'+(inn?'+':'−')+fmt(x.a)+'</span></div>'; }).join(''):'<div class="empty">아직 내역이 없어요.</div>')+
+      (left>0?'<div style="display:flex;gap:8px;justify-content:center;padding:6px 0 12px"><button onclick="more(10)">더보기 ('+Math.min(10,left)+'건)</button>'+(left>10?'<button onclick="more(0)" style="background:transparent;color:var(--acc);border:1.5px solid var(--acc)">전체 보기 ('+left+'건 더)</button>':'')+'</div>':'')+
+      '</div><div class="foot">'+(upd?upd+' 기준 · ':'')+'<button onclick="load()">🔄 새로고침</button><div style="margin-top:6px;font-size:.62rem;opacity:.5">'+VER+'</div></div>');
+    stfDraw();
+  }
+}
+load();
+document.addEventListener('visibilitychange',function(){ if(!document.hidden) load(); });
+</script></body></html>
