@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-20a';
+const APP_VERSION='2026-11-20b';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -2697,6 +2697,8 @@ function buildWritingReportHtml_(ctx){
   if(!e){
     const r=ctx.rubric;
     let no=0;const hd=(t,en)=>'<div class="wr-h"><span class="n">'+String(++no).padStart(2,'0')+'</span><span class="t">'+t+'</span><span class="e">'+en+'</span></div>';
+    // 완성된 글이 리포트 맨 앞에 와요(번호도 01번). 나머지는 기존 순서 그대로예요.
+    const finalHtml=ctx.finalText?(hd('완성된 글','FINAL DRAFT')+'<div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+wrParagraphs_(ctx.finalText)+'</div>'):'';
     const scoreHtml=r?(hd('성적 요약','SCORE')+
       '<div class="wr-score"><div>'+
         [['과제 완성',r.taskGrade,r.taskScore],['형식',r.formatGrade,r.formatScore]].map(x=>
@@ -2705,22 +2707,22 @@ function buildWritingReportHtml_(ctx){
     body='<div class="wr-hero"><div class="eyebrow">WRITING-LAB · REPORT</div><h1>Writing <span>Report</span></h1><div class="sub">제출한 영작과 첨삭, 다시 쓴 글을 정리한 학습 리포트입니다.</div>'+wrLogoHtml_(ctx)+'</div>'+
       '<div class="wr-in"><div class="wr-meta"><div class="row topic"><div class="c"><div class="k">TOPIC<b>주제</b></div><div class="v">'+escH(ctx.topic)+'</div></div></div>'+
       '<div class="row"><div class="c"><div class="k">NAME<b>이름</b></div><div class="v">'+escH(ctx.name)+'</div></div><div class="c"><div class="k">CLASS<b>반</b></div><div class="v">'+escH(ctx.cls||'-')+'</div></div><div class="c"><div class="k">LEVEL<b>레벨</b></div><div class="v">'+escH(ctx.level||'-')+'</div></div><div class="c"><div class="k">DATE<b>날짜</b></div><div class="v">'+escH(ctx.date)+'</div></div></div></div>'+
-      scoreHtml+
+      finalHtml+scoreHtml+
       (ctx.drill?hd('문제 풀이 결과','PATTERN DRILL')+wrDrillHtml_(ctx.drill)+(ctx.drill.task?hd('내가 쓴 글 (조건 영작)','MY WRITING')+'<div class="wr-task">'+wrParagraphs_(ctx.drill.task)+'</div>':''):'')+
       (ctx.brain?hd('생각 지도 (마인드맵)','MIND MAP')+wrBrainHtml_(ctx.brain):'')+
       hd('문장별 첨삭','FEEDBACK')+sentsHtml+
-      (ctx.finalText?(hd('완성된 글','FINAL DRAFT')+'<div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+wrParagraphs_(ctx.finalText)+'</div>'):'')+
       hd('선생님 코멘트','TEACHER\'S COMMENT')+'<div class="wr-cmt">'+cmtHtml+'</div></div>'+
       '<div class="wr-foot"><span>'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</span><b>MIDDLE SCHOOL</b></div>';
   }else{
     let no=0;const hd=t=>'<div class="wr-h">'+String(++no).padStart(2,'0')+'. '+t+'</div>';
+    // 완성된 글이 리포트 맨 앞에 와요(번호도 01번). 나머지는 기존 순서 그대로예요.
+    const finalHtml=hd('완성된 글')+'<div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 완성된 글이 없어요)</p>')+'</div>';
     const drillHtml=ctx.drill?(hd('문제 풀이 결과')+wrDrillHtml_(ctx.drill)+(ctx.drill.task?hd('내가 쓴 글 (조건 영작)')+'<div class="wr-task">'+wrParagraphs_(ctx.drill.task)+'</div>':'')):'';
     const picsHtml=(ctx.pics&&ctx.pics.length)?(hd('그림 보고 쓰기')+'<div class="wr-pics">'+ctx.pics.map(p=>'<div class="p"><div><img src="'+escH(p.imageUrl)+'" style="object-position:'+escH(p.crop||'center center')+';transform:scale('+((Number(p.zoom)||100)/100)+')" alt=""></div></div>').join('')+'</div>'):'';
     const brainHtml=ctx.brain?(hd('생각 지도 (마인드맵)')+wrBrainHtml_(ctx.brain)):'';
     body='<div class="wr-head"><div><div class="dots"><i style="background:#E8736B"></i><i style="background:#3DB56F"></i><i style="background:#4C9BE8"></i></div><div class="eyebrow">WRITING-LAB · REPORT</div><h1>Writing Report</h1></div>'+wrLogoHtml_(ctx)+'</div>'+
       '<div class="wr-card"><div class="r topic"><span class="k">주제</span><span class="v">'+escH(ctx.topic)+'</span></div><div class="r g"><div><span class="k">이름</span><span class="v">'+escH(ctx.name)+'</span></div><div><span class="k">반</span><span class="v">'+escH(ctx.cls||'-')+'</span></div><div><span class="k">레벨</span><span class="v">'+escH((ctx.level||'-').replace(/^Level\s*/i,''))+'</span></div><div><span class="k">날짜</span><span class="v">'+escH(ctx.date)+'</span></div></div></div>'+
-      drillHtml+picsHtml+brainHtml+
-      hd('완성된 글')+'<div class="wr-final"><h3>'+escH(ctx.topic)+'</h3>'+(ctx.finalText?wrParagraphs_(ctx.finalText):'<p style="color:#8A93A5">(아직 완성된 글이 없어요)</p>')+'</div>'+
+      finalHtml+drillHtml+picsHtml+brainHtml+
       hd('선생님 코멘트')+'<div class="wr-cmt">'+cmtHtml+'</div>'+
       hd('문장별 첨삭')+'<div class="wr-card2">'+sentsHtml+'</div>'+
       '<div class="wr-foot">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div><div class="wr-foot-fix">'+escH((ctx.academy||'').toUpperCase())+(ctx.academy?' · ':'')+'WRITING LAB</div>';
@@ -2729,6 +2731,11 @@ function buildWritingReportHtml_(ctx){
 }
 /** 제출물 하나(원본 또는 다시쓰기)로 Writing Report를 새 창에 열어줘요. 양식(초등/중등)·로고는 학원 설정을 따라요. */
 /** 제출물 하나로 리포트에 들어갈 내용(ctx)을 만들어요. 한 장짜리 인쇄와 기간별 묶음 인쇄가 같이 써요. */
+/** "윤시윤 Chloe" 같은 이름에서 영어 이름(한글이 없는 부분)만 남겨요. 영어 이름이 없으면 원래 이름을 그대로 둬요. */
+function wrEngName_(name){
+  const t=String(name||'').trim().split(/\s+/).filter(w=>/[A-Za-z]/.test(w)&&!/[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(w));
+  return t.length?t.join(' '):String(name||'').trim();
+}
 function wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg,opts){
   opts=opts||{};
   const pair=writingReportPair_(s,siblings);
@@ -2741,7 +2748,7 @@ function wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg,opts){
   const st=stage==='초등'&&String(base.chapter||s.chapter||'')==='Story Writing'?findStoryTopicByTitle_(topicName):null;
   const pics=st?(st.pics||[]).filter(p=>p.imageUrl):[];
   const finalSrc=rw||(submissionTypeLabel(s)==='Re-Writing'?s:null);
-  return {stage,logo:ac.logo||ACADEMY_LOGOS[acad]||'',academy:acad,name:studentName||s.name||'',cls:s.cls||'',
+  return {stage,logo:ac.logo||ACADEMY_LOGOS[acad]||'',academy:acad,name:opts.engName?wrEngName_(studentName||s.name||''):(studentName||s.name||''),cls:s.cls||'',
     level:(rubric&&rubric.writingLevel)||'',date:wrDateStr_(base.datetime||s.datetime,stage==='초등'?'. ':'.'),
     topic:topicName,rubric,sentences:writingReportSentences_(base),
     finalText:writingReportFinal_(base)||(finalSrc?String(finalSrc.final||finalSrc.text||''):String(base.text||'')),comment:writingReportComment_([base,rw]),pics,
@@ -2779,19 +2786,31 @@ async function printHtmlDoc_(makeHtml,waitMsg){
 }
 /** 제출물 하나(원본 또는 다시쓰기)로 Writing Report를 바로 인쇄 창으로 열어줘요. 양식(초등/중등)·로고는 학원 설정을 따라요. */
 async function printWritingReport(s,studentName,studentId,academyName,siblings,forceStage){
-  const go=withDrill=>printHtmlDoc_(async()=>{
+  const go=(withDrill,engName)=>printHtmlDoc_(async()=>{
     const cfg=await fetchReportConfig();
-    return buildWritingReportHtml_(wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg,{withDrill}));
+    return buildWritingReportHtml_(wrCtxFor_(s,studentName,academyName,siblings,forceStage,cfg,{withDrill,engName}));
   });
-  // Pattern Drill 글이면 "문제 풀이 결과 + 조건 영작"을 리포트 앞에 넣을지 골라요.
+  // 이름을 영어 이름만 넣을지(한글 이름 빼기), Pattern Drill 글이면 문제 풀이 결과를 넣을지 골라요. 이름 선택은 기억해 둬요.
   const base=writingReportPair_(s,siblings).original||s;
-  if(!wrDrillData_(base))return go(false);
+  const hasDrill=!!wrDrillData_(base);
   openGenericModal('Writing Report 인쇄',(body)=>{
-    body.appendChild(el('div','hint','이 글은 Pattern Drill이에요. 학생이 푼 문제(개념 확인·단어 배열·영작)의 맞은 것·틀린 것 전체와 조건 영작으로 쓴 글을 리포트 앞에 넣을까요?'));
+    const mk=(id,label,checked)=>{
+      const l=el('label');l.style.cssText='display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0;cursor:pointer';
+      const c=document.createElement('input');c.type='checkbox';c.id=id;c.checked=!!checked;
+      l.appendChild(c);l.appendChild(document.createTextNode(label));body.appendChild(l);return c;
+    };
+    let engSaved=false;try{engSaved=store.get('ewl2_wrEng')==='1';}catch(e){}
+    const eng=mk('wrEngOnly','영어 이름만 표시 (한글 이름 빼기)',engSaved);
+    let drill=null;
+    if(hasDrill){
+      body.appendChild(el('div','hint','이 글은 Pattern Drill이에요. 학생이 푼 문제(개념 확인·단어 배열·영작)의 맞은 것·틀린 것 전체와 조건 영작으로 쓴 글을 리포트에 넣을 수 있어요.'));
+      drill=mk('wrDrillInc','문제 풀이 결과 + 조건 영작 넣기',true);
+    }
     const row=el('div');row.style.cssText='display:flex;gap:8px;margin-top:14px;flex-wrap:wrap';
-    const yes=el('button','btn blue','문제 풀이 결과 넣기');yes.type='button';yes.style.cssText='padding:8px 16px;font-size:13.5px';
-    const no=el('button','btn ghost','빼고 인쇄');no.type='button';no.style.cssText='padding:8px 16px;font-size:13.5px';
-    yes.onclick=()=>{closeGenericModal();go(true);};no.onclick=()=>{closeGenericModal();go(false);};
+    const yes=el('button','btn blue','인쇄');yes.type='button';yes.style.cssText='padding:8px 16px;font-size:13.5px';
+    const no=el('button','btn ghost','닫기');no.type='button';no.style.cssText='padding:8px 16px;font-size:13.5px';
+    yes.onclick=()=>{try{store.set('ewl2_wrEng',eng.checked?'1':'0');}catch(e){}closeGenericModal();go(drill?drill.checked:false,eng.checked);};
+    no.onclick=()=>closeGenericModal();
     row.appendChild(yes);row.appendChild(no);body.appendChild(row);
   });
 }
@@ -2967,6 +2986,7 @@ function openPeriodReportDialog_(opts){
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684">끝나는 날<input type="date" class="in" id="prTo" value="'+today+'" style="padding:8px 10px;border-radius:10px"></label></div>'+
     '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6b7684;margin-top:10px">Re-Writing 여부<select class="in" id="prRw" style="padding:8px 10px;border-radius:10px;font-size:14px"><option value="all">전체 (Re-Writing 안 한 글도 포함)</option><option value="done">Re-Writing 완료한 글만</option><option value="todo">Re-Writing 안 한 글만</option></select></label>'+
     '<div style="font-size:12.5px;font-weight:700;color:#6b7684;margin:12px 0 4px">양면 인쇄용 빈 면</div><select id="prDuplex" class="in" style="padding:9px;font-size:13.5px;border-radius:10px"><option value="report">글마다 — 홀수 쪽으로 끝나는 리포트 다음에 빈 면 (리포트마다 새 종이에서 시작)</option><option value="student">학생마다 — 한 학생의 리포트는 이어서, 다음 학생만 새 종이에서 시작</option><option value="none">넣지 않음 (단면 인쇄)</option></select>'+
+    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:8px;cursor:pointer"><input type="checkbox" id="prEng"> 영어 이름만 표시 (한글 이름 빼기)</label>'+
     '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:8px;cursor:pointer"><input type="checkbox" id="prDrill"> Pattern Drill 글에 문제 풀이 결과(맞은 것·틀린 것 전체)와 조건 영작 넣기</label>'+
     '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#374151;margin-top:12px;cursor:pointer"><input type="checkbox" id="prCover" checked> 월별 표지 넣기 — "달 고르기"로 한 달을 골랐을 때만 학생마다 맨 앞에 들어가요 (로고·이름·반·글 목록 자동)</label>'+
     '<div id="prInfo" class="hint" style="margin:12px 0;min-height:38px">제출 기록을 불러오는 중…</div>'+
@@ -2986,7 +3006,7 @@ function openPeriodReportDialog_(opts){
   const syncMonth=()=>{const f=q('prFrom').value,t=q('prTo').value;const ym=f.slice(0,7);const ms=q('prMonth');
     ms.value=(ym&&Array.from(ms.options).some(o=>o.value===ym)&&monthRange(ym)[0]===f&&monthRange(ym)[1]===t)?ym:'';};
   // 지난번에 고른 기간·조건을 기억해뒀다가 다시 열 때 그대로 보여줘요(인쇄하고 돌아와도 초기화되지 않게).
-  const saveState=()=>{try{store.set('ewl2_prState',JSON.stringify({from:q('prFrom').value,to:q('prTo').value,rw:q('prRw').value,duplex:q('prDuplex').value,cover:q('prCover').checked,drill:q('prDrill').checked}));}catch(e){}};
+  const saveState=()=>{try{store.set('ewl2_prState',JSON.stringify({from:q('prFrom').value,to:q('prTo').value,rw:q('prRw').value,duplex:q('prDuplex').value,cover:q('prCover').checked,drill:q('prDrill').checked,eng:q('prEng').checked}));}catch(e){}};
   try{
     const sv=JSON.parse(store.get('ewl2_prState')||'null');
     if(sv){
@@ -2994,7 +3014,7 @@ function openPeriodReportDialog_(opts){
       if(/^\d{4}-\d\d-\d\d$/.test(sv.to||''))q('prTo').value=sv.to;
       if(['all','done','todo'].includes(sv.rw))q('prRw').value=sv.rw;
       if(['report','student','none'].includes(sv.duplex))q('prDuplex').value=sv.duplex;
-      if(sv.cover===false)q('prCover').checked=false;if(sv.drill===true)q('prDrill').checked=true;
+      if(sv.cover===false)q('prCover').checked=false;if(sv.drill===true)q('prDrill').checked=true;if(sv.eng===true)q('prEng').checked=true;
     }else{const r=monthRange(first.slice(0,7));q('prFrom').value=r[0];q('prTo').value=r[1];}
   }catch(e){}
   syncMonth();
@@ -3016,7 +3036,7 @@ function openPeriodReportDialog_(opts){
     q('prGo').disabled=!p.ok.length;
   };
   q('prFrom').onchange=q('prTo').onchange=()=>{syncMonth();saveState();refresh();};
-  q('prRw').onchange=()=>{saveState();refresh();};q('prDuplex').onchange=saveState;q('prCover').onchange=saveState;q('prDrill').onchange=saveState;
+  q('prRw').onchange=()=>{saveState();refresh();};q('prDuplex').onchange=saveState;q('prCover').onchange=saveState;q('prDrill').onchange=saveState;q('prEng').onchange=saveState;
   q('prMonth').onchange=()=>{const ym=q('prMonth').value;if(ym){const r=monthRange(ym);q('prFrom').value=r[0];q('prTo').value=r[1];}saveState();refresh();};
   (async()=>{try{all=await opts.loadSubs();}catch(e){all=[];}ready=true;refresh();})();
   q('prGo').onclick=async()=>{
@@ -3024,6 +3044,7 @@ function openPeriodReportDialog_(opts){
     const duplex=q('prDuplex').value==='none'?'':q('prDuplex').value;
     const coverLabel=(q('prCover').checked&&q('prMonth').value)?q('prMonth').value:''; // 달을 골라 뽑을 때만 표지를 넣어요
     const withDrill=q('prDrill').checked;
+    const engName=q('prEng').checked;
     close();
     const cfg=await fetchReportConfig();
     // 학생별(이름순)로 묶고, 한 학생 안에서는 낸 날짜 순으로 이어 붙여요.
@@ -3035,7 +3056,7 @@ function openPeriodReportDialog_(opts){
     });
     const groups={};
     ordered.forEach(s=>{
-      const ctx=wrCtxFor_(s,s.name||'',s.academy||'',byStu.get(String(s.id))||[s],null,cfg,{withDrill:withDrill});
+      const ctx=wrCtxFor_(s,s.name||'',s.academy||'',byStu.get(String(s.id))||[s],null,cfg,{withDrill:withDrill,engName:engName});
       ctx._sid=String(s.id);
       try{ctx._kind=submissionTypeLabel(s)||'';}catch(e){ctx._kind='';}
       try{ctx._rw=!!writingReportPair_(s,byStu.get(String(s.id))||[s]).rewrite;}catch(e){}
