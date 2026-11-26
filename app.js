@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-20m';
+const APP_VERSION='2026-11-26c';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -4194,6 +4194,28 @@ function inlineDiffNotesHtml(errorsList,sentence){
     }).join('')+
     '</div>';
 }
+/** Re-Writing 체크용: 원래 문장(origSents)마다, 다시 쓴 글에서 가장 비슷한 문장을 찾아 okFn으로 확인해요.
+ *  모든 원래 문장이 통과해야 true. 비슷한 문장을 하나라도 못 찾으면 null(→ 호출한 쪽이 글 전체 기준으로 판단).
+ *  passIfGone=true면(지우기 조건) 비슷한 문장이 없을 때 "문장을 통째로 지웠다"고 보고 통과로 쳐요. */
+function rwSentCheck_(newText,origSents,okFn,passIfGone){
+  if(!Array.isArray(origSents)||!origSents.length)return null;
+  const toks=x=>String(x||'').toLowerCase().replace(/[^a-z0-9'\s]/g,' ').split(/\s+/).filter(Boolean);
+  const newSents=splitSentences(String(newText||''));
+  if(!newSents.length)return null;
+  const newToks=newSents.map(toks);
+  for(const os of origSents){
+    const ot=toks(os);if(!ot.length)continue;
+    let best=-1,bestScore=0;
+    newToks.forEach((nt,j)=>{
+      const set=new Set(nt);let inter=0;new Set(ot).forEach(w=>{if(set.has(w))inter++;});
+      const uni=new Set(ot.concat(nt)).size||1;const sc=inter/uni;
+      if(sc>bestScore){bestScore=sc;best=j;}
+    });
+    if(best<0||bestScore<0.35){if(passIfGone)continue;return null;}
+    if(!okFn(norm(newSents[best])))return false;
+  }
+  return true;
+}
 function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
   const bk=el('button','backbtn','◀ 목록으로');bk.onclick=viewRewriteList;w.appendChild(bk);
   w.appendChild(el('h1','title','Re-Writing · '+(sub.point||sub.chapter||'')));
@@ -4266,7 +4288,11 @@ function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
         if(!entry||!Array.isArray(entry.errors))return;
         entry.errors.forEach(e=>{
           const wrongKey=norm(e.wrong);
-          if(!e.correct)return;
+          // 고친 표현이 비어 있으면 "이 부분은 지우기"예요 — 학생이 따로 무엇을 써야 하는 조건이 아니라, 원래 표현을 지우면 통과예요.
+          if(!String(e.correct||'').trim()){
+            if(wrongKey&&norm(sub.text||'').includes(wrongKey)){const dk='__delete__'+wrongKey;if(!wrongGroups.has(dk))wrongGroups.set(dk,{wrongKey,wrongText:e.wrong,corrects:[],isDelete:true,sents:[]});const gg=wrongGroups.get(dk);if(gg.sents.indexOf(sent)<0)gg.sents.push(sent);}
+            return;
+          }
           // ⚠️ AI가 고친 표현을 하나가 아니라 "A / B"처럼 두 개 이상을 한 correct 문자열에 같이
           // 담아서 줄 때가 있어요(둘 다 맞는 표현이라는 뜻). 예전엔 이 "A / B" 전체를 통째로 하나의
           // 정답 문구로 취급해서, 학생이 그 중 하나(A만, 또는 B만)를 써도 "A / B"라는 문자열 그대로는
@@ -4275,11 +4301,13 @@ function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
           const altCorrects=splitAltCorrects(e.correct);
           if(!altCorrects.length)return;
           altCorrects.forEach(altCorrect=>{
+            // "(이 문장은 삭제)" 같은 한국어 지시문은 학생이 그대로 따라 쓰는 문구가 절대 아니에요. 원래 표현을 알 수 없으면 조건을 아예 만들지 않아요.
+            if(!wrongKey&&looksLikeDeleteNote(altCorrect))return;
             if(wrongKey&&looksLikeDeleteNote(altCorrect)){
               // "삭제"류 지시문은 일반 corrects 목록에 넣지 않고, 원래 틀린 표현(wrongKey)이 다시
               // 안 보이면 통과하는 별도의 "삭제됨" 그룹으로 모아요.
               const delGroupKey='__delete__'+wrongKey;
-              if(!wrongGroups.has(delGroupKey))wrongGroups.set(delGroupKey,{wrongKey,wrongText:e.wrong,corrects:[],isDelete:true});
+              if(!wrongGroups.has(delGroupKey))wrongGroups.set(delGroupKey,{wrongKey,wrongText:e.wrong,corrects:[],isDelete:true,sents:[]});{const gg=wrongGroups.get(delGroupKey);if(gg.sents.indexOf(sent)<0)gg.sents.push(sent);}
               return;
             }
             const key=norm(altCorrect);
@@ -4298,11 +4326,12 @@ function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
             for(const cand of wrongGroups.values()){ if(cand.corrects.some(c=>norm(c)===key)){ g=cand; break; } }
             if(!g){
               const groupKey=wrongKey||('__nowrong__'+key);
-              if(!wrongGroups.has(groupKey))wrongGroups.set(groupKey,{wrongKey,corrects:[]});
+              if(!wrongGroups.has(groupKey))wrongGroups.set(groupKey,{wrongKey,corrects:[],sents:[]});
               g=wrongGroups.get(groupKey);
             }
             if(wrongKey&&!g.wrongKey)g.wrongKey=wrongKey;
             if(!g.corrects.some(c=>norm(c)===key))g.corrects.push(altCorrect);
+            if(!g.sents)g.sents=[];if(g.sents.indexOf(sent)<0)g.sents.push(sent);
           });
         });
       });
@@ -4343,6 +4372,9 @@ function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
         test:t=>{
           const nt=norm(t);
           if(!nt)return false;
+          // 문장 단위로 봐요: 그 원래 문장에 해당하는 새 문장에서 틀린 표현이 빠졌으면 통과(문장을 통째로 지웠어도 통과).
+          const r=rwSentCheck_(t,g.sents,ns=>countPhraseOccurrences(ns,delKey)<countPhraseOccurrences(norm(g.sents[0]||''),delKey)||countPhraseOccurrences(ns,delKey)===0,true);
+          if(r!==null)return r;
           const newCount=countPhraseOccurrences(nt,delKey);
           return origCount>0?(newCount<origCount):(newCount===0);
         }
@@ -4351,12 +4383,21 @@ function viewRewriteWrite(sub,prevDone){setWide(true);mountView(w=>{
     }
     if(!g.corrects.length)return;
     const keys=g.corrects.map(norm);
+    // ⚠️ 고친 표현이 원래 글의 다른 문장에 이미 들어 있으면(예: 위 문장에 이미 "went to school"이 있음), 그 다른 문장을 그대로 다시 쓰기만 해도
+    // 체크(✓)가 켜졌어요. 그래서 "원래 글에 있던 횟수보다 더 많이 나와야(=틀린 자리를 실제로 고쳐 썼어야)" 통과로 봐요.
+    const origText=norm(sub.text||'');
+    const origCounts=keys.map(k=>countPhraseOccurrences(origText,k));
     rewriteConds.push({
       label:g.corrects.map(c=>'"'+c+'"').join(' 또는 ')+'로 고쳐 쓰기',
       test:t=>{
         const nt=norm(t);
         if(!nt)return false;
-        return keys.some(k=>normIncludesPhrase(nt,k));
+        // 문장 단위로 봐요: 틀렸던 원래 문장에 해당하는 새 문장을 찾아서, 그 문장 안에 고친 표현이 들어 있어야 통과예요.
+        // (다른 문장에 이미 같은 표현이 있어도 상관없고, 다른 문장을 지우거나 바꿔도 영향을 안 받아요.)
+        const r=rwSentCheck_(t,g.sents,ns=>keys.some(k=>normIncludesPhrase(ns,k)),false);
+        if(r!==null)return r;
+        // 해당 문장을 찾지 못하면(글을 많이 바꿔 씀) 글 전체에서 원래보다 더 많이 나왔는지로 판단해요.
+        return keys.some((k,i)=>countPhraseOccurrences(nt,k)>origCounts[i]);
       }
     });
   });
@@ -7448,6 +7489,22 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
       if(aifbGpt.overall){
         mountAiOverallBox(card,null,'background:#e6f6f3;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.6;white-space:pre-line;margin-top:8px',aifbGpt.overall,s,'gpt',aifbGpt);
       }
+      // 검수자 3명 비교 기록(선생님만 보여요): 검수자별로 찾은 개수, 최종 확정 개수, 비교 검사에서 버리거나 바로잡은 수정
+      (function(){
+        let rv=null;try{rv=s.aiFeedbackReview?JSON.parse(s.aiFeedbackReview):null;}catch(e){rv=null;}
+        if(!rv||!Array.isArray(rv.reviewers))return;
+        const det=document.createElement('details');det.style.cssText='margin-top:8px;font-size:12.5px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:8px 12px';
+        const sm=document.createElement('summary');sm.style.cssText='cursor:pointer;font-weight:700;color:#334155';
+        sm.textContent='🔍 검수 기록 — '+rv.reviewers.map(r=>'검수자 '+r.key+' '+r.count+'개').join(' · ')+' → 최종 '+rv.finalCount+'개'+(rv.judged?'':' (비교 검사 실패: 검수자 결과 사용)');
+        det.appendChild(sm);
+        const dl=Array.isArray(rv.dropped)?rv.dropped:[];
+        const body=el('div');body.style.cssText='margin-top:6px;line-height:1.6;color:#475569';
+        if(!dl.length)body.textContent='비교 검사에서 버리거나 바로잡은 수정이 없어요.';
+        else{body.appendChild(el('div','', '비교 검사에서 버리거나 바로잡은 수정 '+dl.length+'개:'));
+          dl.forEach(x=>{const row=el('div');row.style.cssText='padding:3px 0;border-top:1px dashed #e2e8f0';
+            row.textContent=(x.sentence?x.sentence+'번 문장 · ':'')+(x.reviewer?'검수자 '+x.reviewer+' · ':'')+'"'+(x.wrong||'')+'" → "'+(x.correct||'')+'"'+(x.why?' — '+x.why:'');body.appendChild(row);});}
+        det.appendChild(body);card.appendChild(det);
+      })();
       if(s.text){
         const nowWrap=el('div');nowWrap.style.cssText='margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
         const nowBtn=el('button','btn ghost','⚡ AI 첨삭 지금 생성하기');nowBtn.type='button';nowBtn.style.cssText='padding:6px 12px;font-size:13px';
@@ -7458,7 +7515,7 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
         }
         card.appendChild(nowWrap);
         nowBtn.onclick=async()=>{
-          nowBtn.disabled=true;const prevT=nowBtn.textContent;nowBtn.textContent='생성 중… (몇 초 걸릴 수 있어요)';
+          nowBtn.disabled=true;const prevT=nowBtn.textContent;nowBtn.textContent='생성 중… (검수자 3명이 확인하느라 1~3분 걸려요)';
           nowMsg.className='fx';nowMsg.textContent='';
           try{
             const payload={action:'generateFeedbackNow',academy:s.academy||''};
@@ -7470,6 +7527,7 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
             // 그러지 말고 s(제출물 객체, siblings 안의 것과 같은 참조라서 여기서 바로 갱신해도 안전해요)에
             // 새 첨삭을 반영한 뒤 이 상세 화면 자체를 다시 그려서, 문장별 첨삭까지 클릭 한 번으로 바로 보이게 해요.
             s.aiFeedback=data.aiFeedback||s.aiFeedback;
+            if(data.aiFeedbackReview!==undefined)s.aiFeedbackReview=data.aiFeedbackReview;
             if(data.aiFeedbackGpt)s.aiFeedbackGpt=data.aiFeedbackGpt;
             viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn);
             return;
