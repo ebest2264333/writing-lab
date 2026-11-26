@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-26c';
+const APP_VERSION='2026-11-26f';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -7489,6 +7489,18 @@ function viewTeacherSubmissionDetail(s,studentId,studentName,siblings,backFn){
       if(aifbGpt.overall){
         mountAiOverallBox(card,null,'background:#e6f6f3;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.6;white-space:pre-line;margin-top:8px',aifbGpt.overall,s,'gpt',aifbGpt);
       }
+      // Paragraph Writing 마인드맵(브레인스토밍 메모)도 선생님 상세 화면에 보여줘요 — 예전엔 리포트 인쇄에만 나와서, 상세 화면에선 메모를 안 낸 것처럼 보였어요.
+      (function(){
+        const bd=wrBrainData_(s);if(!bd)return;
+        const det=document.createElement('details');det.open=true;det.style.cssText='margin-top:12px;font-size:13px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:8px 12px';
+        const sm=document.createElement('summary');sm.style.cssText='cursor:pointer;font-weight:700;color:#166534';sm.textContent='🧠 브레인스토밍 메모 (마인드맵)';det.appendChild(sm);
+        bd.filter(x=>x.lines.length).forEach(x=>{
+          const row=el('div');row.style.cssText='margin-top:6px;line-height:1.6';
+          row.innerHTML='<b>'+escH(x.role)+'</b>'+x.lines.map(l=>'<div style="padding-left:10px">'+(l[1]?escH(l[1]):'')+(l[0]?' <span style="color:#6b7684">('+escH(l[0])+')</span>':'')+'</div>').join('');
+          det.appendChild(row);
+        });
+        card.appendChild(det);
+      })();
       // 검수자 3명 비교 기록(선생님만 보여요): 검수자별로 찾은 개수, 최종 확정 개수, 비교 검사에서 버리거나 바로잡은 수정
       (function(){
         let rv=null;try{rv=s.aiFeedbackReview?JSON.parse(s.aiFeedbackReview):null;}catch(e){rv=null;}
@@ -8189,7 +8201,9 @@ function runParagraph(topic){setWide(true);deckInit();
   const paraStart=Date.now();let brainstormStart=null,writeEnd=null;setStudyTimer(paraStart,'⏱ 글감 학습');
   const ST={brain:{},draft:'',final:'',proof:[],score:null};
   const DRAFT_CHAPTER='Paragraph Writing',DRAFT_POINT=topic.title;
-  const doAutosavePara=debounce(()=>{if(ST.draft||ST.final||Object.keys(ST.brain).length)saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);},1500);
+  // 브레인스토밍 칸이 전부 빈 값이어도 키만 있으면 저장돼서, 빈 화면이 서버 임시저장을 덮어쓰는 일이 있었어요 → 실제 글자가 있을 때만 저장해요.
+  const paraHasContent_=()=>!!(String(ST.draft||'').trim()||String(ST.final||'').trim()||Object.values(ST.brain||{}).some(o=>o&&Object.values(o).some(v=>String(v||'').trim())));
+  const doAutosavePara=debounce(()=>{if(paraHasContent_())saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);},1500);
   let brainInputsRef=null,draftTaRef=null,draftSaveMsgRef=null,finalTaRef=null,finalSaveMsgRef=null;
   const gtest=new RegExp(topic.grammarTest,'i');
   const flow=topic.flow||HBFLOW[topic.id]||{};
@@ -8338,7 +8352,26 @@ function runParagraph(topic){setWide(true);deckInit();
     ta.addEventListener('input',()=>{if(ta.value.trim())doAutosavePara();});
     ta.addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});
     saveBtn.onclick=()=>{ST.final=ta.value.trim()||ST.draft;saveDraftNow(DRAFT_CHAPTER,DRAFT_POINT,ST);saveMsg.className='fx ok';saveMsg.textContent='저장했어요! 나중에 이어서 쓸 수 있어요.';};
-    b._ta=ta;b._fill=()=>{if(!ta.value.trim()&&ST.draft)ta.value=ST.draft;};b._save=()=>{ST.final=ta.value.trim()||ST.draft;};},{focus:'textarea'});
+    // ⚠️ 버그: STEP 7에 한 번 들어오면 그때의 (짧은) 초안이 완성본 칸에 복사되는데, 다시 STEP 6으로 가서 초안을 길게 늘려도
+    // 완성본 칸이 비어 있지 않다는 이유로 옛날 짧은 글이 그대로 남아 제출됐어요(예: 300자 썼는데 3문장만 제출).
+    // 이제 ① 학생이 완성본 칸을 직접 고치지 않았으면 들어올 때마다 최신 초안으로 바꿔 채우고,
+    // ② 직접 고쳤는데 초안이 훨씬 길면 "초안 다시 불러오기" 안내를 보여줘요.
+    const staleNote=el('div');staleNote.style.cssText='display:none;margin-top:8px;background:#fff7ed;border:1px solid #fdba74;color:#9a3412;border-radius:10px;padding:8px 12px;font-size:13px';
+    finalRight.insertBefore(staleNote,ta);
+    const showStale=()=>{
+      const dw=countWords(ST.draft||''),fw=countWords(ta.value||'');
+      if(ST.draft&&dw>=fw+15){
+        staleNote.style.display='block';staleNote.innerHTML='⚠️ STEP 6에서 쓴 초안('+dw+'단어)이 이 완성본('+fw+'단어)보다 훨씬 길어요. 초안을 고친 뒤 여기 반영이 안 됐을 수 있어요. ';
+        const rb=el('button','btn ghost','초안 다시 불러오기');rb.type='button';rb.style.cssText='padding:4px 10px;font-size:12.5px;margin-left:4px';
+        rb.onclick=()=>{ta.value=ST.draft;ST.finalAuto=ST.draft;ST.final=ST.draft;staleNote.style.display='none';doAutosavePara();};
+        staleNote.appendChild(rb);
+      }else staleNote.style.display='none';
+    };
+    ta.addEventListener('input',showStale);
+    b._ta=ta;b._fill=()=>{
+      if(ST.draft&&(!ta.value.trim()||ta.value===ST.finalAuto||ta.value.trim()===String(ST.finalAuto||'').trim())){ta.value=ST.draft;ST.finalAuto=ST.draft;}
+      showStale();
+    };b._save=()=>{ST.final=ta.value.trim()||ST.draft;};},{focus:'textarea'});
   slides[slides.length-1]._onEnter=function(){this._box._fill&&this._box._fill();};
   slides[slides.length-1]._collect=function(){this._box._save&&this._box._save();doAutosavePara();};
   // 8) 점수 + 제출
@@ -8363,7 +8396,12 @@ function runParagraph(topic){setWide(true);deckInit();
         const payload={book:lv.book,chapter:'Paragraph Writing',point:topic.title,name:USER.name,id:USER.id,school:USER.school||'',schoolGrade:USER.schoolGrade||'',cls:USER.cls||'',academy:USER.academy||'',subId:submissionDocId('Paragraph Writing',topic.title),datetime:dt,quiz:'',arrange:'',compose:'',task:'Paragraph 제출',final:ST.final||ST.draft,total:g.total+'/100',score:g.total,grade:g.grade,rubric:breakdown,prepTime:prepStr,writeTime:writeStr,brainNotes:Object.keys(ST.brain||{}).length?JSON.stringify(ST.brain):'',progress:'Paragraph '+topic.title+' 완료 · '+g.total+'점('+g.grade+') · 글감학습 '+prepStr+' · 글쓰기 '+writeStr};
         const txt=['English Writing Lab · Paragraph Writing (Hamburger)','주제: '+topic.title,'이름: '+USER.name,'아이디: '+USER.id,'일시: '+dt,'글감 학습 시간: '+prepStr,'브레인스토밍~글쓰기 시간: '+writeStr,'','[완성본]',ST.final||ST.draft||'(작성 없음)','','── 자동 채점 ──','총점 '+g.total+'/100 ('+g.grade+')',breakdown].join('\n');return{payload,txt};};
       dl.onclick=()=>{const {txt}=build();const blob=new Blob(['\ufeff'+txt],{type:'text/plain;charset=utf-8'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='글_'+USER.name+'_'+topic.id+'.txt';document.body.appendChild(a);a.click();a.remove();};
-      sub.onclick=async()=>{const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
+      let warnedShort=false;
+      sub.onclick=async()=>{
+        // 제출 직전 안전장치: 초안이 완성본보다 훨씬 길면(완성본에 초안이 다 안 옮겨졌을 가능성) 한 번 알려주고, 한 번 더 눌러야 제출돼요.
+        const dw=countWords(ST.draft||''),fw=countWords(ST.final||ST.draft||'');
+        if(!warnedShort&&ST.draft&&dw>=fw+15){warnedShort=true;msg.innerHTML='⚠️ 초안('+dw+'단어)보다 완성본('+fw+'단어)이 훨씬 짧아요. STEP 7 완성본에 글이 다 들어갔는지 확인해 주세요. 그대로 내려면 <b>제출을 한 번 더</b> 눌러요.';msg.style.color='#b45309';return;}
+        const {payload}=build();sub.disabled=true;sub.textContent='제출 중…';let sent=false;
         const audio=await rec.getAudio();if(audio){payload.audioBase64=audio.base64;payload.audioMime=audio.mime;}
         if(SUBMIT_URL){try{await fetch(SUBMIT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});sent=true;triggerAiFeedbackNow(payload.subId,payload.academy);}catch(e){}}
         if(!sent){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=el('a');a.href=URL.createObjectURL(blob);a.download='제출_글_'+USER.name+'_'+topic.id+'.json';document.body.appendChild(a);a.click();a.remove();}
@@ -8371,13 +8409,26 @@ function runParagraph(topic){setWide(true);deckInit();
         const hb=el('button','btn blue','← 홈으로');hb.style.marginTop='10px';hb.onclick=()=>{nav.classList.remove('on');viewHome();};b.appendChild(hb);};};});
   slides[slides.length-1]._onEnter=function(){if(!writeEnd)writeEnd=Date.now();freezeStudyTimer();this._box._paint&&this._box._paint();};
   (async()=>{
-    const found=await fetchDraft(DRAFT_CHAPTER,DRAFT_POINT);
+    let found=await fetchDraft(DRAFT_CHAPTER,DRAFT_POINT);
+    const hasReal=o=>o&&(String(o.draft||'').trim()||String(o.final||'').trim()||Object.values(o.brain||{}).some(x=>x&&Object.values(x).some(v=>String(v||'').trim())));
+    // 제출하면 서버가 임시저장을 지워서, 이미 낸 글을 다시 열면 브레인스토밍·초안·완성본이 전부 비어 있었어요. 마지막 제출물에서 불러와요.
+    if(!hasReal(found&&found.obj)&&USER&&USER.id&&!TEACHER_PREVIEW){
+      try{
+        const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+        const data=await res.json();let last=null;
+        ((data&&data.ok&&data.submissions)||[]).forEach(x=>{if(String(x.chapter||'')!=='Paragraph Writing'||String(x.point||'')!==String(topic.title||''))return;if(!last||String(x.datetime||'')>String(last.datetime||''))last=x;});
+        if(last){let br=null;try{br=last.brainNotes?JSON.parse(last.brainNotes):null;}catch(e){br=null;}
+          const txt=String(last.final||last.text||'');
+          found={obj:{brain:br||{},draft:txt,final:txt,finalAuto:txt,proof:[]},savedAt:last.datetime||''};}
+      }catch(e){}
+    }
     if(found&&found.obj){
       const o=found.obj;
       if(o.brain)ST.brain=o.brain;
       if(o.draft)ST.draft=o.draft;
       if(o.final)ST.final=o.final;
       if(o.proof)ST.proof=o.proof;
+      if(typeof o.finalAuto==='string')ST.finalAuto=o.finalAuto;
       if(brainInputsRef&&ST.brain){Object.keys(brainInputsRef).forEach(k=>{const s=brainInputsRef[k],saved=ST.brain[k];if(!saved)return;Object.keys(s).forEach(f=>{if(saved[f]!=null)s[f].value=saved[f];});});}
       if(draftTaRef&&ST.draft&&!draftTaRef.value.trim()){draftTaRef.value=ST.draft;draftTaRef.dispatchEvent(new Event('input'));}
       if(finalTaRef&&ST.final&&!finalTaRef.value.trim())finalTaRef.value=ST.final;
