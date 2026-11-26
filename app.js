@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-26h';
+const APP_VERSION='2026-11-26i';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1314,7 +1314,7 @@ function reconcileDoneFromServer(rowsByKey){
   if(!keys.length)return;
   (async()=>{
     try{
-      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&_t='+Date.now(),{cache:'no-store'});
+      const res=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(USER.id)+'&academy='+encodeURIComponent(USER.academy||'')+'&lite=1&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
       const subs=(data&&data.ok)?(data.submissions||[]):[];
       if(!subs.length)return;
@@ -5255,7 +5255,7 @@ function viewReportStudentList(){teacherMount(w=>{
   (async()=>{
     let all=[];
     try{
-      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&_t='+Date.now(),{cache:'no-store'});
+      const res=await fetch(SUBMIT_URL+'?view=all_submissions&academy='+encodeURIComponent(USER.isAdmin?'':(USER.academy||''))+'&admin='+(USER.isAdmin?'1':'0')+'&lite=1&_t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
       if(data&&data.ok)all=overlayRoster_(data.submissions||[]);
     }catch(e){}
@@ -5276,7 +5276,15 @@ function viewReportStudentList(){teacherMount(w=>{
       const ctx=[USER.isAdmin?st.academy:'',st.school,stageGrade(st.school,st.schoolGrade),st.cls].filter(Boolean).join(' · ');
       row.appendChild(el('div','pt',(st.name||st.id)+' <span style="color:#6b7684;font-weight:600;font-size:13px">('+st.id+(ctx?' · '+ctx:'')+')</span>'));
       row.appendChild(el('div','meta',st.subs.length+'건 제출 · 최근 '+String(st.lastAt||'').slice(0,16)));
-      row.onclick=()=>viewReportStudentSubmissions(st.id,st.name||st.id,st.subs);
+      row.onclick=async()=>{
+        /* 목록은 가벼운 정보만 받았으니, 학생을 누르면 그 학생의 글 전체(본문·첨삭 포함)만 따로 받아와요. */
+        if(row._busy)return;row._busy=true;const mt=row.querySelector('.meta');const old=mt?mt.textContent:'';if(mt)mt.textContent='불러오는 중…';
+        let full=null;
+        try{const r=await fetch(SUBMIT_URL+'?view=submissions&studentId='+encodeURIComponent(st.id)+'&academy='+encodeURIComponent(st.academy||'')+'&admin='+(USER.isAdmin?'1':'0')+'&role=teacher&_t='+Date.now(),{cache:'no-store'});
+          const d=await r.json();if(d&&d.ok)full=overlayRoster_(d.submissions||[]);}catch(e){}
+        row._busy=false;if(mt)mt.textContent=old;
+        if(!full){alert('불러오지 못했어요. 잠시 후 다시 눌러주세요.');return;}
+        viewReportStudentSubmissions(st.id,st.name||st.id,full);};
       box.appendChild(row);
     });
   })();
