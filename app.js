@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-26g';
+const APP_VERSION='2026-11-26h';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -1010,7 +1010,12 @@ function mergeGen(){const M={};GEN.forEach(g=>{if(g&&g.id)M[g.id]=g;});
 /* 개념 퀴즈 정답 위치를 ①~⑤ 균등 분배 (특정 번호 쏠림 방지) */
 function balanceQuiz(quiz){const n=quiz.length;if(!n)return;let targets=[];for(let i=0;i<n;i++)targets.push(i%5);targets=shuffle(targets);
   quiz.forEach((q,i)=>{if(!q.o||q.o.length<2)return;const a=(q.a==null?0:q.a);const correct=q.o[a];const others=q.o.filter((_,j)=>j!==a);
-    const pos=Math.min(targets[i],q.o.length-1);const newo=[];let oi=0;for(let p=0;p<q.o.length;p++){newo[p]=(p===pos)?correct:others[oi++];}q.o=newo;q.a=pos;});}
+    const pos=Math.min(targets[i],q.o.length-1);const newo=[];const map={};let oi=0,oj=0;
+    for(let p=0;p<q.o.length;p++){if(p===pos){newo[p]=correct;map[a]=p;}else{while(oj===a)oj++;newo[p]=others[oi++];map[oj]=p;oj++;}}
+    /* 해설·문제에 "④는…"처럼 보기 번호가 적혀 있으면 섞인 위치에 맞게 같이 바꿔요 */
+    const CI='①②③④⑤';const fixNo=t=>String(t==null?'':t).replace(/[①②③④⑤]/g,m=>{const k=CI.indexOf(m);return (map[k]!=null)?CI[map[k]]:m;});
+    if(q.e)q.e=fixNo(q.e);
+    q.o=newo;q.a=pos;});}
 function balanceAll(){LEVELS.forEach(l=>l.chapters.forEach(c=>c.points.forEach(p=>{if(p&&p.quiz)balanceQuiz(p.quiz);})));}
 
 /* Paragraph Writing 주제 (배운 문법 연계) */
