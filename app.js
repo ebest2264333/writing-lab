@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-26i';
+const APP_VERSION='2026-11-26j';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -4524,7 +4524,11 @@ function overlayRoster_(subs,roster){
   return subs.map(x=>{
     const r=x&&m.get(String(x.id));
     if(!r)return x;
-    return Object.assign({},x,{name:r.name||x.name}); // 반·학교·학년은 글을 낸 그때 값을 그대로 둬요(반 변경은 학생 저장 시 이번 달 글만 서버가 옮겨줘요)
+    // 반·학교·학년은 글을 낸 그때 값을 그대로 둬요(반 변경은 학생 저장 시 이번 달 글만 서버가 옮겨줘요).
+    // 다만 그 글에 학원·학교·학년·반이 "비어 있으면"(예전 글, 명단에 나중에 정보를 채운 학생) 명단의 값으로 채워요.
+    const fill={name:r.name||x.name};
+    ['academy','school','schoolGrade','cls'].forEach(k=>{if((x[k]===undefined||x[k]===null||String(x[k]).trim()==='')&&r[k]!==undefined&&r[k]!==null&&String(r[k]).trim()!=='')fill[k]=r[k];});
+    return Object.assign({},x,fill);
   });
 }
 function submissionTypeLabel(s){
