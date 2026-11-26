@@ -9,7 +9,7 @@ const SUBMIT_URL="https://api-ojcvrhswsq-du.a.run.app";
  * 계속 같은 화면(예: 한창 글 쓰는 중)에 머무를 땐 절대 강제로 새로고침하지 않고, 위의 노란 배너로만
  * 알려줘요(눌러서 바로 반영할 수도 있어요). 새 버전을 배포할 때마다 아래 APP_VERSION 값을 바꿔주세요.
  * (예: 배포 날짜+순번 — "2026-09-17a") */
-const APP_VERSION='2026-11-26f';
+const APP_VERSION='2026-11-26g';
 let NEW_VERSION_AVAILABLE=false;
 function checkForNewVersion(){
   fetch((ROUTE_PATHMODE?ROUTE_BASE:'')+'app.js?_v='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(html=>{
@@ -941,7 +941,13 @@ function parseExplainPartsText(text){
   });
 }
 function parseQuizText(text){
-  return String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).map(line=>{
+  /* 문제 앞에 안내문이 따로 한 줄로 있는 경우("빈칸에 알맞은 것을 고르세요.\nI want ___ pizza. | ...")에는
+     '|'가 없는 줄을 다음 문제 앞에 붙여서 한 문제로 만들어요(예전에는 보기 없는 빈 문제가 따로 생겼어요). */
+  const lines=[];let pre='';
+  String(text||'').split('\n').map(x=>x.trim()).filter(Boolean).forEach(l=>{
+    if(l.indexOf('|')<0){pre+=(pre?' ':'')+l;return;}
+    lines.push(pre?pre+' '+l:l);pre='';});
+  return lines.map(line=>{
     const parts=line.split('|').map(x=>x.trim());
     const o=(parts[1]||'').split(';').map(x=>x.trim()).filter(Boolean);
     const a=Math.max(0,(parseInt(parts[2],10)||1)-1);
